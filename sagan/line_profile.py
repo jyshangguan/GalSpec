@@ -595,6 +595,8 @@ def line_fwhm(model, x0, x1, x0_limit=None, x1_limit=None, fwhm_disp=None):
     return fwhm, w_l, w_r, w_peak
 
 
+# Deprecated
+
 wave_vac_OIII_5007 = line_wave_dict['OIII_5007']
 wave_vac_OIII_4959 = line_wave_dict['OIII_4959']
 

@@ -13,7 +13,7 @@ mpl.rc("xtick.minor", width=1., size=5)
 mpl.rc("ytick.minor", width=1., size=5)
 
 __all__ = ['package_path', 'splitter', 'line_wave_dict', 'line_label_dict',
-           'wave_to_velocity', 'plot_fit']
+           'wave_to_velocity', 'velocity_to_wave', 'plot_fit']
 
 
 if platform == "linux" or platform == "linux2":  # Linux
@@ -82,6 +82,25 @@ def wave_to_velocity(wave, wave0):
         Velocity.
     '''
     return (wave - wave0) / wave0 * ls_km
+
+
+def velocity_to_wave(velocity, wave0):
+    '''
+    Convert velocity to wavelength.
+
+    Parameters
+    ----------
+    velocity : array like
+        Velocity.
+    wave0 : float
+        Reference wavelength.
+
+    Returns
+    -------
+    wave : array like
+        Wavelength.
+    '''
+    return (velocity / ls_km + 1 )* wave0
 
 
 def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0=None, 

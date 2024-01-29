@@ -7,7 +7,9 @@ from .constants import ls_km
 from .utils import line_wave_dict
 
 
-__all__ = ['Line_Gaussian', 'Line_GaussHermite', 'Line_template', 'tier_line_ratio', 
+__all__ = ['Line_Gaussian', 'Line_GaussHermite', 'Line_template', 
+           'Line_MultiGauss', 'Line_MultiGauss_doublet',
+           'tier_line_ratio', 
            'tier_line_sigma', 'tier_wind_dv', 'tier_abs_dv', 'find_line_peak', 
            'line_fwhm', 'extinction_ccm89', 'gen_o3doublet_gauss','gen_s2doublet_gauss', 
            'gen_o3doublet_gausshermite', 'gen_s2doublet_gausshermite',
@@ -142,7 +144,235 @@ class Line_template(Fittable1DModel):
         fltr = (v >= self._vmin) & (v <= self._vmax)
         f[fltr] = amplitude * self._model(v[fltr])
         return f
+
+
+class test(Fittable1DModel):
+    def __init__(self, amplitude, **kwargs):
+        amplitude = np.atleast_1d(amplitude)
+
+        if len(amplitude) == 1:
+            self.n_components = 1
+            params = [Parameter(default=amplitude[0])]
+        else:
+            self.n_components = len(amplitude)
+            params = [Parameter(default=amp) for amp in amplitude]
+
+        super().__init__(*params, **kwargs)
     
+    def evaluate(self, x, *parameters):
+        return np.sum(parameters) * np.ones_like(x)
+
+
+class Line_MultiGauss(Fittable1DModel):
+    '''
+    Multi-component Gaussian line profile.
+
+    Parameters
+    ----------
+    x : array like
+        Wavelength, units: arbitrary.
+    n_components : int
+        The number of Gaussian components.
+    amp_c : float
+        The amplitude of the core component.
+    dv_c : float
+        The velocity of the core component, units: km/s.
+    sigma_c : float
+        The velocity dispersion of the core component, units: km/s.
+    wavec : float
+        The central wavelength of the line profile, units: same as x.
+    par_w : dict
+        The parameters of the wind components.
+            amp_w : float
+                The amplitude of the wind component, relative to the core amplitude.
+            dv_w : float
+                The velocity of the wind component, relative to the core velocity, units: km/s.
+            sigma_w : float
+                The velocity dispersion of the wind component, units: km/s.
+    name : string
+        The name of the line profile.
+    **kwargs : dict
+        Additional parameters like bounds, fixed, and meta.
+    '''
+    _param_names = ()
+
+    def __init__(self, n_components=1, amp_c=1, dv_c=0, sigma_c=200, wavec=5000, par_w={}, name=None, **kwargs):
+        '''
+        Initialize the Line_MultiGauss model.
+        '''
+        assert isinstance(n_components, int), 'n_components must be an integer!'
+        assert n_components > 0, 'n_components must be positive!'
+
+        self.n_components = n_components
+
+        self._param_names = ['amp_c', 'dv_c', 'sigma_c', 'wavec']
+        self._parameters_['amp_c'] = Parameter(default=amp_c, bounds=(0, None))
+        self._parameters_['dv_c'] = Parameter(default=dv_c, bounds=(-2000, 2000))
+        self._parameters_['sigma_c'] = Parameter(default=sigma_c, bounds=(20, 10000))
+        self._parameters_['wavec'] = Parameter(default=wavec, fixed=True)
+
+        if n_components > 1:
+            for loop in range(n_components - 1):
+                pn_amp = f'amp_w{loop}'
+                pn_dv = f'dv_w{loop}'
+                pn_sigma = f'sigma_w{loop}'
+                pv_amp = par_w.get(pn_amp, 0)
+                pv_dv = par_w.get(pn_dv, 0)
+                pv_sigma = par_w.get(pn_sigma, sigma_c)
+
+                self._param_names.append(pn_amp)
+                self._param_names.append(pn_dv)
+                self._param_names.append(pn_sigma)
+
+                self._parameters_[pn_amp] = Parameter(default=pv_amp, bounds=(0, 1))
+                self._parameters_[pn_dv] = Parameter(default=pv_dv, bounds=(-2000, 2000))
+                self._parameters_[pn_sigma] = Parameter(default=pv_sigma, bounds=(0, 10000))
+
+        kwargs.update(par_w)
+        super().__init__(amp_c, dv_c, sigma_c, wavec, name=name, **kwargs)
+
+    def evaluate(self, x, *params):
+        '''
+        Multi-component Gaussian model function.
+        '''
+        amp_c, dv, sigma, wavec = params[:4]
+
+        # Calculate primary Gaussian component
+        v = (x - wavec) / wavec * ls_km  # convert to velocity (km/s)
+        flux_c = amp_c * np.exp(-0.5 * ((v - dv) / sigma)**2)
+
+        if self.n_components == 1:
+            return flux_c
+        
+
+        # Calculate additional Gaussian components
+        n_add = self.n_components - 1
+        flux_w = sum([
+            amp_c * params[4 + i * n_add] * np.exp(-0.5 * ((v - dv - params[5 + i * n_add]) / params[6 + i * n_add])**2)
+            for i in range(n_add)]
+        )
+
+        return flux_c + flux_w
+
+    @property
+    def param_names(self):
+        '''
+        Coefficient names generated based on the model's number of components.
+
+        Subclasses should implement this to return parameter names in the
+        desired format.
+        '''
+        return self._param_names
+
+
+class Line_MultiGauss_doublet(Fittable1DModel):
+    '''
+    Line doublet with multi-Gaussian model.
+
+    Parameters
+    ----------
+    x : array like
+        Wavelength, units: arbitrary.
+    n_components : int
+        The number of Gaussian components.
+    amp_c0 : float
+        The amplitude of the core component of the first line.
+    amp_c1 : float
+        The amplitude of the core component of the second line.
+    dv_c : float
+        The velocity shift from the central wavelength of the core component, 
+        units: km/s.
+    sigma_c : float
+        The velocity dispersion of the core component, units: km/s.
+    wavec0 : float
+        The central wavelength of the first line, units: same as x.
+    wavec1 : float
+        The central wavelength of the second line, units: same as x.
+    par_w : dict
+        The parameters of the wind components.
+            amp_w : float
+                The amplitude of the wind component, relative to the core amplitude.
+            dv_w : float
+                The velocity of the wind component, relative to the core velocity, units: km/s.
+            sigma_w : float
+                The velocity dispersion of the wind component, units: km/s.
+    name : string
+        The name of the line profile.
+    **kwargs : dict
+        Additional parameters like bounds, fixed, and meta.
+    '''
+    _param_names = ()
+    
+    def __init__(self, n_components=1, amp_c0=1, amp_c1=1, dv_c=0, sigma_c=200, wavec0=5000, wavec1=5000, par_w={}, name=None, **kwargs):
+        '''
+        '''
+        assert isinstance(n_components, int), 'n_components must be an integer!'
+        assert n_components > 0, 'n_components must be positive!'
+
+        self.n_components = n_components
+
+        self._param_names = ['amp_c0', 'amp_c1', 'dv_c', 'sigma_c', 'wavec0', 'wavec1']
+        self._parameters_['amp_c0'] = Parameter(default=amp_c0, bounds=(0, None))
+        self._parameters_['amp_c1'] = Parameter(default=amp_c1, bounds=(0, None))
+        self._parameters_['dv_c'] = Parameter(default=dv_c, bounds=(-2000, 2000))
+        self._parameters_['sigma_c'] = Parameter(default=sigma_c, bounds=(20, 10000))
+        self._parameters_['wavec0'] = Parameter(default=wavec0, fixed=True)
+        self._parameters_['wavec1'] = Parameter(default=wavec1, fixed=True)
+
+        if n_components > 1:
+            for loop in range(n_components - 1):
+                pn_amp = f'amp_w{loop}'
+                pn_dv = f'dv_w{loop}'
+                pn_sigma = f'sigma_w{loop}'
+                pv_amp = par_w.get(pn_amp, 0)
+                pv_dv = par_w.get(pn_dv, 0)
+                pv_sigma = par_w.get(pn_sigma, sigma_c)
+
+                self._param_names.append(pn_amp)
+                self._param_names.append(pn_dv)
+                self._param_names.append(pn_sigma)
+
+                self._parameters_[pn_amp] = Parameter(default=pv_amp, bounds=(0, 1))
+                self._parameters_[pn_dv] = Parameter(default=pv_dv, bounds=(-2000, 2000))
+                self._parameters_[pn_sigma] = Parameter(default=pv_sigma, bounds=(0, 10000))
+
+        kwargs.update(par_w)
+        super().__init__(amp_c0, amp_c1, dv_c, sigma_c, wavec0, wavec1, name=name, **kwargs)
+
+    def evaluate(self, x, *params):
+        '''
+        Doublet line of the multi-component Gaussian model function.
+        '''
+        amp_c0, amp_c1, dv, sigma, wavec0, wavec1 = params[:6]
+
+        # Calculate the central flux
+        v0 = (x - wavec0) / wavec0 * ls_km  # convert to velocity (km/s)
+        v1 = (x - wavec1) / wavec1 * ls_km  # convert to velocity (km/s)
+        flux_c =  amp_c0 * np.exp(-0.5 * ((v0 - dv) / sigma)**2) + amp_c1 * np.exp(-0.5 * ((v1 - dv) / sigma)**2)
+
+        if self.n_components == 1:
+            return flux_c
+
+        # Calculate additional Gaussian components
+        n_add = self.n_components - 1
+        flux_w = sum([
+            amp_c0 * params[6 + i * n_add] * np.exp(-0.5 * ((v0 - dv - params[7 + i * n_add]) / params[8 + i * n_add])**2) + \
+            amp_c1 * params[6 + i * n_add] * np.exp(-0.5 * ((v1 - dv - params[7 + i * n_add]) / params[8 + i * n_add])**2)
+            for i in range(n_add)]
+        )
+
+        return flux_c + flux_w
+
+    @property
+    def param_names(self):
+        '''
+        Coefficient names generated based on the model's number of components.
+
+        Subclasses should implement this to return parameter names in the
+        desired format.
+        '''
+        return self._param_names
+
 
 # Tie parameters
 class tier_line_h3(object):

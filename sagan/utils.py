@@ -2,6 +2,7 @@ import os
 from sys import platform
 import numpy as np
 import matplotlib.pyplot as plt
+from .constants import ls_km
 
 import matplotlib as mpl
 mpl.rc("xtick", direction="in", labelsize=16)
@@ -12,7 +13,7 @@ mpl.rc("xtick.minor", width=1., size=5)
 mpl.rc("ytick.minor", width=1., size=5)
 
 __all__ = ['package_path', 'splitter', 'line_wave_dict', 'line_label_dict',
-           'plot_fit']
+           'wave_to_velocity', 'plot_fit']
 
 
 if platform == "linux" or platform == "linux2":  # Linux
@@ -62,6 +63,26 @@ line_label_dict = {
     'NI_5201': r'NI 5201',
     'FeVI_5176': r'Fe VI 5176'
 }
+
+
+def wave_to_velocity(wave, wave0):
+    '''
+    Convert wavelength to velocity.
+
+    Parameters
+    ----------
+    wave : array like
+        Wavelength.
+    wave0 : float
+        Reference wavelength.
+
+    Returns
+    -------
+    velocity : array like
+        Velocity.
+    '''
+    return (wave - wave0) / wave0 * ls_km
+
 
 def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0=None, 
              ylim1=None, xlabel=None, ylabel=None, legend_kwargs=None):

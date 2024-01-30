@@ -183,12 +183,12 @@ class Line_MultiGauss(Fittable1DModel):
         The central wavelength of the line profile, units: same as x.
     par_w : dict
         The parameters of the wind components.
-            amp_w : float
-                The amplitude of the wind component, relative to the core amplitude.
-            dv_w : float
-                The velocity of the wind component, relative to the core velocity, units: km/s.
-            sigma_w : float
-                The velocity dispersion of the wind component, units: km/s.
+            amp_w`i` : float
+                The amplitude of the `i`th wind component, relative to the core amplitude.
+            dv_w`i` : float
+                The velocity of the `i`th wind component, relative to the core velocity, units: km/s.
+            sigma_w`i` : float
+                The velocity dispersion of the `i`th wind component, units: km/s.
     name : string
         The name of the line profile.
     **kwargs : dict
@@ -290,12 +290,12 @@ class Line_MultiGauss_doublet(Fittable1DModel):
         The central wavelength of the second line, units: same as x.
     par_w : dict
         The parameters of the wind components.
-            amp_w : float
-                The amplitude of the wind component, relative to the core amplitude.
-            dv_w : float
-                The velocity of the wind component, relative to the core velocity, units: km/s.
-            sigma_w : float
-                The velocity dispersion of the wind component, units: km/s.
+            amp_w`i` : float
+                The amplitude of the `i`th wind component, relative to the core amplitude.
+            dv_w`i` : float
+                The velocity of the `i`th wind component, relative to the core velocity, units: km/s.
+            sigma_w`i` : float
+                The velocity dispersion of the `i`th wind component, units: km/s.
     name : string
         The name of the line profile.
     **kwargs : dict

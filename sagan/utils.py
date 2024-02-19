@@ -149,7 +149,7 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
     axr.sharex(ax)
     
     ax.step(wave, flux, lw=1, color='k', label='Data')
-    ax.step(wave, weight, lw=1, color='gray', label='Weight')
+    #ax.step(wave, weight, lw=1, color='gray', label='Weight')
     ax.plot(wave, model(wave), lw=2, color='C3', label='Total model')
     
     for loop, m in enumerate(model):

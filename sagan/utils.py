@@ -3,6 +3,8 @@ from sys import platform
 import numpy as np
 import matplotlib.pyplot as plt
 from .constants import ls_km
+from scipy.ndimage import gaussian_filter1d
+from spectres import spectres
 
 import matplotlib as mpl
 mpl.rc("xtick", direction="in", labelsize=16)
@@ -13,7 +15,8 @@ mpl.rc("xtick.minor", width=1., size=5)
 mpl.rc("ytick.minor", width=1., size=5)
 
 __all__ = ['package_path', 'splitter', 'line_wave_dict', 'line_label_dict',
-           'wave_to_velocity', 'velocity_to_wave', 'plot_fit']
+           'wave_to_velocity', 'velocity_to_wave', 'plot_fit', 
+           'down_spectres']
 
 
 if platform == "linux" or platform == "linux2":  # Linux
@@ -193,3 +196,48 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
     ax.legend(**legend_kwargs)
 
     return ax, axr
+
+
+def down_spectres(wave, flux, R_org, R_new, wave_new=None, wavec=None, dw=None, 
+                  spec_errs=None, fill=None, verbose=False):
+    '''
+    Degrade the spectral resolution of a spectrum according to the resolving power.
+
+    Parameters
+    ----------
+    wave, flux : 1d arrays
+        Wavelength and flux of the spectrum.
+    R_org : float
+        Original resolving power.
+    R_new : float
+        New resolving power.
+    wave_new : 1d array, optional
+        New wavelength grid.
+    wavec : float, optional
+        Central wavelength. If not provided, the mean of the input wavelength 
+        will be used.
+    dw : float, optional
+        Wavelength dispersion. If not provided, the median of the input 
+        wavelength dispersion will be used.
+    spec_errs : 1d array, optional
+        Spectrum errors as an input for SpectRes.spectres. It is only used 
+        when wave_new is provided.
+    fill : float, optional
+        Fill value for the output spectrum. It is only used when wave_new is 
+        provided.
+    verbose : bool, optional
+        Print the parameters for SpectRes.spectres.
+    '''
+    if wavec is None:
+        wavec = np.mean(wave)
+
+    if dw is None:
+        dw = np.median(np.diff(wave))
+
+    sigma = wavec * np.sqrt(R_new**-2 - R_org**-2) / 2.3548 / dw
+    flux_new = gaussian_filter1d(flux, sigma)
+
+    if wave_new is not None:
+        flux_new = spectres(wave_new, wave, flux_new, spec_errs=spec_errs, fill=fill, verbose=verbose)
+
+    return flux_new

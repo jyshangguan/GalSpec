@@ -244,11 +244,11 @@ class Line_MultiGauss(Fittable1DModel):
         if self.n_components == 1:
             return flux_c
         
-
         # Calculate additional Gaussian components
         n_add = self.n_components - 1
+        n_pars = 3
         flux_w = sum([
-            amp_c * params[4 + i * n_add] * np.exp(-0.5 * ((v - dv - params[5 + i * n_add]) / params[6 + i * n_add])**2)
+            amp_c * params[4 + i * n_pars] * np.exp(-0.5 * ((v - dv - params[5 + i * n_pars]) / params[6 + i * n_pars])**2)
             for i in range(n_add)]
         )
 

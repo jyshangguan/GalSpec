@@ -263,6 +263,27 @@ class Line_MultiGauss(Fittable1DModel):
         desired format.
         '''
         return self._param_names
+    
+    @property
+    def subcomponents(self):
+        '''
+        Return the individual components of the model.
+        '''
+        if self.n_components == 1:
+            return None
+
+        components = [Line_Gaussian(
+            amplitude=self.amp_c, dv=self.dv_c, sigma=self.sigma_c, 
+            wavec=self.wavec, name=f'{self.name}: core')]
+
+        for loop in range(self.n_components - 1):
+            amp_w = getattr(self, f'amp_w{loop}') * self.amp_c
+            dv_w = getattr(self, f'dv_w{loop}') + self.dv_c
+            sigma_w = getattr(self, f'sigma_w{loop}')
+            components.append(Line_Gaussian(
+                amplitude=amp_w, dv=dv_w, sigma=sigma_w, wavec=self.wavec, 
+                name=f'{self.name}: wind{loop}'))
+        return components
 
 
 class Line_MultiGauss_doublet(Fittable1DModel):
@@ -373,6 +394,24 @@ class Line_MultiGauss_doublet(Fittable1DModel):
         '''
         return self._param_names
 
+    @property
+    def subcomponents(self):
+        '''
+        Return the individual components of the model.
+        '''
+        if self.n_components == 1:
+            return None
+
+        components = [Line_Gaussian(amplitude=self.amp_c0, dv=self.dv_c, sigma=self.sigma_c, wavec=self.wavec0, name=f'{self.name}: core0'), 
+                      Line_Gaussian(amplitude=self.amp_c1, dv=self.dv_c, sigma=self.sigma_c, wavec=self.wavec1, name=f'{self.name}: core1')]
+
+        for loop in range(self.n_components - 1):
+            amp_w = getattr(self, f'amp_w{loop}')
+            dv_w = getattr(self, f'dv_w{loop}') + self.dv_c
+            sigma_w = getattr(self, f'sigma_w{loop}')
+            components.append(Line_Gaussian(amplitude=amp_w*self.amp_c0, dv=dv_w, sigma=sigma_w, wavec=self.wavec0, name=f'{self.name}: wind0{loop}'))
+            components.append(Line_Gaussian(amplitude=amp_w*self.amp_c1, dv=dv_w, sigma=sigma_w, wavec=self.wavec1, name=f'{self.name}: wind1{loop}'))
+        return components
 
 # Tie parameters
 class tier_line_h3(object):

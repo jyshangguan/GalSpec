@@ -65,13 +65,30 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
 
     ax.plot(wave, model(wave), lw=2, color='C3', label='Total model')
     
+    if 'multi' in model.submodel_names:
+        m_multi = model['multi'](wave)
+    else:
+        m_multi = None
+
     for loop, m in enumerate(model):
-        ax.plot(wave, m(wave), lw=0.5, color=f'C{loop}', label=m.name)
+        if m.name == 'multi':
+            continue
+        
+        if m_multi is not None:
+            y = m(wave) * m_multi
+        else:
+            y = m(wave)
+
+        ax.plot(wave, y, lw=0.5, color=f'C{loop}', label=m.name)
 
         if (isinstance(m, Line_MultiGauss)) | (isinstance(m, Line_MultiGauss_doublet)):
             if m.n_components > 1:
                 for ii, msub in enumerate(m.subcomponents):
-                    ax.plot(wave, msub(wave), lw=0.5, ls='--', 
+                    if m_multi is not None:
+                        y = msub(wave) * m_multi
+                    else:
+                        y = msub(wave)
+                    ax.plot(wave, y, lw=0.5, ls='--', 
                             color=f'C{loop}')
     
     flux_res = flux - model(wave)

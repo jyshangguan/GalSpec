@@ -30,6 +30,8 @@ line_wave_dict = {
     'OIII_5007': 5008.239,
     'SII_6718': 6718.29,
     'SII_6733': 6732.68,
+    'NII_6548': 6548.050,
+    'NII_6583': 6583.460,
     'HeII_4686': 4686,
     'HeI_4471': 4471,
     'HeI_4713': 4713,
@@ -37,7 +39,8 @@ line_wave_dict = {
     'HeI_5016': 5016,
     'NI_5199': 5199,
     'NI_5201': 5201,
-    'FeVI_5176': 5176
+    'FeVI_5176': 5176,
+    'OIII_4363': 4363.210,
     }
 
 # Labels of the typical emission lines
@@ -49,6 +52,8 @@ line_label_dict = {
     'OIII_5007': r'[O III] 5007',
     'SII_6718': r'[S II] 6718',
     'SII_6733': r'[S II] 6733',
+    'NII_6548': r'[N II] 6548',
+    'NII_6583': r'[N II] 6583',
     'HeII_4686': r'He II 4686',
     'HeI_4471': r'He I 4471',
     'HeI_4713': r'He I 4713',
@@ -56,7 +61,8 @@ line_label_dict = {
     'HeI_5016': r'He I 5016',
     'NI_5199': r'NI 5199',
     'NI_5201': r'NI 5201',
-    'FeVI_5176': r'Fe VI 5176'
+    'FeVI_5176': r'Fe VI 5176',
+    'OIII_4363': r'[O III] 4363',
 }
 
 

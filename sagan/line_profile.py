@@ -376,9 +376,10 @@ class Line_MultiGauss_doublet(Fittable1DModel):
 
         # Calculate additional Gaussian components
         n_add = self.n_components - 1
+        n_pars = 3
         flux_w = sum([
-            amp_c0 * params[6 + i * n_add] * np.exp(-0.5 * ((v0 - dv - params[7 + i * n_add]) / params[8 + i * n_add])**2) + \
-            amp_c1 * params[6 + i * n_add] * np.exp(-0.5 * ((v1 - dv - params[7 + i * n_add]) / params[8 + i * n_add])**2)
+            amp_c0 * params[6 + i * n_pars] * np.exp(-0.5 * ((v0 - dv - params[7 + i * n_pars]) / params[8 + i * n_pars])**2) + \
+            amp_c1 * params[6 + i * n_pars] * np.exp(-0.5 * ((v1 - dv - params[7 + i * n_pars]) / params[8 + i * n_pars])**2)
             for i in range(n_add)]
         )
 

@@ -1,5 +1,5 @@
 # SAGAN
-Spectral Analysis of Galaxy and Active galactic Nuclei
+_SAGAN is short for Spectral Analysis of Galaxy and Active galactic Nuclei_
 
 The models are based on and fully compatible with [Astropy.modeling](https://docs.astropy.org/en/stable/modeling/index.html).
 

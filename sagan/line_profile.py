@@ -414,6 +414,31 @@ class Line_MultiGauss_doublet(Fittable1DModel):
             components.append(Line_Gaussian(amplitude=amp_w*self.amp_c1, dv=dv_w, sigma=sigma_w, wavec=self.wavec1, name=f'{self.name}: wind1{loop}'))
         return components
 
+    def gen_template(self, v):
+        '''
+        Generate the template of the single line profile.
+
+        Parameters
+        ----------
+        v : array like
+            The velocity array, units: km/s.
+        
+        Returns
+        -------
+        flux : array like
+            The flux of the line profile.
+        '''
+        flux =  self.amp_c0 * np.exp(-0.5 * (v / self.sigma_c)**2)
+
+        n_add = self.n_components - 1
+        for i in range(n_add):
+            amp_w = getattr(self, f'amp_w{i}')
+            dv_w = getattr(self, f'dv_w{i}')
+            sigma_w = getattr(self, f'sigma_w{i}')
+            flux += amp_w * self.amp_c0 * np.exp(-0.5 * ((v - dv_w) / sigma_w)**2)
+
+        return flux
+
 # Tie parameters
 class tier_line_h3(object):
 

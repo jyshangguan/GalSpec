@@ -9,7 +9,7 @@ from .utils import line_wave_dict
 
 __all__ = ['Line_Gaussian', 'Line_GaussHermite', 'Line_template', 
            'Line_MultiGauss', 'Line_MultiGauss_doublet',
-           'tier_line_ratio', 
+           'Line_Absorption', 'tier_line_ratio', 
            'tier_line_sigma', 'tier_wind_dv', 'tier_abs_dv', 'find_line_peak', 
            'line_fwhm', 'extinction_ccm89', 'gen_o3doublet_gauss','gen_s2doublet_gauss', 
            'gen_o3doublet_gausshermite', 'gen_s2doublet_gausshermite',
@@ -441,6 +441,45 @@ class Line_MultiGauss_doublet(Fittable1DModel):
             flux /= np.max(flux)
 
         return flux
+
+
+class Line_Absorption(Fittable1DModel):
+    '''
+    The absorption line profile with the sigma as the velocity.
+    Parameters
+    ----------
+    x : array like
+        Wavelength, units: arbitrary.
+    tau_0 : float
+        The optical depth at line center.
+    dv : float
+        The velocity of the central line offset from wavec, units: km/s.
+    sigma : float
+        The velocity dispersion of the line profile, units: km/s.
+    wavec : float
+        The central wavelength of the line profile, units: same as x.
+    Cf : float
+        The covering fraction of the absorbing gas, between 0 and 1.
+    '''
+
+    tau_0 = Parameter(default=1, bounds=(0, None))
+    dv = Parameter(default=0, bounds=(-2000, 2000))
+    sigma = Parameter(default=200, bounds=(20, 10000))
+    Cf = Parameter(default=1, bounds=(0, 1), fixed=True)
+
+    wavec = Parameter(default=5000, fixed=True)
+
+    @staticmethod
+    def evaluate(x, tau_0, dv, sigma, Cf, wavec):
+        """
+        Absorption Gaussian model function.
+        """
+        v = (x - wavec) / wavec * ls_km  # convert to velocity (km/s)
+        tau_v = tau_0 * (1/(sigma * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((v - dv)/ sigma)**2)
+        f = 1 - Cf + Cf* np.exp(-1*tau_v)
+
+        return f
+    
 
 # Tie parameters
 class tier_line_h3(object):

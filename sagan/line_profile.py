@@ -463,9 +463,9 @@ class Line_Absorption(Fittable1DModel):
     '''
 
     tau_0 = Parameter(default=1, bounds=(0, None))
-    dv = Parameter(default=0, bounds=(-2000, 2000))
+    dv = Parameter(default=0, bounds=(-10000, 10000))
     sigma = Parameter(default=200, bounds=(20, 10000))
-    Cf = Parameter(default=1, bounds=(0, 1), fixed=True)
+    Cf = Parameter(default=1, bounds=(0, 1))
 
     wavec = Parameter(default=5000, fixed=True)
 
@@ -475,11 +475,12 @@ class Line_Absorption(Fittable1DModel):
         Absorption Gaussian model function.
         """
         v = (x - wavec) / wavec * ls_km  # convert to velocity (km/s)
-        tau_v = tau_0 * (1/(sigma * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((v - dv)/ sigma)**2)
+        #tau_v = tau_0 * (1/(sigma * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((v - dv)/ sigma)**2)
+        tau_v = tau_0 * np.exp(-0.5 * ((v - dv)/ sigma)**2)
         f = 1 - Cf + Cf* np.exp(-1*tau_v)
 
         return f
-    
+
 
 # Tie parameters
 class tier_line_h3(object):

@@ -155,7 +155,7 @@ class StarSpectrum(Fittable1DModel):
     
     amplitude = Parameter(default=1, bounds=(0, None))
     sigma = Parameter(default=200, bounds=(20, 6000))
-    delta_z = Parameter(default=0, bounds=(-0.001, 0.001), fixed=True)
+    delta_z = Parameter(default=0, bounds=(-0.001, 0.001), fixed=False)
     
     def __init__(self, amplitude=amplitude, sigma=sigma, velscale=None, delta_z=delta_z, Star_type='A', **kwargs):
         """

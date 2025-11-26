@@ -13,6 +13,8 @@ from copy import deepcopy
 import emcee
 import corner
 
+from astropy.modeling import CompoundModel
+
 __all__ = ['package_path', 'splitter', 'line_wave_dict', 'line_label_dict',
            'wave_to_velocity', 'velocity_to_wave', 
            'down_spectres', 'get_free_params', 'ReadSpectrum', 'MCMC_Fit']
@@ -171,8 +173,10 @@ class MCMC_Fit:
         self.nsteps = nsteps
         self.step_initial = step_initial
 
+        self.check_input_model()
+
         # Set bounds for parameters
-        self.param_names = self.get_free_params()
+        self.index_free_params()
         self.set_param_bounds()
 
         # Initialize parameter values for walkers
@@ -211,6 +215,85 @@ class MCMC_Fit:
             print("nsteps / tau_max =", nsteps / tau_max)
 
         return chain, tau
+ 
+    def check_input_model(self):
+        '''Check the input model'''
+        assert isinstance(self.model, CompoundModel), "Input model must be an instance of CompoundModel."
+
+        for loop, m in enumerate(self.model):
+            if m.name is None:
+                m.name = self.model.submodel_names[loop]
+
+    def fit(self):
+        """Perform MCMC fitting."""
+        self.sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self.log_probability, args=())
+
+        if self.step_initial > 0:
+            pos, prob, state = self.sampler.run_mcmc(self.pos, self.step_initial, progress=True)
+            self.samples_initial = self.sampler.get_chain(flat=True)
+            self.sampler.reset()
+            self.sampler.run_mcmc(pos, self.nsteps, progress=True)
+        else:
+            self.sampler.run_mcmc(self.pos, self.nsteps, progress=True)
+        
+        flat_samples = self.sampler.get_chain(flat=True)
+        return flat_samples, self.model, self.param_names
+    
+    def get_best_fit(self, discard=0):
+        """Set the model parameters to the best fit values."""
+        flat_samples = self.sampler.get_chain(flat=True, discard=discard)
+
+        # Get best fit parameters
+        self.theta_best = flat_samples[np.argmax(self.sampler.get_log_prob(flat=True, discard=discard))]
+        self.model = self.set_model_params(self.theta_best)
+
+        return self.model, self.param_names, self.theta_best
+
+    def get_free_params(self):
+        """Get the free parameters for the model."""
+        free_param_names = []
+        for param_name in self.model.param_names:
+            param = getattr(self.model, param_name)
+            if not param.fixed and not param.tied:
+                free_param_names.append(param_name)
+        return free_param_names
+
+    def get_initial_theta(self):
+        """Get the initial parameter values for the MCMC walkers."""
+        param_values = {param_name: getattr(self.model, param_name).value for param_name in self.param_names}
+        return [param_values[key] for key in self.param_names]
+
+    def get_param_index(self, model_name, param_name):
+        """Get the index of a parameter in theta."""
+        full_param_name = f"{model_name}.{param_name}"
+        return self.param_map[full_param_name][0]
+    
+    def get_param_samples(self, model_name, param_name, discard=0):
+        """Get the samples of a parameter from the MCMC chains."""
+        flat_samples = self.sampler.get_chain(flat=True, discard=discard)
+        param_index = self.get_param_index(model_name, param_name)
+        return flat_samples[:, param_index]
+
+    def index_free_params(self):
+        """Get the indices of free parameters in the model."""
+        self.param_names = self.get_free_params()
+
+        self.full_param_names = []
+        for mn in self.model.submodel_names:
+            submodel = self.model[mn]
+            for pn in submodel.param_names:
+                param = getattr(submodel, pn)
+                if not param.fixed and not param.tied:
+                    self.full_param_names.append(f"{mn}.{pn}")
+
+        self.param_map = dict(zip(self.full_param_names, [(ii, pn) for ii, pn in enumerate(self.param_names)]))
+
+    def log_likelihood(self, theta):
+        """Calculate the log likelihood."""
+        model = self.set_model_params(theta)
+ 
+        model_flux = model(self.wave_use)
+        return -0.5 * np.sum(((self.flux_use - model_flux) / self.ferr) ** 2)
 
     def log_prior(self, theta):
         """Calculate the log prior probability."""
@@ -227,31 +310,6 @@ class MCMC_Fit:
 
         return 0.0
 
-    def set_param_bounds(self):
-        """Set the bounds for the parameters."""
-        for param_name in self.param_names:
-            param = getattr(self.model, param_name)
-            lower_bound, upper_bound = param.bounds
-            if upper_bound is None:
-                upper_bound = 10000
-            if lower_bound is None:
-                lower_bound = -100
-            param.bounds = (lower_bound, upper_bound)
-
-    def get_initial_theta(self):
-        """Get the initial parameter values for the MCMC walkers."""
-        param_values = {param_name: getattr(self.model, param_name).value for param_name in self.param_names}
-        return [param_values[key] for key in self.param_names]
-
-    def log_likelihood(self, theta):
-        """Calculate the log likelihood."""
-        #for i, param_name in enumerate(self.param_names):
-        #    setattr(self.model, param_name, theta[i])
-        model = self.set_model_params(theta)
-
-        model_flux = model(self.wave_use)
-        return -0.5 * np.sum(((self.flux_use - model_flux) / self.ferr) ** 2)
-
     def log_probability(self, theta):
         """Calculate the log probability."""
         # Call the log_prior_func, which is either the default or a custom function
@@ -259,61 +317,6 @@ class MCMC_Fit:
         if not np.isfinite(lp):
             return -np.inf
         return lp + self.log_likelihood(theta)
-
-    def fit(self, ncpus=1):
-        """Perform MCMC fitting."""
-        if ncpus > 1:
-            from multiprocess import Pool, cpu_count
-            pool = Pool(min(ncpus, cpu_count()))
-            self.sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self.log_probability, pool=pool)
-        else:
-            self.sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self.log_probability, args=())
-
-        if self.step_initial > 0:
-            pos, prob, state = self.sampler.run_mcmc(self.pos, self.step_initial, progress=True)
-            self.samples_initial = self.sampler.get_chain(flat=True)
-            self.sampler.reset()
-            self.sampler.run_mcmc(pos, self.nsteps, progress=True)
-        else:
-            self.sampler.run_mcmc(self.pos, self.nsteps, progress=True)
-        
-        if ncpus > 1:
-            pool.close()
-    
-    def get_best_fit(self, discard=0):
-        """Set the model parameters to the best fit values."""
-        flat_samples = self.sampler.get_chain(flat=True, discard=discard)
-
-        # Get best fit parameters
-        #best_fit_params = np.median(flat_samples, axis=0)
-        self.theta_best = flat_samples[np.argmax(self.sampler.get_log_prob(flat=True, discard=discard))]
-        for i, param_name in enumerate(self.param_names):
-            setattr(self.model, param_name, self.theta_best[i])
-
-        return self.model, self.param_names, self.theta_best
-
-    def get_free_params(self):
-        """Get the free parameters for the model."""
-        free_param_names = []
-        for param_name in self.model.param_names:
-            param = getattr(self.model, param_name)
-            if not param.fixed and not param.tied:
-                free_param_names.append(param_name)
-        return free_param_names
-
-    def set_model_params(self, theta):
-        """Set the model parameters from theta."""
-        model = deepcopy(self.model)
-
-        for i, param_name in enumerate(self.param_names):
-            setattr(model, param_name, theta[i])
-
-        for param_name in model.param_names:
-            param = getattr(model, param_name)
-            if param.tied:
-                param.value = param.tied(model)
-        
-        return model
 
     def plot_chain(self, initial=False):
         """Plot the MCMC chains."""
@@ -340,6 +343,32 @@ class MCMC_Fit:
         flat_samples = self.sampler.get_chain(flat=True, discard=discard)
         fig = corner.corner(flat_samples, labels=self.param_names, truths=self.theta_best)
         plt.show()
+
+    def set_model_params(self, theta):
+        """Set the model parameters from theta."""
+        model = self.model
+
+        for i, param_name in enumerate(self.param_names):
+            setattr(model, param_name, theta[i])
+
+        for param_name in model.param_names:
+            param = getattr(model, param_name)
+            if param.tied:
+                param.value = param.tied(model)
+        
+        return model
+    
+    def set_param_bounds(self):
+        """Set the bounds for the parameters."""
+        for param_name in self.param_names:
+            param = getattr(self.model, param_name)
+            lower_bound, upper_bound = param.bounds
+            if upper_bound is None:
+                upper_bound = 10000
+            if lower_bound is None:
+                lower_bound = -100
+            param.bounds = (lower_bound, upper_bound)
+
 
 def get_free_params(model):
     """Get the free parameters for the model."""

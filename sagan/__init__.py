@@ -1,3 +1,4 @@
+from .continuum import *
 from .iron_template import *
 from .stellar_continuum import *
 from .line_profile import *

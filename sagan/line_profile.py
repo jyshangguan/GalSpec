@@ -224,7 +224,7 @@ class Line_MultiGauss(Fittable1DModel):
                 self._param_names.append(pn_dv)
                 self._param_names.append(pn_sigma)
 
-                self._parameters_[pn_amp] = Parameter(default=pv_amp, bounds=(0, None))
+                self._parameters_[pn_amp] = Parameter(default=pv_amp, bounds=(0, 1))
                 self._parameters_[pn_dv] = Parameter(default=pv_dv, bounds=(-5000, 5000))
                 self._parameters_[pn_sigma] = Parameter(default=pv_sigma, bounds=(0, 10000))
 

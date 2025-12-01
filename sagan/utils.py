@@ -6,14 +6,33 @@ import numpy as np
 import matplotlib.pyplot as plt
 from .constants import ls_km
 from scipy.ndimage import gaussian_filter1d
-from spectres import spectres
-from sfdmap2 import sfdmap
-from PyAstronomy import pyasl
 from copy import deepcopy
-import emcee
-import corner
-
 from astropy.modeling import CompoundModel
+
+try: 
+    from sfdmap2 import sfdmap
+except ImportError:
+    sfdmap = None
+
+try: 
+    from PyAstronomy import pyasl
+except ImportError:
+    pyasl = None
+
+try:
+    from spectres import spectres
+except ImportError:
+    spectres = None
+
+try:
+    import emcee
+except ImportError:
+    emcee = None
+
+try:
+    import corner
+except ImportError:
+    corner = None
 
 __all__ = ['package_path', 'splitter', 'line_wave_dict', 'line_label_dict',
            'wave_to_velocity', 'velocity_to_wave', 
@@ -149,6 +168,9 @@ def down_spectres(wave, flux, R_org, R_new, wave_new=None, wavec=None, dw=None,
     verbose : bool, optional
         Print the parameters for SpectRes.spectres.
     '''
+    if spectres is None:
+        raise ImportError("spectres package is not installed. Please install it to use down_spectres function.")
+
     if wavec is None:
         wavec = np.mean(wave)
 
@@ -166,6 +188,15 @@ def down_spectres(wave, flux, R_org, R_new, wave_new=None, wavec=None, dw=None,
 
 class MCMC_Fit:
     def __init__(self, model, wave_use, flux_use, ferr, log_prior_func=None, nwalkers=50, nsteps=6000, step_initial=0):
+        """
+        Initialize the MCMC_Fit class.
+        """
+        if emcee is None:
+            raise ImportError("emcee package is not installed. Please install it to use MCMC_Fit class.")
+
+        if corner is None:
+            raise ImportError("corner package is not installed. Please install it to use MCMC_Fit class.")
+
         self.model = deepcopy(model)
         self.wave_use = wave_use
         self.flux_use = flux_use
@@ -396,6 +427,12 @@ class ReadSpectrum:
         - ra: float, right ascension (required for custom spectrum)
         - dec: float, declination (required for custom spectrum)
         """
+        if sfdmap is None:
+            raise ImportError("sfdmap2 package is not installed. Please install it to use ReadSpectrum class.")
+        
+        if pyasl is None:
+            raise ImportError("PyAstronomy package is not installed. Please install it to use ReadSpectrum class.")
+
         self.dustmap_path = '{0}{1}data{1}sfddata/'.format(package_path, splitter)
         self.sfd_map = sfdmap.SFDMap(self.dustmap_path)
 

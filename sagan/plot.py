@@ -146,7 +146,7 @@ def plot_fit_new(wave, flux, model, weight=None, error=None, ax=None, axr=None, 
 
 
 def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0=None, 
-             ylim1=None, xlabel=None, ylabel=None, legend_kwargs=None):
+             ylim1=None, xlabel=None, ylabel=None, legend_kwargs=None, plot_weight=True):
     '''
     Plot the fitting result.
 
@@ -192,7 +192,7 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
     
     ax.step(wave, flux, lw=1, color='k', label='Data')
 
-    if weight is not None:
+    if (weight is not None) & plot_weight:
         axt = ax.twinx()
         axt.step(wave, weight, lw=1, color='gray')
         axt.set_ylabel('Weight', fontsize=16)
@@ -227,7 +227,10 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
                             color=f'C{loop}')
     
     flux_res = flux - model(wave)
+    # Mask the region with weight=0
+    flux_res[weight == 0] = np.nan
     axr.step(wave, flux_res, lw=1, color='k')
+    axr.axhline(0, color='k', ls='--', lw=1.0)
     
     ax.tick_params(labelbottom=False)
     if xlim is not None:

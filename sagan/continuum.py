@@ -17,7 +17,7 @@ class WindowedPowerLaw1D(Fittable1DModel):
 
     def evaluate(self, x, amplitude, x_0, alpha, x_min, x_max):
         """Power law that is zero outside [x_min, x_max]."""
-        y = amplitude * (x / x_0)**alpha
+        y = amplitude * (x / x_0)**-alpha
         mask = (x >= x_min) & (x <= x_max)
         return np.where(mask, y, 0.0)
     
@@ -26,11 +26,15 @@ class BlackBody(Fittable1DModel):
     """Black body radiation model."""
     temperature = Parameter(default=5000.0)  # in Kelvin
     scale = Parameter(default=1.0)
+    x_min = Parameter(default=-np.inf, fixed=True)
+    x_max = Parameter(default=np.inf, fixed=True)
 
-    def evaluate(self, x, temperature, scale):
+    def evaluate(self, x, temperature, scale, x_min, x_max):
         """Evaluate the black body radiation at wavelength x."""
         bb_lam = _planck_B_lambda(x * u.AA.to(u.cm), temperature)
         bb_lam /= np.max([bb_lam.max(), 1e-16])  # Normalize for convenience
+        mask = (x >= x_min) & (x <= x_max)
+        bb_lam = np.where(mask, bb_lam, 0.0)
         return scale * bb_lam
 
 
@@ -123,68 +127,69 @@ class BalmerPseudoContinuum(Fittable1DModel):
     _n_min_edge = 6        # for the Balmer-edge sum (high-order lines)
     _n_ref = 4             # Hβ as reference Balmer line
 
+    # Structural caches
+    _n_cache = None
+    _lambda_cache = None
+
     @classmethod
     def _precompute_level_data(cls):
         """
         Precompute:
-          - n array for all Balmer lines (n=3..400)
-          - wavelengths λ_n (Å) for each n (Balmer series)
-          - level energies E_n (eV) for all n
-          - E_n - E_ref (eV) for use in intensity ratios
+          - n_all: array of upper levels n (3..400) for Balmer series
+          - lambda_n: wavelengths [Å] for transitions n -> 2
+          - E_n: upper-level energies [eV], approx. E_n = 13.6 (1 - 1/n^2)
         """
-        n_all = np.arange(cls._n_min_all, cls._n_max_all + 1, dtype=float)
+        n_all = np.arange(cls._n_min_all, cls._n_max_all + 1, dtype=int)
 
-        # Rydberg constant in cm^-1 for hydrogen
-        R_cm = 1.0973731568160e5
-        inv_lambda_cm = R_cm * (1.0 / 4.0 - 1.0 / (n_all**2))
+        # Balmer wavelengths from Rydberg formula: 1/λ = R (1/2^2 - 1/n^2)
+        R_cm = 1.0973731568160e5  # cm^-1
+        inv_lambda_cm = R_cm * (1.0 / 4.0 - 1.0 / (n_all.astype(float)**2))
         lambda_cm = 1.0 / inv_lambda_cm
-        lambda_ang = lambda_cm * 1e8  # cm -> Å
+        lambda_ang = lambda_cm * 1e8   # cm -> Å
 
-        # Hydrogen level energies in eV: E_n = -13.6 / n^2
-        E_n = -13.6 / (n_all**2)
+        # Approximate upper-level energies [eV] measured from ground:
+        # E_n = 13.6 eV * (1/2^2 - 1/n^2)
+        E_n = 13.6 * (0.25 - 1.0 / (n_all.astype(float)**2))
 
-        # Reference level: Hβ (n_ref = 4)
-        idx_ref = np.where(n_all == cls._n_ref)[0]
-        if len(idx_ref) == 0:
-            raise RuntimeError("Reference Balmer level n_ref not in n_all.")
-        idx_ref = idx_ref[0]
-        E_ref = E_n[idx_ref]
-
-        dE_n = E_n - E_ref  # E_n - E_ref (eV)
-
-        return n_all, lambda_ang, dE_n
+        return n_all, lambda_ang, E_n
 
     @classmethod
     def _get_level_data(cls):
-        """
-        Lazily compute and cache level data.
-        """
-        if not hasattr(cls, "_n_cache"):
-            (cls._n_cache,
-             cls._lambda_cache,
-             cls._dE_cache) = cls._precompute_level_data()
-        return cls._n_cache, cls._lambda_cache, cls._dE_cache
+        if cls._n_cache is None:
+            cls._n_cache, cls._lambda_cache, cls._E_cache = cls._precompute_level_data()
+        return cls._n_cache, cls._lambda_cache, cls._E_cache
 
     @staticmethod
     def evaluate(wave, i_ref, sigma, dv, te, tau_be, lambda_be):
         wave = np.asanyarray(wave, dtype=float)
 
         # --- Get Balmer level data (n, λ_n, ΔE_n) ---
-        n_all, lambda_n, dE_n = BalmerPseudoContinuum._get_level_data()
+        n_all, lambda_n, E_n = BalmerPseudoContinuum._get_level_data()
 
         # Precompute masks for "all Balmer lines" and "high-order lines"
         # (these are index masks over n_all)
         mask_high = n_all >= BalmerPseudoContinuum._n_min_edge
 
-        # --- Relative line intensities from thermodynamic approximation ---
-        # Eq. 4: I_n / I_ref ≈ exp( - (E_n - E_ref) / (k_B T_e) )
-        # Here dE_n = E_n - E_ref, in eV.
-        k_B_eV = 8.617333262e-5  # eV/K
-        exponent = -dE_n / (k_B_eV * te)
-        rel_int = np.exp(exponent)   # shape (N_lines,)
+        # --- Relative line intensities via thermodynamic approximation (Eq. 4) ---
+        n_ref = BalmerPseudoContinuum._n_ref
+        k_B_eV = 8.617333262e-5  # eV K^-1
 
-        # Absolute intensities (peak amplitudes) for all lines
-        I_n = i_ref * rel_int
+        # Energy of reference upper level
+        idx_ref = np.where(n_all == n_ref)[0]
+        if len(idx_ref) == 0:
+            raise RuntimeError("Reference level n_ref not in n_all.")
+        idx_ref = idx_ref[0]
+        E_ref = E_n[idx_ref]
+
+        # I_n / I_ref ≈ exp( - (E_n - E_ref) / (k_B * te) )
+        dE = E_n - E_ref
+        rel_int = np.exp(-dE / (k_B_eV * te))
+
+        # Ensure exactly 1 at n_ref (avoid rounding issues)
+        rel_int /= rel_int[idx_ref]
+
+        # Peak intensities I_n
+        I_n = i_ref * rel_int   # shape (N_lines,)
 
         # --- Shifted line centers ---
         lambda_n_shift = lambda_n * (1.0 + dv / ls_km)  # Å
@@ -193,15 +198,17 @@ class BalmerPseudoContinuum(Fittable1DModel):
         # --- Evaluate all Balmer Gaussians at wave (λ > λ_BE part) ---
         # G_i(λ) = I_i * exp( - ((λ - λ_i_shift) / wd)^2 )
         # Broadcast wave over lines
-        diff = (wave[None, :] - lambda_n_shift[:, None]) / lambda_n_shift[:, None] * ls_km / sigma
-        gauss_all = I_n[:, None] * np.exp(-diff**2)   # shape (N_lines, N_wave)
+        dw = lambda_n_shift * sigma / ls_km
+        diff = (wave[None, :] - lambda_n_shift[:, None]) / dw[:, None]
+        gauss_all = I_n[:, None] / (dw[:, None] * np.sqrt(2 * np.pi)) * np.exp(-0.5 * diff**2)   # shape (N_lines, N_wave)
 
         # Sum of ALL Balmer lines for each λ (for λ > λ_BE)
         sum_lines_wave = gauss_all.sum(axis=0)        # shape (N_wave,)
 
         # --- Compute sum of high-order lines at Balmer edge (λ_BE) ---
-        diff_edge = (lambda_be_shift - lambda_n_shift) / lambda_n_shift * ls_km / sigma
-        gauss_edge = I_n * np.exp(-diff_edge**2)      # shape (N_lines,)
+        dw_edge = lambda_n_shift * sigma / ls_km
+        diff_edge = (lambda_be_shift - lambda_n_shift) / dw_edge
+        gauss_edge = I_n  / (dw_edge * np.sqrt(2 * np.pi)) * np.exp(-0.5 * diff_edge**2)      # shape (N_lines,)
 
         # Only high-order lines (n >= 6) contribute to the Balmer-edge sum
         sum_edge_high = gauss_edge[mask_high].sum()

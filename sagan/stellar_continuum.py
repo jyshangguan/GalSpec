@@ -10,7 +10,7 @@ from .constants import ls_km
 import pandas as pd
 
 #__all__ = ['stellar_11Gyr', 'stellar_300Myr', 'cstar_KpA']
-__all__ = ['StarSpectrum','Multi_StarSpectrum']
+__all__ = ['StarSpectrum','Multi_StarSpectrum', 'tie_StarSpectrum_deltaz', 'tie_StarSpectrum_sigma']
 
 star_data_cache = {}
 star_velscale_cache = {}
@@ -261,6 +261,23 @@ class Multi_StarSpectrum(Fittable1DModel):
         return flux_convolved
 
 
+class tie_StarSpectrum_deltaz(object):
+    def __init__(self, ref_name):
+        self.ref_name = ref_name
+
+    def __call__(self, model):
+        return model[self.ref_name].delta_z
+    
+
+class tie_StarSpectrum_sigma(object):
+    def __init__(self, ref_name):
+        self.ref_name = ref_name
+
+    def __call__(self, model):
+        return model[self.ref_name].sigma
+
+
+################################################################################################
 # Deprecated
 
 spec_11gyr = np.loadtxt('{0}{1}data{1}sed_bc03_11Gyr.dat'.format(package_path, splitter))

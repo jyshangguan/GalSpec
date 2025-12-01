@@ -4,7 +4,12 @@ from astropy.modeling.parameters import Parameter
 import astropy.units as u
 from .constants import ls_km
 
-__all__ = ['WindowedPowerLaw1D', 'BlackBody', 'BalmerPseudoContinuum']
+try:
+    import extinction
+except ImportError:
+    extinction = None
+
+__all__ = ['WindowedPowerLaw1D', 'BlackBody', 'BalmerPseudoContinuum', 'extinction_ccm89']
 
 
 class WindowedPowerLaw1D(Fittable1DModel):
@@ -270,3 +275,36 @@ def _planck_B_lambda(lam_cm, T):
     x = np.clip(x, 1e-3, 700.0)  # avoid overflow
     ex = np.exp(x)
     return 2.0 * h * c**2 / (lam_cm**5 * (ex - 1.0))
+
+
+class extinction_ccm89(Fittable1DModel):
+    '''
+    The extinction model of Cardelli et al. (1989).
+    Parameters
+    ----------
+    x : array like
+        Wavelength, units: Angstrom.
+    a_v : float
+        Scaling parameter, A_V: extinction in magnitudes at characteristic
+        V-band wavelength.
+    r_v : float
+        Ratio of total to selective extinction, A_V / E(B-V).
+    Returns
+    -------
+    f : array like
+        The fraction of out emitting flux.
+    '''
+    if extinction is None:
+        raise ImportError("The 'extinction' package is required for the 'extinction_ccm89' model. Please install it via 'pip install extinction'.")
+
+    a_v = Parameter(default=0, bounds=(0, None))
+    r_v = Parameter(default=3.1, fixed=True)
+
+    @staticmethod
+    def evaluate(x, a_v, r_v):
+        """
+        The extinction model function (Cardelli et al. 1989).
+        """
+        f =10**(-0.4 * extinction.ccm89(x, a_v, r_v))
+        return f
+

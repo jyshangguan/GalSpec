@@ -6,14 +6,25 @@ from scipy.interpolate import interp1d
 from .constants import ls_km
 from .utils import line_wave_dict
 
+line_funcs = ['Line_Gaussian', 'Line_GaussHermite', 'Line_template', 
+              'Line_MultiGauss', 'Line_MultiGauss_doublet',
+              'Line_Absorption']
+tie_funcs = ['tie_MultiGauss_dv_c', 'tie_MultiGauss_dv_w0', 'tie_MultiGauss_dv_w1',
+             'tie_MultiGauss_dv_w2', 'tie_MultiGauss_dv_w3', 'tie_MultiGauss_dv_w4',
+             'tie_MultiGauss_sigma_c', 'tie_MultiGauss_sigma_w0', 'tie_MultiGauss_sigma_w1',
+             'tie_MultiGauss_doublet_ratio',
+             'tie_template_amplitude', 'tie_template_dv',
+             'tie_StarSpectrum_deltaz', 'tie_StarSpectrum_sigma',
+             'tie_Absorption_dv', 'tie_Absorption_sigma']
+other_funcs = ['find_line_peak', 'line_fwhm']
+__all__ = line_funcs + tie_funcs + other_funcs
 
-__all__ = ['Line_Gaussian', 'Line_GaussHermite', 'Line_template', 
-           'Line_MultiGauss', 'Line_MultiGauss_doublet',
-           'Line_Absorption', 'tier_line_ratio', 
-           'tier_line_sigma', 'tier_wind_dv', 'tier_abs_dv', 'find_line_peak', 
-           'line_fwhm', 'extinction_ccm89', 'gen_o3doublet_gauss','gen_s2doublet_gauss', 
-           'gen_o3doublet_gausshermite', 'gen_s2doublet_gausshermite',
-           'fix_profile_multigauss', 'fix_profile_gausshermite', 'get_line_multigaussian']
+#__all__ = ['Line_Gaussian', 'Line_GaussHermite', 'Line_template', 
+#           'Line_MultiGauss', 'Line_MultiGauss_doublet',
+#           'Line_Absorption', 'find_line_peak', 
+#           'line_fwhm', 'gen_o3doublet_gauss','gen_s2doublet_gauss', 
+#           'gen_o3doublet_gausshermite', 'gen_s2doublet_gausshermite',
+#           'fix_profile_multigauss', 'fix_profile_gausshermite', 'get_line_multigaussian']
 
            
 class Line_Gaussian(Fittable1DModel):
@@ -483,151 +494,155 @@ class Line_Absorption(Fittable1DModel):
 
 
 # Tie parameters
-class tier_line_h3(object):
-
-    def __init__(self, name_fit, name_ref):
-        self._name_fit = name_fit
-        self._name_ref = name_ref
-
-    def __repr__(self):
-        return "<Set the h3 of '{0}' the same as that of '{1}'>".format(self._name_fit, self._name_ref)
+class tie_MultiGauss_dv_c(object):
+    def __init__(self, ref_name):
+        self.ref_name = ref_name
 
     def __call__(self, model):
-        return model[self._name_ref].h3.value
+        return model[self.ref_name].dv_c
 
 
-class tier_line_h4(object):
-
-    def __init__(self, name_fit, name_ref):
-        self._name_fit = name_fit
-        self._name_ref = name_ref
-
-    def __repr__(self):
-        return "<Set the h4 of '{0}' the same as that of '{1}'>".format(self._name_fit, self._name_ref)
+class tie_MultiGauss_dv_w0(object):
+    def __init__(self, ref_name):
+        self.ref_name = ref_name
 
     def __call__(self, model):
-        return model[self._name_ref].h4.value
+        return model[self.ref_name].dv_w0
 
 
-class tier_line_ratio(object):
-
-    def __init__(self, name_fit, name_ref, ratio=None, ratio_names=None):
-
-        self._name_fit = name_fit
-        self._name_ref = name_ref
-        self._ratio = ratio
-        self._ratio_names = ratio_names
-
-        if ((self._ratio is None) and (self._ratio_names is None)):
-            raise keyError('Need to provide ratio or _ratio_names!')
-        elif ((self._ratio is not None) and (self._ratio_names is not None)):
-            raise keyError('Cannot set both ratio and _ratio_names!')
-
-    def __repr__(self):
-
-        if self._ratio is not None:
-            return "<Set the amplitude of '{0}' to 1/{1} that of '{2}'>".format(self._name_fit, self._ratio, self._name_ref)
-        else:
-            return "<Set the amplitude of '{0}' according to '{1}' x '{2[0]}'/'{2[1]}'>".format(self._name_fit, self._name_ref, self._ratio_names)
+class tie_MultiGauss_dv_w1(object):
+    def __init__(self, ref_name):
+        self.ref_name = ref_name
 
     def __call__(self, model):
-
-        if self._ratio is not None:
-            r = 1 / self._ratio
-        else:
-            r = model[self._ratio_names[0]].amplitude.value / (model[self._ratio_names[1]].amplitude.value+1.0e-16)
-
-        return model[self._name_ref].amplitude.value * r
+        return model[self.ref_name].dv_w1
 
 
-class tier_wind_dv(object):
-
-    def __init__(self, names_fit, names_ref):
-        '''
-        Tie the velocity offset of the wind components.
-        Parameters
-        ----------
-        names_fit : list
-            The names of the fitted line profile, [wind, core].
-        names_ref : list
-            The names of the reference line profile, [wind, core].
-        '''
-        self._names_fit = names_fit
-        self._names_ref = names_ref
-
-    def __repr__(self):
-        return "<Set the line dv('{0[0]}')-dv('{0[1]}') = dv('{1[0]}')-dv('{1[1]}')>".format(self._names_fit, self._names_ref)
+class tie_MultiGauss_dv_w2(object):
+    def __init__(self, ref_name):
+        self.ref_name = ref_name
 
     def __call__(self, model):
-        dv_ref = model[self._names_fit[1]].dv.value
-        ddv_ref = model[self._names_ref[0]].dv.value - model[self._names_ref[1]].dv.value
-        return dv_ref + ddv_ref
+        return model[self.ref_name].dv_w1
 
 
-class tier_abs_dv(object):
-
-    def __init__(self, name_fit, name_ref):
-        '''
-        Tie the velocity offset of the line.
-        Parameters
-        ----------
-        name_fit : str
-            The name of the component to be fitted.
-        name_ref : str
-            The name of the component to be tied to.
-        '''
-        self._name_fit = name_fit
-        self._name_ref = name_ref
-
-    def __repr__(self):
-        return "<Set the velocity offset of '{0}' to that of '{1}'>".format(self._name_fit, self._name_ref)
+class tie_MultiGauss_dv_w3(object):
+    def __init__(self, ref_name):
+        self.ref_name = ref_name
 
     def __call__(self, model):
-        return model[self._name_ref].dv.value
+        return model[self.ref_name].dv_w1
 
 
-class tier_line_sigma(object):
-
-    def __init__(self, name_fit, name_ref):
-        self._name_fit = name_fit
-        self._name_ref = name_ref
-
-    def __repr__(self):
-        return "<Set the sigma of '{0}' the same as that of '{1}'>".format(self._name_fit, self._name_ref)
+class tie_MultiGauss_dv_w4(object):
+    def __init__(self, ref_name):
+        self.ref_name = ref_name
 
     def __call__(self, model):
-        return model[self._name_ref].sigma.value
+        return model[self.ref_name].dv_w1
 
 
-class extinction_ccm89(Fittable1DModel):
-    '''
-    The extinction model of Cardelli et al. (1989).
-    Parameters
-    ----------
-    x : array like
-        Wavelength, units: Angstrom.
-    a_v : float
-        Scaling parameter, A_V: extinction in magnitudes at characteristic
-        V-band wavelength.
-    r_v : float
-        Ratio of total to selective extinction, A_V / E(B-V).
-    Returns
-    -------
-    f : array like
-        The fraction of out emitting flux.
-    '''
-    a_v = Parameter(default=0, bounds=(0, None))
-    r_v = Parameter(default=3.1, fixed=True)
+class tie_MultiGauss_amp_w0(object):
+    def __init__(self, ref_name):
+        self.ref_name = ref_name
 
-    @staticmethod
-    def evaluate(x, a_v, r_v):
-        """
-        The extinction model function (Cardelli et al. 1989).
-        """
-        f =10**(-0.4 * extinction.ccm89(x, a_v, r_v))
-        return f
+    def __call__(self, model):
+        return model[self.ref_name].amp_w0
 
 
+class tie_MultiGauss_amp_w1(object):
+    def __init__(self, ref_name):
+        self.ref_name = ref_name
+
+    def __call__(self, model):
+        return model[self.ref_name].amp_w1
+
+
+class tie_MultiGauss_sigma_c(object):
+    def __init__(self, ref_name):
+        self.ref_name = ref_name
+
+    def __call__(self, model):
+        return model[self.ref_name].sigma_c
+
+
+class tie_MultiGauss_sigma_w0(object):
+    def __init__(self, ref_name):
+        self.ref_name = ref_name
+
+    def __call__(self, model):
+        return model[self.ref_name].sigma_w0
+
+
+class tie_MultiGauss_sigma_w1(object):
+    def __init__(self, ref_name):
+        self.ref_name = ref_name
+
+    def __call__(self, model):
+        return model[self.ref_name].sigma_w1
+
+
+class tie_MultiGauss_doublet_ratio(object):
+    def __init__(self, ref_name, ratio):
+        self.ref_name = ref_name
+        self.ratio = ratio
+
+    def __call__(self, model):
+        return model[self.ref_name].amp_c0 / self.ratio
+
+
+class tie_template_amplitude(object):
+    ''' Tie the amplitude of a Line_template line to another line's amplitude. '''
+    def __init__(self, ref_name, ratio=1):
+        self.ref_name = ref_name
+        self.ratio = ratio
+
+    def __call__(self, model):
+        return model[self.ref_name].amplitude / self.ratio
+
+
+class tie_template_dv(object):
+    ''' Tie the dv of a Line_template line to another line's dv. '''
+    def __init__(self, ref_name):
+        self.ref_name = ref_name
+
+    def __call__(self, model):
+        return model[self.ref_name].dv
+
+
+class tie_StarSpectrum_deltaz(object):
+    def __init__(self, ref_name):
+        self.ref_name = ref_name
+
+    def __call__(self, model):
+        return model[self.ref_name].delta_z
+    
+
+class tie_StarSpectrum_sigma(object):
+    def __init__(self, ref_name):
+        self.ref_name = ref_name
+
+    def __call__(self, model):
+        return model[self.ref_name].sigma
+
+
+class tie_Absorption_dv(object):
+    def __init__(self, ref_name):
+        self.ref_name = ref_name
+
+    def __call__(self, model):
+        return model[self.ref_name].dv
+    
+
+class tie_Absorption_sigma(object):
+    def __init__(self, ref_name):
+        self.ref_name = ref_name
+
+    def __call__(self, model):
+        return model[self.ref_name].sigma
+
+
+# Other functions
 def find_line_peak(model, x0):
     '''
     Find the peak wavelength and flux of the model line profile.

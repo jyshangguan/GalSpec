@@ -10,7 +10,7 @@ mpl.rc("ytick.major", width=1., size=8)
 mpl.rc("xtick.minor", width=1., size=5)
 mpl.rc("ytick.minor", width=1., size=5)
 
-__all__ = ['plot_fit', 'plot_fit_new']
+__all__ = ['plot_fit', 'plot_fit_new', 'reorder_legend']
 
 
 def plot_fit_new(wave, flux, model, weight=None, error=None, ax=None, axr=None, xlim=None, ylim0=None, 
@@ -146,7 +146,8 @@ def plot_fit_new(wave, flux, model, weight=None, error=None, ax=None, axr=None, 
 
 
 def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0=None, 
-             ylim1=None, xlabel=None, ylabel=None, legend_kwargs=None, plot_weight=True):
+             ylim1=None, xlabel=None, ylabel=None, legend_kwargs=None, plot_weight=True, 
+             ignore_list=None, legend_map=None):
     '''
     Plot the fitting result.
 
@@ -189,7 +190,20 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
     else:
         assert axr is not None, 'Please provide the axes of the residual panel!'
     axr.sharex(ax)
+
+    if ignore_list is None:
+        ignore_list = ['multi']
+    else:
+        if 'multi' not in ignore_list:
+            ignore_list.append('multi')
     
+    # Set the legend info
+    if legend_map is None:
+        legend_map = {}
+    
+    legend_dict = _map_legend(model, legend_map, ignore_list)
+
+    # Plotting   
     ax.step(wave, flux, lw=1, color='k', label='Data')
 
     if (weight is not None) & plot_weight:
@@ -206,7 +220,7 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
         m_multi = None
 
     for loop, m in enumerate(model):
-        if m.name == 'multi':
+        if m.name in ignore_list:
             continue
         
         if m_multi is not None:
@@ -214,7 +228,8 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
         else:
             y = m(wave)
 
-        ax.plot(wave, y, lw=0.5, color=f'C{loop}', label=m.name)
+        color, label = legend_dict[m.name]
+        ax.plot(wave, y, lw=0.5, color=color, label=label)
 
         if (isinstance(m, Line_MultiGauss)) | (isinstance(m, Line_MultiGauss_doublet)):
             if m.n_components > 1:
@@ -223,8 +238,7 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
                         y = msub(wave) * m_multi
                     else:
                         y = msub(wave)
-                    ax.plot(wave, y, lw=0.5, ls='--', 
-                            color=f'C{loop}')
+                    ax.plot(wave, y, lw=0.5, ls='--', color=color)
     
     flux_res = flux - model(wave)
     # Mask the region with weight=0
@@ -268,3 +282,60 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
 
     return ax, axr
 
+
+def _map_legend(model, legend_map, ignore_list=None):
+    '''
+    Map the legend names according to the legend_map dictionary.
+
+    Parameters
+    ----------
+    model : array like
+        Model.
+    legend_map : dict
+        A dictionary mapping colors and labels to model names.
+    '''
+    legend_dict = {}
+    label_list = []
+    count_colors = 0
+    for loop, m in enumerate(model):
+        if (ignore_list is not None) and (m.name in ignore_list):
+            continue
+
+        for (c, l), name_list in legend_map.items():
+            if m.name in name_list:
+
+                if l in label_list:
+                    legend_dict[m.name] = (c, None)
+                else:
+                    legend_dict[m.name] = (c, l)
+                    label_list.append(l)
+        
+        if m.name not in legend_dict:
+            legend_dict[m.name] = (f'C{count_colors%10}', m.name)
+            label_list.append(m.name)
+            count_colors += 1
+
+    return legend_dict
+
+
+def reorder_legend(ax, order):
+    '''
+    Reorder the legend of a matplotlib Axes.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The Axes object.
+    order : list
+        The desired order of legend labels.
+    '''
+    handles, labels = ax.get_legend_handles_labels()
+    label_handle_dict = dict(zip(labels, handles))
+    new_handles = []
+    new_labels = []
+    for label in order:
+        if label in label_handle_dict:
+            new_labels.append(label)
+            new_handles.append(label_handle_dict[label])
+
+    return new_handles, new_labels

@@ -11,11 +11,12 @@ line_funcs = ['Line_Gaussian', 'Line_GaussHermite', 'Line_template',
               'Line_Absorption']
 tie_funcs = ['tie_MultiGauss_dv_c', 'tie_MultiGauss_dv_w0', 'tie_MultiGauss_dv_w1',
              'tie_MultiGauss_dv_w2', 'tie_MultiGauss_dv_w3', 'tie_MultiGauss_dv_w4',
+             'tie_MultiGauss_amp_w0', 'tie_MultiGauss_amp_w1', 
              'tie_MultiGauss_sigma_c', 'tie_MultiGauss_sigma_w0', 'tie_MultiGauss_sigma_w1',
              'tie_MultiGauss_doublet_ratio',
              'tie_template_amplitude', 'tie_template_dv',
              'tie_StarSpectrum_deltaz', 'tie_StarSpectrum_sigma',
-             'tie_Absorption_dv', 'tie_Absorption_sigma']
+             'tie_Absorption_dv', 'tie_Absorption_sigma', 'tie_Absorption_Cf', 'tie_Absorption_tau0']
 other_funcs = ['find_line_peak', 'line_fwhm']
 __all__ = line_funcs + tie_funcs + other_funcs
 
@@ -640,6 +641,23 @@ class tie_Absorption_sigma(object):
 
     def __call__(self, model):
         return model[self.ref_name].sigma
+    
+
+class tie_Absorption_Cf(object):
+    def __init__(self, ref_name):
+        self.ref_name = ref_name
+
+    def __call__(self, model):
+        return model[self.ref_name].Cf
+
+
+class tie_Absorption_tau0(object):
+    def __init__(self, ref_name, ratio=1):
+        self.ref_name = ref_name
+        self.ratio = ratio
+
+    def __call__(self, model):
+        return model[self.ref_name].tau_0 / self.ratio
 
 
 # Other functions

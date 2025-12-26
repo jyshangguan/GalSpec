@@ -6,3 +6,5 @@ from .utils import *
 from .plot import *
 from .mcmc_fit import *
 from .measure_method import *
+from .save_fits import *
+from .convolution import *

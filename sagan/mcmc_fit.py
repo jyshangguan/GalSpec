@@ -141,7 +141,10 @@ class MCMC_Fit:
     
     def get_param_samples(self, model_name, param_name, discard=0):
         """Get the samples of a parameter from the MCMC chains."""
-        flat_samples = self.sampler.get_chain(flat=True, discard=discard)
+        if discard == 0:
+            flat_samples = self.flat_samples
+        else:
+            flat_samples = self.sampler.get_chain(flat=True, discard=discard)
         param_index = self.get_param_index(model_name, param_name)
         return flat_samples[:, param_index]
 

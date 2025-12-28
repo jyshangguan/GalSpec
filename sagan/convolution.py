@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal, Tuple
+from typing import Any, Literal, Tuple, Dict, List, Optional, Sequence
 
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 
-__all__ = ['convolve_lsf']
+from astropy.modeling import Parameter
+
+__all__ = ['convolve_lsf', 'find_convolved_submodels']
 
 
 Mode = Literal["reflect", "constant", "nearest", "mirror", "wrap"]
@@ -19,7 +21,7 @@ class GaussianConv1DConfig:
     mode: Mode = "reflect"
     cval: float = 0.0
     truncate: float = 4.0
-    uniform_rtol: float = 1e-2
+    uniform_rtol: float = 1e-6
 
 
 def _x_to_value_and_unit(x: Any) -> Tuple[np.ndarray, Any]:
@@ -142,5 +144,75 @@ def convolve_lsf(model: Any, wavec: float, resolving_power: float):
     Fittable1DModel
         A new model class representing the convolved model.
     """
+    if isinstance(wavec, Parameter):
+        wavec = wavec.value
+
     sigma_x = wavec / (resolving_power * 2.3548)  # FWHM to sigma conversion
-    return decorate_gaussian_convolution_1d_inplace(model=model, sigma_x=sigma_x)
+    m = decorate_gaussian_convolution_1d_inplace(model=model, sigma_x=sigma_x)
+    m.meta = dict(getattr(m, "meta", {}) or {})
+    m.meta["lsf_convolved"] = True
+    m.meta["lsf_sigma_x"] = float(sigma_x)
+    m.meta["lsf_info"] = {"wavec": float(wavec), "R": float(resolving_power)}
+    return m
+
+
+@dataclass(frozen=True)
+class ConvolvedNode:
+    """
+    One submodel detected as convolved.
+    """
+    model: Any
+    name: Optional[str]
+    cls_name: str
+    meta: Dict[str, Any]
+
+
+def _looks_convolved(m: Any, *, tag_attr: str) -> bool:
+    meta = getattr(m, "meta", {}) or {}
+    if meta.get("lsf_convolved") is True:
+        return True
+    if hasattr(m, tag_attr):
+        return True
+    # fallback: class name suffix used by your decorator
+    return "__GaussConv1D" in m.__class__.__name__
+
+
+def iter_submodels(root: Any) -> Sequence[Any]:
+    """
+    Iterate submodels in a compound tree if possible; otherwise yield root only.
+    """
+    traverse = getattr(root, "traverse_postorder", None)
+    if callable(traverse):
+        # Astropy CompoundModel traversal (no operators by default). :contentReference[oaicite:2]{index=2}
+        return list(traverse())
+    return [root]
+
+
+def find_convolved_submodels(
+    model: Any,
+    *,
+    tag_attr: str = "_gaussconv1d_callswap",
+) -> List[ConvolvedNode]:
+    """
+    Return submodels in (possibly compound) `model` that have been decorated.
+
+    Detection uses, in order:
+      1) model.meta["lsf_convolved"] == True  (recommended tag) :contentReference[oaicite:3]{index=3}
+      2) hasattr(model, tag_attr)             (your decorator’s private tag)
+      3) "__GaussConv1D" in class name        (fallback)
+
+    Tip: set model.name on components before combining to make output readable. :contentReference[oaicite:4]{index=4}
+    """
+    out: List[ConvolvedNode] = []
+    for node in iter_submodels(model):
+        if _looks_convolved(node, tag_attr=tag_attr):
+            meta = dict(getattr(node, "meta", {}) or {})
+            out.append(
+                ConvolvedNode(
+                    model=node,
+                    name=getattr(node, "name", None),
+                    cls_name=node.__class__.__name__,
+                    meta=meta,
+                )
+            )
+    return out

@@ -3,6 +3,7 @@ from astropy.modeling.core import Fittable1DModel
 from astropy.modeling.parameters import Parameter
 from scipy.optimize import minimize
 from scipy.interpolate import interp1d
+from scipy.ndimage import gaussian_filter1d
 from .constants import ls_km
 from .utils import line_wave_dict
 
@@ -16,7 +17,8 @@ tie_funcs = ['tie_MultiGauss_dv_c', 'tie_MultiGauss_dv_w0', 'tie_MultiGauss_dv_w
              'tie_MultiGauss_doublet_ratio',
              'tie_template_amplitude', 'tie_template_dv',
              'tie_StarSpectrum_deltaz', 'tie_StarSpectrum_sigma',
-             'tie_Absorption_dv', 'tie_Absorption_sigma', 'tie_Absorption_Cf', 'tie_Absorption_tau0']
+             'tie_Absorption_dv', 'tie_Absorption_sigma', 'tie_Absorption_Cf', 
+             'tie_Absorption_logtau0']
 other_funcs = ['find_line_peak', 'line_fwhm']
 __all__ = line_funcs + tie_funcs + other_funcs
 
@@ -462,8 +464,8 @@ class Line_Absorption(Fittable1DModel):
     ----------
     x : array like
         Wavelength, units: arbitrary.
-    tau_0 : float
-        The optical depth at line center.
+    logtau0 : float
+        The optical depth at line center in the logarithmic scale.
     dv : float
         The velocity of the central line offset from wavec, units: km/s.
     sigma : float
@@ -473,8 +475,7 @@ class Line_Absorption(Fittable1DModel):
     Cf : float
         The covering fraction of the absorbing gas, between 0 and 1.
     '''
-
-    tau_0 = Parameter(default=1, bounds=(0, None))
+    logtau0 = Parameter(default=0, bounds=(-2, 2))
     dv = Parameter(default=0, bounds=(-10000, 10000))
     sigma = Parameter(default=200, bounds=(20, 10000))
     Cf = Parameter(default=1, bounds=(0, 1))
@@ -482,14 +483,56 @@ class Line_Absorption(Fittable1DModel):
     wavec = Parameter(default=5000, fixed=True)
 
     @staticmethod
-    def evaluate(x, tau_0, dv, sigma, Cf, wavec):
+    def evaluate(x, logtau0, dv, sigma, Cf, wavec):
         """
         Absorption Gaussian model function.
         """
         v = (x - wavec) / wavec * ls_km  # convert to velocity (km/s)
         #tau_v = tau_0 * (1/(sigma * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((v - dv)/ sigma)**2)
-        tau_v = tau_0 * np.exp(-0.5 * ((v - dv)/ sigma)**2)
+        tau_v = 10**logtau0 * np.exp(-0.5 * ((v - dv)/ sigma)**2)
         f = 1 - Cf + Cf* np.exp(-1*tau_v)
+
+        return f
+
+
+class Line_Exponential(Fittable1DModel):
+    '''
+    The Exponential line profile with the sigma as the velocity, convolved with an \
+    intrinsic Gaussian profile.
+
+    Parameters
+    ----------
+    x : array like
+        Wavelength, units: arbitrary.
+    amplitude : float
+        The amplitude of the line profile.
+    dv : float
+        The velocity of the central line offset from wavec, units: km/s.
+    sigma : float
+        The velocity dispersion of the line profile, units: km/s.
+    w : float
+        The e-folding scale of the exponential profile, units: km/s.
+    wavec : float
+        The central wavelength of the line profile, units: same as x.
+    '''
+
+    amplitude = Parameter(default=1, bounds=(0, None))
+    dv = Parameter(default=0, bounds=(-2000, 2000))
+    sigma = Parameter(default=200, bounds=(20, 10000))
+    w = Parameter(default=100, bounds=(1, 1000))
+    wavec = Parameter(default=5000, fixed=True)
+
+    @staticmethod
+    def evaluate(x, amplitude, dv, sigma, w, wavec):
+        """
+        Exponential model function.
+        """
+
+        v = (x - wavec) / wavec * ls_km  # convert to velocity (km/s)
+        #f_gaus=np.exp(-0.5 * ((v - dv)/ sigma)**2)
+        f_exp = amplitude * np.exp(-1 * np.abs((v - dv)/ w))
+        f= gaussian_filter1d(f_exp, sigma/(v[1]-v[0]))
+        #f = convolve_fft(f_exp, f_gaus, normalize_kernel=True, boundary='wrap')
 
         return f
 
@@ -651,13 +694,13 @@ class tie_Absorption_Cf(object):
         return model[self.ref_name].Cf
 
 
-class tie_Absorption_tau0(object):
+class tie_Absorption_logtau0(object):
     def __init__(self, ref_name, ratio=1):
         self.ref_name = ref_name
-        self.ratio = ratio
+        self.logratio = np.log10(ratio)
 
     def __call__(self, model):
-        return model[self.ref_name].tau_0 / self.ratio
+        return model[self.ref_name].logtau0 - self.logratio
 
 
 # Other functions

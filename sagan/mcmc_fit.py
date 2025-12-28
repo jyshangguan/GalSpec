@@ -106,6 +106,70 @@ class MCMC_Fit:
         self.log_prob = self.sampler.get_log_prob(flat=True)
         return self.flat_samples, self.model, self.param_names
     
+    def fit_ncores(self, ncores=None):
+        """
+        Perform MCMC fitting using multiple CPU cores.
+        
+        Parameters
+        ----------
+        ncores : int, optional
+            Number of CPU cores to use for parallel sampling. 
+            If None, uses all available cores minus one.
+            
+        Returns
+        -------
+        flat_samples : ndarray
+            Flattened MCMC samples
+        model : CompoundModel
+            The fitted model
+        param_names : list
+            Names of fitted parameters
+            
+        Notes
+        -----
+        This method uses multiprocessing to parallelize the MCMC sampling across
+        multiple CPU cores, which can significantly speed up the fitting process.
+        Each walker is evaluated independently, making MCMC highly parallelizable.
+        """
+        import multiprocess as mp
+        from multiprocess import Pool, cpu_count
+        
+        # Determine number of cores to use
+        if ncores is None:
+            ncores = cpu_count() - 1
+        ncores = max(1, min(ncores, cpu_count()))
+        
+        print(f'Starting MCMC fitting with {ncores} CPU cores...')
+        
+        # Create the sampler with multiprocessing pool
+        ctx = mp.get_context("fork")
+        with ctx.Pool(ncores) as pool:
+            self.sampler = emcee.EnsembleSampler(
+                self.nwalkers, 
+                self.ndim, 
+                self.log_probability, 
+                args=(),
+                pool=pool
+            )
+            
+            if self.step_initial > 0:
+                print(f'Running burn-in phase for {self.step_initial} steps...')
+                pos, prob, state = self.sampler.run_mcmc(self.pos, self.step_initial, progress=True)
+                self.samples_initial = self.sampler.get_chain(flat=True)
+                self.sampler.reset()
+                print(f'Running production phase for {self.nsteps} steps...')
+                self.sampler.run_mcmc(pos, self.nsteps, progress=True)
+            else:
+                print(f'Running MCMC for {self.nsteps} steps...')
+                self.sampler.run_mcmc(self.pos, self.nsteps, progress=True)
+        
+        self.flat_samples = self.sampler.get_chain(flat=True)
+        self.log_prob = self.sampler.get_log_prob(flat=True)
+        
+        print('MCMC fitting completed.')
+        
+        return self.flat_samples, self.model, self.param_names
+    
     def get_best_fit(self, discard=0):
         """Set the model parameters to the best fit values."""
         # Get best fit parameters

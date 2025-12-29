@@ -90,7 +90,7 @@ class MCMC_Fit:
             if m.name is None:
                 m.name = self.model.submodel_names[loop]
 
-    def fit(self):
+    def fit(self, progress=True):
         """Perform MCMC fitting."""
         self.sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self.log_probability, args=())
 
@@ -98,9 +98,9 @@ class MCMC_Fit:
             pos, prob, state = self.sampler.run_mcmc(self.pos, self.step_initial, progress=True)
             self.samples_initial = self.sampler.get_chain(flat=True)
             self.sampler.reset()
-            self.sampler.run_mcmc(pos, self.nsteps, progress=True)
+            self.sampler.run_mcmc(pos, self.nsteps, progress=progress)
         else:
-            self.sampler.run_mcmc(self.pos, self.nsteps, progress=True)
+            self.sampler.run_mcmc(self.pos, self.nsteps, progress=progress)
         
         self.flat_samples = self.sampler.get_chain(flat=True)
         self.log_prob = self.sampler.get_log_prob(flat=True)

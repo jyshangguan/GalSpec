@@ -9,7 +9,7 @@ from scipy.ndimage import gaussian_filter1d
 
 from astropy.modeling import Parameter
 
-__all__ = ['convolve_lsf', 'find_convolved_submodels']
+__all__ = ['convolve_lsf', 'find_convolved_submodels', 'refresh_convolved_submodels_inplace']
 
 
 Mode = Literal["reflect", "constant", "nearest", "mirror", "wrap"]
@@ -154,6 +154,58 @@ def convolve_lsf(model: Any, wavec: float, resolving_power: float):
     m.meta["lsf_sigma_x"] = float(sigma_x)
     m.meta["lsf_info"] = {"wavec": float(wavec), "R": float(resolving_power)}
     return m
+
+
+def refresh_convolved_submodels_inplace(
+    model: Any,
+    *,
+    tag_attr: str = _TAG,
+) -> int:
+    """
+    Rebuild gaussian-convolved wrapper classes in-place.
+
+    Why this exists
+    ---------------
+    `decorate_gaussian_convolution_1d_inplace` creates a dynamic class via `type(...)`
+    and assigns it to `model.__class__`. When such a model is pickled/unpickled
+    (especially across machines or different Python/NumPy/SciPy versions), the
+    reconstructed dynamic class can sometimes be unstable.
+
+    This function uses the stored decorator tag to:
+      1) restore the original class (`orig_cls`)
+      2) remove the tag
+      3) re-apply the decorator, generating a fresh wrapper class in the current runtime
+
+    Returns
+    -------
+    int
+        Number of submodels refreshed.
+    """
+    refreshed = 0
+    for node in find_convolved_submodels(model, tag_attr=tag_attr):
+        m = node.model
+        tag = getattr(m, tag_attr, None)
+        if not isinstance(tag, dict):
+            continue
+        orig_cls = tag.get("orig_cls")
+        sigma_x = tag.get("sigma_x")
+        cfg = tag.get("cfg", GaussianConv1DConfig())
+        if orig_cls is None or sigma_x is None:
+            continue
+
+        try:
+            m.__class__ = orig_cls
+            try:
+                delattr(m, tag_attr)
+            except Exception:
+                pass
+            decorate_gaussian_convolution_1d_inplace(model=m, sigma_x=float(sigma_x), cfg=cfg)
+            refreshed += 1
+        except Exception:
+            # Best-effort refresh; don't break caller if one submodel fails.
+            continue
+
+    return refreshed
 
 
 @dataclass(frozen=True)

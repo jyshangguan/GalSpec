@@ -106,7 +106,7 @@ class MCMC_Fit:
         self.log_prob = self.sampler.get_log_prob(flat=True)
         return self.flat_samples, self.model, self.param_names
     
-    def fit_ncores(self, ncores=None):
+    def fit_ncores(self, ncores=None, pool=None):
         """
         Perform MCMC fitting using multiple CPU cores.
         
@@ -131,37 +131,38 @@ class MCMC_Fit:
         multiple CPU cores, which can significantly speed up the fitting process.
         Each walker is evaluated independently, making MCMC highly parallelizable.
         """
-        import multiprocess as mp
-        from multiprocess import Pool, cpu_count
-        
-        # Determine number of cores to use
-        if ncores is None:
-            ncores = cpu_count() - 1
-        ncores = max(1, min(ncores, cpu_count()))
-        
-        print(f'Starting MCMC fitting with {ncores} CPU cores...')
-        
-        # Create the sampler with multiprocessing pool
-        ctx = mp.get_context("fork")
-        with ctx.Pool(ncores) as pool:
-            self.sampler = emcee.EnsembleSampler(
-                self.nwalkers, 
-                self.ndim, 
-                self.log_probability, 
-                args=(),
-                pool=pool
-            )
+        if pool is None:
+            from multiprocess import Pool, cpu_count
+            if ncores is None:
+                ncores = max(1, cpu_count() - 1)
+            pool = Pool(processes=ncores)
+            created_pool = True
+        else: 
+            ncores = pool._processes
+
+        self.sampler = emcee.EnsembleSampler(
+            self.nwalkers, 
+            self.ndim, 
+            self.log_probability, 
+            args=(),
+            vectorize=False,
+            pool=pool
+        )
             
-            if self.step_initial > 0:
-                print(f'Running burn-in phase for {self.step_initial} steps...')
-                pos, prob, state = self.sampler.run_mcmc(self.pos, self.step_initial, progress=True)
-                self.samples_initial = self.sampler.get_chain(flat=True)
-                self.sampler.reset()
-                print(f'Running production phase for {self.nsteps} steps...')
-                self.sampler.run_mcmc(pos, self.nsteps, progress=True)
-            else:
-                print(f'Running MCMC for {self.nsteps} steps...')
-                self.sampler.run_mcmc(self.pos, self.nsteps, progress=True)
+        if self.step_initial > 0:
+            print(f'Running burn-in phase for {self.step_initial} steps...')
+            pos, prob, state = self.sampler.run_mcmc(self.pos, self.step_initial, progress=True)
+            self.samples_initial = self.sampler.get_chain(flat=True)
+            self.sampler.reset()
+            print(f'Running production phase for {self.nsteps} steps...')
+            self.sampler.run_mcmc(pos, self.nsteps, progress=True)
+        else:
+            print(f'Running MCMC for {self.nsteps} steps...')
+            self.sampler.run_mcmc(self.pos, self.nsteps, progress=True)
+        
+        if created_pool:
+            pool.close()
+            pool.join()
         
         self.flat_samples = self.sampler.get_chain(flat=True)
         self.log_prob = self.sampler.get_log_prob(flat=True)
@@ -285,13 +286,13 @@ class MCMC_Fit:
         axes[-1].set_xlabel("Step number")
         plt.tight_layout()
 
-    def plot_corner(self, discard=0, **kwargs):
+    def plot_corner(self, discard=0, thin=1, **kwargs):
         """Plot the corner plot of the MCMC samples."""
         if discard == 0:
             flat_samples = self.flat_samples
         else:
             flat_samples = self.sampler.get_chain(flat=True, discard=discard)
-        return corner.corner(flat_samples, labels=self.param_names, truths=self.theta_best, **kwargs)
+        return corner.corner(flat_samples[:, ::thin], labels=self.param_names, truths=self.theta_best, **kwargs)
 
     def pos_posterior(self, nsamples=1, discard=0):
         """Get the posterior samples after discarding burn-in."""

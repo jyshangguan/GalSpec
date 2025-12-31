@@ -21,7 +21,8 @@ __all__ = ['get_free_params', 'MCMC_Fit']
 
 
 class MCMC_Fit:
-    def __init__(self, model, wave_use, flux_use, ferr, log_prior_func=None, nwalkers=50, nsteps=6000, step_initial=0):
+    def __init__(self, model, wave_use, flux_use, ferr, log_prior_func=None, 
+                 nwalkers=50, nsteps=6000, nburn=5000, initial_frac=1e-4):
         """
         Initialize the MCMC_Fit class.
         """
@@ -37,7 +38,7 @@ class MCMC_Fit:
         self.ferr = ferr
         self.nwalkers = nwalkers
         self.nsteps = nsteps
-        self.step_initial = step_initial
+        self.nburn = nburn
 
         self.check_input_model()
 
@@ -48,7 +49,7 @@ class MCMC_Fit:
         # Initialize parameter values for walkers
         self.theta_initial = self.get_initial_theta()
         self.ndim = len(self.theta_initial)
-        self.pos = self.theta_initial + 1e-8 * np.random.randn(self.nwalkers, self.ndim)
+        self.pos = self.theta_initial + initial_frac * np.random.randn(self.nwalkers, self.ndim)
         self.theta_best = None
 
         # Use the provided log_prior_func or the default self.log_prior
@@ -93,17 +94,10 @@ class MCMC_Fit:
     def fit(self, progress=True):
         """Perform MCMC fitting."""
         self.sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self.log_probability, args=())
-
-        if self.step_initial > 0:
-            pos, prob, state = self.sampler.run_mcmc(self.pos, self.step_initial, progress=True)
-            self.samples_initial = self.sampler.get_chain(flat=True)
-            self.sampler.reset()
-            self.sampler.run_mcmc(pos, self.nsteps, progress=progress)
-        else:
-            self.sampler.run_mcmc(self.pos, self.nsteps, progress=progress)
+        self.sampler.run_mcmc(self.pos, self.nsteps, progress=progress)
         
-        self.flat_samples = self.sampler.get_chain(flat=True)
-        self.log_prob = self.sampler.get_log_prob(flat=True)
+        self.flat_samples = self.sampler.get_chain(flat=True, discard=self.nburn)
+        self.log_prob = self.sampler.get_log_prob(flat=True, discard=self.nburn)
         return self.flat_samples, self.model, self.param_names
     
     def fit_ncores(self, ncores=None, pool=None):
@@ -267,16 +261,10 @@ class MCMC_Fit:
             return -np.inf
         return lp + self.log_likelihood(theta)
 
-    def plot_chain(self, initial=False):
+    def plot_chain(self):
         """Plot the MCMC chains."""
         fig, axes = plt.subplots(len(self.param_names), figsize=(10, 2*self.ndim), sharex=True)
-        if initial:
-            if hasattr(self, 'samples_initial'):
-                samples = self.samples_initial
-            else:
-                raise ValueError("Initial samples not found. Please run fit() with step_initial > 0 first.")
-        else:
-            samples = self.sampler.get_chain()
+        samples = self.sampler.get_chain()
 
         for i, param_name in enumerate(self.param_names):
             ax = axes[i]

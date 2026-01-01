@@ -321,6 +321,20 @@ class MCMC_Fit:
                 lower_bound = -100
             param.bounds = (lower_bound, upper_bound)
 
+    def close(self):
+            '''
+            Clean up resources.
+            '''
+            self.sampler = None
+            self.flat_samples = None
+            self.log_prob = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
+        return False
 
 def get_free_params(model):
     """Get the free parameters for the model."""

@@ -261,14 +261,14 @@ class MCMC_Fit:
             return -np.inf
         return lp + self.log_likelihood(theta)
 
-    def plot_chain(self):
+    def plot_chain(self, thin=1):
         """Plot the MCMC chains."""
         fig, axes = plt.subplots(len(self.param_names), figsize=(10, 2*self.ndim), sharex=True)
         samples = self.sampler.get_chain()
 
         for i, param_name in enumerate(self.param_names):
             ax = axes[i]
-            ax.plot(samples[:, :, i], "k", alpha=0.3)
+            ax.plot(samples[::thin, :, i], "k", alpha=0.3, rasterized=True)
             ax.set_ylabel(param_name)
 
         axes[-1].set_xlabel("Step number")

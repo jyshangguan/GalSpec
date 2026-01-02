@@ -33,10 +33,19 @@ def load_model(filename):
         model = pickle.load(f)
     return model
 
-def save_mcmc(mcmc, filename):
+def save_mcmc(mcmc, filename, 
+              reset_sampler: Optional[bool] = False,
+              thin: Optional[int] = 1):
     '''
     Save an MCMC object to a file using dill for serialization.
     '''
+    if reset_sampler:
+        mcmc.sampler.reset()
+    
+    if thin is not None and thin > 1:
+        mcmc.flat_samples = mcmc.flat_samples[::thin, :]
+        mcmc.log_prob = mcmc.log_prob[::thin]
+
     with open(filename, 'wb') as f:
         pickle.dump(mcmc, f)
 

@@ -292,9 +292,9 @@ class MCMC_Fit:
         indices = np.random.choice(samples.shape[0], size=nsamples, replace=False)
         return samples[indices]
 
-    def save_samples(self, filename):
+    def save_samples(self, filename, thin=1):
         """Save the MCMC samples to a file."""
-        np.savez(filename, samples=self.flat_samples, log_prob=self.log_prob, param_names=self.param_names)
+        np.savez(filename, samples=self.flat_samples[::thin, :], log_prob=self.log_prob, param_names=self.param_names)
 
     def set_model_params(self, theta):
         """Set the model parameters from theta."""

@@ -82,6 +82,7 @@ def decorate_gaussian_convolution_1d_inplace(
     model: Any,
     *,
     sigma_x: float,
+    class_label: Optional[str] = None,
     cfg: GaussianConv1DConfig = GaussianConv1DConfig(),
 ) -> Any:
     """
@@ -119,13 +120,13 @@ def decorate_gaussian_convolution_1d_inplace(
     else:
         cls_dict = {"__call__": __call__}
 
-    ConvolvedCls = type(f"{orig_cls.__name__}__GaussConv1D", (orig_cls,), cls_dict)
+    ConvolvedCls = type(f"{orig_cls.__name__}_{class_label}_GaussConv1D", (orig_cls,), cls_dict)
     model.__class__ = ConvolvedCls
     setattr(model, _TAG, {"orig_cls": orig_cls, "sigma_x": sigma_x, "cfg": cfg})
     return model
 
 
-def convolve_lsf(model: Any, wavec: float, resolving_power: float):
+def convolve_lsf(model: Any, wavec: float, resolving_power: float, class_label: Optional[str] = None) -> Any:
     """
     Create a new model class that represents the convolution of the input model
     with a Gaussian LSF of given resolving power at wavec.
@@ -138,6 +139,8 @@ def convolve_lsf(model: Any, wavec: float, resolving_power: float):
         The central wavelength (in same units as x) where the resolving power is defined.
     resolving_power : float
         The resolving power R = lambda / delta_lambda.
+    class_label : str, optional
+        An optional label to append to the generated class name.
 
     Returns
     -------
@@ -148,11 +151,15 @@ def convolve_lsf(model: Any, wavec: float, resolving_power: float):
         wavec = wavec.value
 
     sigma_x = wavec / (resolving_power * 2.3548)  # FWHM to sigma conversion
-    m = decorate_gaussian_convolution_1d_inplace(model=model, sigma_x=sigma_x)
+    m = decorate_gaussian_convolution_1d_inplace(model=model, sigma_x=sigma_x, class_label=class_label)
     m.meta = dict(getattr(m, "meta", {}) or {})
     m.meta["lsf_convolved"] = True
     m.meta["lsf_sigma_x"] = float(sigma_x)
     m.meta["lsf_info"] = {"wavec": float(wavec), "R": float(resolving_power)}
+
+    cls = m.__class__
+    cls.__module__ = __name__
+    globals()[cls.__name__] = cls
     return m
 
 

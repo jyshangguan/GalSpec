@@ -10,8 +10,9 @@ from .utils import line_wave_dict
 line_funcs = ['Line_Gaussian', 'Line_GaussHermite', 'Line_template', 
               'Line_MultiGauss', 'Line_MultiGauss_doublet',
               'Line_Absorption']
-tie_funcs = ['tie_MultiGauss_dv_c', 'tie_MultiGauss_dv_w0', 'tie_MultiGauss_dv_w1',
-             'tie_MultiGauss_dv_w2', 'tie_MultiGauss_dv_w3', 'tie_MultiGauss_dv_w4',
+tie_funcs = ['tie_MultiGauss_amp_c', 'tie_MultiGauss_dv_c', 'tie_MultiGauss_dv_w0', 
+             'tie_MultiGauss_dv_w1', 'tie_MultiGauss_dv_w2', 'tie_MultiGauss_dv_w3', 
+             'tie_MultiGauss_dv_w4',
              'tie_MultiGauss_amp_w0', 'tie_MultiGauss_amp_w1', 
              'tie_MultiGauss_sigma_c', 'tie_MultiGauss_sigma_w0', 'tie_MultiGauss_sigma_w1',
              'tie_MultiGauss_doublet_ratio',
@@ -538,6 +539,16 @@ class Line_Exponential(Fittable1DModel):
 
 
 # Tie parameters
+class tie_MultiGauss_amp_c(object):
+    ''' Tie the amplitude of a MultiGauss line to another line's amplitude. '''
+    def __init__(self, ref_name, ratio=1):
+        self.ref_name = ref_name
+        self.ratio = ratio
+
+    def __call__(self, model):
+        return model[self.ref_name].amp_c / self.ratio
+
+
 class tie_MultiGauss_dv_c(object):
     def __init__(self, ref_name):
         self.ref_name = ref_name

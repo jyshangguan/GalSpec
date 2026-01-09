@@ -9,7 +9,12 @@ def line_emission_flux(model, model_names, wave_obs, wave_range=None):
     '''
     flux_list = []
     for model_name in model_names:
-        flux_list.append(model[model_name](wave_obs))
+        if model_name in model.submodel_names:
+            flux_list.append(model[model_name](wave_obs))
+
+    if len(flux_list) == 0:
+        return np.nan
+
     flux = np.sum(flux_list, axis=0)
 
     if wave_range is not None:
@@ -26,7 +31,12 @@ def line_emission_fwhm(model, model_names, wave_rest, wavec):
     '''
     flux_list = []
     for model_name in model_names:
-        flux_list.append(model[model_name](wave_rest))
+        if model_name in model.submodel_names:
+            flux_list.append(model[model_name](wave_rest))
+
+    if len(flux_list) == 0:
+        return np.nan
+
     flux = np.sum(flux_list, axis=0)
     half_max = np.max(flux) / 2
     fltr = flux >= half_max
@@ -65,7 +75,12 @@ def line_emission_ew(model, line_model_names, cont_model_names, wave_rest, wavec
     '''
     flux_list = []
     for model_name in line_model_names:
-        flux_list.append(model[model_name](wave_rest))
+        if model_name in model.submodel_names:
+            flux_list.append(model[model_name](wave_rest))
+
+    if len(flux_list) == 0:
+        return np.nan
+
     line_flux = np.sum(flux_list, axis=0)
 
     if wave_range is not None:
@@ -77,7 +92,12 @@ def line_emission_ew(model, line_model_names, cont_model_names, wave_rest, wavec
 
     cont_flux_list = []
     for model_name in cont_model_names:
-        cont_flux_list.append(model[model_name](wave_rest))
+        if model_name in model.submodel_names:
+            cont_flux_list.append(model[model_name](wave_rest))
+    
+    if len(cont_flux_list) == 0:
+        return np.nan
+
     cont_flux = np.sum(cont_flux_list, axis=0)
 
     if wavec is None:
@@ -95,7 +115,12 @@ def line_absorption_ew(model, model_names, wave_rest):
     '''
     flux_list = []
     for model_name in model_names:
-        flux_list.append(model[model_name](wave_rest))
+        if model_name in model.submodel_names:
+            flux_list.append(model[model_name](wave_rest))
+        
+    if len(flux_list) == 0:
+        return np.nan
+
     flux = np.sum(flux_list, axis=0)
     ew = np.trapz((1 - flux), wave_rest)
     return ew
@@ -106,7 +131,11 @@ def cont_flux(model, model_names, wave_rest, x0):
     '''
     flux_list = []
     for model_name in model_names:
-        flux_list.append(model[model_name](wave_rest))
+        if model_name in model.submodel_names:
+            flux_list.append(model[model_name](wave_rest))
+    if len(flux_list) == 0:
+        return np.nan
+
     flux = np.sum(flux_list, axis=0)
     flux_x0 = np.interp(x0, wave_rest, flux)
     return flux_x0

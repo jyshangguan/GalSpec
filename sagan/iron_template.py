@@ -79,10 +79,11 @@ class IronTemplate(Fittable1DModel):
         Gaussian model function.
         """
         if stddev < self._stddev_intr:
-            stddev = self._stddev_intr
+            flux_conv = self._flux_temp
+        else:
+            sig = np.sqrt(stddev**2 - self._stddev_intr**2) / self._vchan
+            flux_conv = gaussian_filter1d(self._flux_temp, sig)
 
-        sig = np.sqrt(stddev**2 - self._stddev_intr**2) / self._vchan
-        flux_conv = gaussian_filter1d(self._flux_temp, sig)
         f = amplitude * np.interp(x, self._wave_temp * (1 + z), flux_conv)
 
         return f

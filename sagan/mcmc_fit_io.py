@@ -33,7 +33,7 @@ _STR_TO_OP = {
 }
 
 
-def save_mcmc_fit_to_fits(mcmc_fit, filename):
+def save_mcmc_fit_to_fits(mcmc_fit, filename, thin=1):
     """
     Save an MCMC_Fit object entirely into a FITS file.
     
@@ -43,7 +43,14 @@ def save_mcmc_fit_to_fits(mcmc_fit, filename):
         The MCMC_Fit object to save.
     filename : str
         The output FITS filename.
+    thin : int, optional
+        Thinning factor for flat_samples and log_prob arrays.
+        If thin > 1, only every Nth sample will be saved.
+        Default is 1 (no thinning).
     """
+    if thin < 1:
+        raise ValueError("thin must be >= 1")
+    
     # Create HDU list
     hdul = fits.HDUList()
     
@@ -53,6 +60,7 @@ def save_mcmc_fit_to_fits(mcmc_fit, filename):
     primary_hdr['NSTEPS'] = getattr(mcmc_fit, 'nsteps', 0)
     primary_hdr['NBURN'] = getattr(mcmc_fit, 'nburn', 0)
     primary_hdr['NDIM'] = getattr(mcmc_fit, 'ndim', 0)
+    primary_hdr['THIN'] = thin  # Record the thinning factor
     primary_hdu = fits.PrimaryHDU(header=primary_hdr)
     hdul.append(primary_hdu)
     
@@ -70,12 +78,18 @@ def save_mcmc_fit_to_fits(mcmc_fit, filename):
     if hasattr(mcmc_fit, 'theta_best') and mcmc_fit.theta_best is not None:
         hdul.append(fits.ImageHDU(mcmc_fit.theta_best, name='THETA_BEST'))
     
-    # Save MCMC results if they exist
+    # Save MCMC results if they exist (with thinning)
     if hasattr(mcmc_fit, 'flat_samples') and mcmc_fit.flat_samples is not None:
-        hdul.append(fits.ImageHDU(mcmc_fit.flat_samples, name='FLAT_SAMP'))
+        flat_samples_thinned = mcmc_fit.flat_samples[::thin]
+        hdul.append(fits.ImageHDU(flat_samples_thinned, name='FLAT_SAMP'))
+        if thin > 1:
+            print(f"Thinned flat_samples from {mcmc_fit.flat_samples.shape[0]} to {flat_samples_thinned.shape[0]} samples (thin={thin})")
     
     if hasattr(mcmc_fit, 'log_prob') and mcmc_fit.log_prob is not None:
-        hdul.append(fits.ImageHDU(mcmc_fit.log_prob, name='LOG_PROB'))
+        log_prob_thinned = mcmc_fit.log_prob[::thin]
+        hdul.append(fits.ImageHDU(log_prob_thinned, name='LOG_PROB'))
+        if thin > 1:
+            print(f"Thinned log_prob from {mcmc_fit.log_prob.shape[0]} to {log_prob_thinned.shape[0]} samples (thin={thin})")
     
     if hasattr(mcmc_fit, 'samples_initial') and mcmc_fit.samples_initial is not None:
         hdul.append(fits.ImageHDU(mcmc_fit.samples_initial, name='SAMP_INIT'))
@@ -202,6 +216,12 @@ def load_mcmc_fit_from_fits(filename):
     -------
     mcmc_fit : MCMC_Fit
         The recovered MCMC_Fit object.
+    
+    Notes
+    -----
+    If the data was saved with thinning (thin > 1), the loaded flat_samples
+    and log_prob will be the thinned versions. The THIN keyword in the header
+    records the thinning factor used.
     """
     from .mcmc_fit import MCMC_Fit
     
@@ -213,6 +233,10 @@ def load_mcmc_fit_from_fits(filename):
         nsteps = primary_hdr.get('NSTEPS', 1000)
         nburn = primary_hdr.get('NBURN', 0)
         ndim = primary_hdr.get('NDIM', 0)
+        thin = primary_hdr.get('THIN', 1)
+        
+        if thin > 1:
+            print(f"Note: Data was saved with thinning factor = {thin}")
         
         # Read data arrays
         wave_use = hdul['WAVE_USE'].data

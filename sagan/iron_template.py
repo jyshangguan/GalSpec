@@ -49,7 +49,7 @@ class IronTemplate(Fittable1DModel):
     '''
 
     amplitude = Parameter(default=1, bounds=(0, None))
-    stddev = Parameter(default=910/2.3548, bounds=(910/2.3548, None))
+    stddev = Parameter(default=900/2.3548, bounds=(900/2.3548, None))
     z = Parameter(default=0, bounds=(0, 10))
     
     def __init__(self, amplitude=amplitude, stddev=stddev, z=z, template_name='park2022', **kwargs):
@@ -58,6 +58,7 @@ class IronTemplate(Fittable1DModel):
         if template_name == 'park2022':
             wave_temp = wave_park2022
             flux_temp = flux_park2022
+            self._stddev_intr = 800 / 2.3548  # Velocity dispersion of Mrk 493.
         elif template_name == 'boroson1992':
             wave_temp = wave_boroson1992
             flux_temp = flux_boroson1992
@@ -70,7 +71,7 @@ class IronTemplate(Fittable1DModel):
         fmax = np.max(flux_temp[fltr])
         self._wave_temp = wave_temp
         self._flux_temp = flux_temp / fmax
-        self._stddev_intr = 900 / 2.3548  # Velocity dispersion of I Zw 1, Mrk 493 looks similar
+        #self._stddev_intr = 900 / 2.3548  # Velocity dispersion of I Zw 1, Mrk 493 looks similar
         self._vchan = (wave_temp[1] - wave_temp[0]) / wave_temp[0] * ls_km  # Velocity width per channel
     
     def evaluate(self, x, amplitude, stddev, z):
@@ -78,7 +79,7 @@ class IronTemplate(Fittable1DModel):
         Gaussian model function.
         """
         if stddev < self._stddev_intr:
-            stddev = 910 / 2.3548
+            stddev = self._stddev_intr
 
         sig = np.sqrt(stddev**2 - self._stddev_intr**2) / self._vchan
         flux_conv = gaussian_filter1d(self._flux_temp, sig)

@@ -2,7 +2,7 @@ import numpy as np
 from astropy.io import fits
 from astropy.modeling import models, CompoundModel
 from copy import deepcopy
-import pickle
+import json
 import operator
 import importlib
 
@@ -99,10 +99,10 @@ def save_mcmc_fit_to_fits(mcmc_fit, filename):
     model_nodes, model_special_data = serialize_model_tree(mcmc_fit.model)
     
     # Save special data arrays for each model (like template arrays)
-    # Create a version for pickling where arrays are replaced with metadata
-    model_special_data_for_pickle = {}
+    # Create a version for JSON where arrays are replaced with metadata
+    model_special_data_for_json = {}
     for node_id, special_data in model_special_data.items():
-        model_special_data_for_pickle[node_id] = {}
+        model_special_data_for_json[str(node_id)] = {}  # JSON keys must be strings
         for key, value in special_data.items():
             if isinstance(value, np.ndarray):
                 # Save array to FITS HDU with shorter names to avoid truncation
@@ -111,25 +111,32 @@ def save_mcmc_fit_to_fits(mcmc_fit, filename):
                 value_to_save = np.atleast_1d(value)
                 hdul.append(fits.ImageHDU(value_to_save, name=extname))
                 # Store metadata instead of array
-                model_special_data_for_pickle[node_id][key] = {
+                model_special_data_for_json[str(node_id)][key] = {
                     '_is_array': True,
                     'extname': extname,
-                    'shape': value.shape,
+                    'shape': list(value.shape),  # Convert tuple to list for JSON
                     'dtype': str(value.dtype)
                 }
             else:
-                # Not an array, can be pickled directly
-                model_special_data_for_pickle[node_id][key] = value
+                # Not an array, can be stored directly
+                # Make sure it's JSON-serializable
+                if isinstance(value, (list, tuple)):
+                    model_special_data_for_json[str(node_id)][key] = list(value)
+                else:
+                    model_special_data_for_json[str(node_id)][key] = value
     
-    # Save model structure as pickle
-    model_struct_pickle = pickle.dumps(model_nodes)
-    model_hdu = fits.ImageHDU(np.frombuffer(model_struct_pickle, dtype=np.uint8), name='MODEL_STR')
+    # Save model structure as JSON in a FITS table
+    model_json_str = json.dumps(model_nodes, indent=2)
+    model_json_bytes = model_json_str.encode('utf-8')
+    # Store as uint8 array
+    model_hdu = fits.ImageHDU(np.frombuffer(model_json_bytes, dtype=np.uint8), name='MODEL_STR')
     hdul.append(model_hdu)
     
-    # Save special data structure as pickle (with array metadata)
-    if model_special_data_for_pickle:
-        special_pickle = pickle.dumps(model_special_data_for_pickle)
-        special_hdu = fits.ImageHDU(np.frombuffer(special_pickle, dtype=np.uint8), name='MODEL_SPC')
+    # Save special data structure as JSON (with array metadata)
+    if model_special_data_for_json:
+        special_json_str = json.dumps(model_special_data_for_json, indent=2)
+        special_json_bytes = special_json_str.encode('utf-8')
+        special_hdu = fits.ImageHDU(np.frombuffer(special_json_bytes, dtype=np.uint8), name='MODEL_SPC')
         hdul.append(special_hdu)
     
     # Save the model parameters in a human-readable format
@@ -245,20 +252,23 @@ def load_mcmc_fit_from_fits(filename):
         if 'FULL_PARAM' in hdul:
             full_param_names = list(hdul['FULL_PARAM'].data['FULL_PARAM_NAME'])
         
-        # Reconstruct model from structure
+        # Reconstruct model from structure (stored as JSON)
         model_struct_data = hdul['MODEL_STR'].data
-        model_struct_bytes = model_struct_data.tobytes()
-        model_nodes = pickle.loads(model_struct_bytes)
+        model_json_bytes = model_struct_data.tobytes()
+        model_json_str = model_json_bytes.decode('utf-8')
+        model_nodes = json.loads(model_json_str)
         
-        # Load special data if it exists
+        # Load special data if it exists (stored as JSON)
         model_special_data = {}
         if 'MODEL_SPC' in hdul:
             special_data = hdul['MODEL_SPC'].data
-            special_bytes = special_data.tobytes()
-            model_special_data_meta = pickle.loads(special_bytes)
+            special_json_bytes = special_data.tobytes()
+            special_json_str = special_json_bytes.decode('utf-8')
+            model_special_data_meta = json.loads(special_json_str)
             
             # Load the actual arrays from HDUs
-            for node_id, special_dict in model_special_data_meta.items():
+            for node_id_str, special_dict in model_special_data_meta.items():
+                node_id = int(node_id_str)  # Convert back from string
                 model_special_data[node_id] = {}
                 for key, value in special_dict.items():
                     if isinstance(value, dict) and value.get('_is_array'):
@@ -267,7 +277,7 @@ def load_mcmc_fit_from_fits(filename):
                         if extname in hdul:
                             array_data = hdul[extname].data
                             # Restore original shape if needed
-                            original_shape = value['shape']
+                            original_shape = tuple(value['shape'])  # Convert list back to tuple
                             if original_shape == ():
                                 # Was a scalar, convert back
                                 array_data = np.asarray(array_data).item()
@@ -355,8 +365,6 @@ def _check_convolution(m):
             'conv_tag': True,
             'conv_sigx': float(conv_tag.get('sigma_x', 0))
         }
-        if 'orig_cls' in conv_tag:
-            info['orig_cls'] = conv_tag['orig_cls']
         
         # Also check meta for LSF info
         if meta.get('lsf_convolved'):
@@ -431,10 +439,14 @@ def serialize_model_tree(model, node_id=0):
         else:
             # Single model - check if it has convolution applied
             # Get the original class if convolution was applied
-            if has_conv and 'orig_cls' in conv_info:
-                orig_cls = conv_info['orig_cls']
-                class_name = orig_cls.__name__
-                class_module = orig_cls.__module__
+            if has_conv and conv_tag and isinstance(conv_tag := getattr(m, '_gaussconv1d_callswap', None), dict):
+                if 'orig_cls' in conv_tag:
+                    orig_cls = conv_tag['orig_cls']
+                    class_name = orig_cls.__name__
+                    class_module = orig_cls.__module__
+                else:
+                    class_name = m.__class__.__name__
+                    class_module = m.__class__.__module__
             else:
                 class_name = m.__class__.__name__
                 class_module = m.__class__.__module__
@@ -453,10 +465,13 @@ def serialize_model_tree(model, node_id=0):
             for param_name in m.param_names:
                 param = getattr(m, param_name)
                 node['parameters'][param_name] = {
-                    'value': param.value,
-                    'fixed': param.fixed,
-                    'bounds': param.bounds,
-                    'default': param.default
+                    'value': float(param.value),  # Ensure JSON-serializable
+                    'fixed': bool(param.fixed),
+                    'bounds': [
+                        float(param.bounds[0]) if param.bounds[0] is not None else None,
+                        float(param.bounds[1]) if param.bounds[1] is not None else None
+                    ],
+                    'default': float(param.default)
                 }
             
             # Save special model-specific attributes
@@ -490,8 +505,9 @@ def extract_special_data(model, has_conv=False, conv_info=None):
     
     # Get the original class name for checking the model type
     # If convolution was applied, we need to check the original class
-    if has_conv and conv_info and 'orig_cls' in conv_info:
-        class_name = conv_info['orig_cls'].__name__
+    conv_tag = getattr(model, '_gaussconv1d_callswap', None)
+    if has_conv and conv_tag and isinstance(conv_tag, dict) and 'orig_cls' in conv_tag:
+        class_name = conv_tag['orig_cls'].__name__
     else:
         class_name = model.__class__.__name__
     
@@ -511,7 +527,7 @@ def extract_special_data(model, has_conv=False, conv_info=None):
     # Line_MultiGauss: needs n_components
     if class_name in ['Line_MultiGauss', 'Line_MultiGauss_doublet']:
         if hasattr(model, 'n_components'):
-            special['ncomp'] = model.n_components
+            special['ncomp'] = int(model.n_components)
     
     # StarSpectrum: needs templates and computed values
     if class_name == 'StarSpectrum':
@@ -525,9 +541,9 @@ def extract_special_data(model, has_conv=False, conv_info=None):
     # Multi_StarSpectrum: needs velscale and Star_types
     if class_name == 'Multi_StarSpectrum':
         if hasattr(model, 'velscale'):
-            special['velsc'] = model.velscale
+            special['velsc'] = float(model.velscale)
         if hasattr(model, 'Star_types'):
-            special['stypes'] = model.Star_types
+            special['stypes'] = list(model.Star_types)  # Ensure it's a list for JSON
     
     # IronTemplate: needs template arrays and computed values
     if class_name == 'IronTemplate':
@@ -712,13 +728,17 @@ def deserialize_single_model(node, special_data=None, param_values=None):
             param = getattr(model, param_name)
             param.value = param_values[param_name]['value']
             param.fixed = param_values[param_name]['fixed']
-            param.bounds = param_values[param_name]['bounds']
+            # Convert bounds list back to tuple
+            bounds = param_values[param_name]['bounds']
+            param.bounds = tuple(bounds) if isinstance(bounds, list) else bounds
         elif param_name in node['parameters']:
             # Fallback to node parameters if not in param_values
             param = getattr(model, param_name)
             param.value = node['parameters'][param_name]['value']
             param.fixed = bool(node['parameters'][param_name]['fixed'])
-            param.bounds = node['parameters'][param_name]['bounds']
+            # Convert bounds list back to tuple
+            bounds = node['parameters'][param_name]['bounds']
+            param.bounds = tuple(bounds) if isinstance(bounds, list) else bounds
     
     # Restore/recreate computed private attributes
     if class_name == 'Line_template':

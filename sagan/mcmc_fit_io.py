@@ -33,6 +33,100 @@ _STR_TO_OP = {
 }
 
 
+def _is_json_serializable(value):
+    """Return True if value can be serialized by json.dumps."""
+    try:
+        json.dumps(value)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def _to_json_compatible(value):
+    """Convert common NumPy/Python containers into JSON-compatible objects."""
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, dict):
+        return {k: _to_json_compatible(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_json_compatible(v) for v in value]
+    return value
+
+
+def _resolve_qualname(module_obj, qualname):
+    """Resolve an object from a module using its qualname."""
+    obj = module_obj
+    for part in qualname.split('.'):
+        obj = getattr(obj, part)
+    return obj
+
+
+def _serialize_tied_callable(tied):
+    """
+    Serialize an astropy tied callable into JSON-compatible metadata.
+
+    Returns
+    -------
+    dict or None
+        Metadata used to reconstruct the tied callable.
+    """
+    if not tied:
+        return None
+
+    # Callable object instance (most common in SAGAN: tie_* classes)
+    if hasattr(tied, '__call__') and hasattr(tied, '__dict__') and not isinstance(tied, type):
+        cls = tied.__class__
+        state = _to_json_compatible(dict(tied.__dict__))
+        if _is_json_serializable(state):
+            return {
+                'kind': 'callable_object',
+                'module': cls.__module__,
+                'qualname': cls.__qualname__,
+                'state': state
+            }
+
+    # Plain function
+    if hasattr(tied, '__module__') and hasattr(tied, '__qualname__'):
+        return {
+            'kind': 'function',
+            'module': tied.__module__,
+            'qualname': tied.__qualname__
+        }
+
+    return None
+
+
+def _deserialize_tied_callable(tied_spec):
+    """Reconstruct a tied callable from serialized metadata."""
+    if not tied_spec:
+        return None
+
+    try:
+        module = importlib.import_module(tied_spec['module'])
+        obj = _resolve_qualname(module, tied_spec['qualname'])
+        kind = tied_spec.get('kind')
+
+        if kind == 'function':
+            return obj
+
+        if kind == 'callable_object':
+            state = tied_spec.get('state', {}) or {}
+            # Prefer constructor with kwargs; fallback to __new__ + __dict__ restore
+            try:
+                return obj(**state)
+            except Exception:
+                inst = obj.__new__(obj)
+                if hasattr(inst, '__dict__'):
+                    inst.__dict__.update(state)
+                return inst
+    except Exception as e:
+        print(f"Warning: Failed to restore tied callable: {e}")
+
+    return None
+
+
 def save_mcmc_fit_to_fits(mcmc_fit, filename, thin=1):
     """
     Save an MCMC_Fit object entirely into a FITS file.
@@ -495,7 +589,8 @@ def serialize_model_tree(model, node_id=0):
                         float(param.bounds[0]) if param.bounds[0] is not None else None,
                         float(param.bounds[1]) if param.bounds[1] is not None else None
                     ],
-                    'default': float(param.default)
+                    'default': float(param.default),
+                    'tied': _serialize_tied_callable(param.tied)
                 }
             
             # Save special model-specific attributes
@@ -763,6 +858,15 @@ def deserialize_single_model(node, special_data=None, param_values=None):
             # Convert bounds list back to tuple
             bounds = node['parameters'][param_name]['bounds']
             param.bounds = tuple(bounds) if isinstance(bounds, list) else bounds
+
+        # Restore tied callable from node-level metadata
+        if param_name in node['parameters']:
+            tied_spec = node['parameters'][param_name].get('tied')
+            if tied_spec:
+                param = getattr(model, param_name)
+                tied_callable = _deserialize_tied_callable(tied_spec)
+                if tied_callable:
+                    param.tied = tied_callable
     
     # Restore/recreate computed private attributes
     if class_name == 'Line_template':

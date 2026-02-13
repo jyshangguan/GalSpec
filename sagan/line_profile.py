@@ -8,8 +8,8 @@ from .constants import ls_km
 from .utils import line_wave_dict
 
 line_funcs = ['Line_Gaussian', 'Line_GaussHermite', 'Line_template', 
-              'Line_MultiGauss', 'Line_MultiGauss_doublet',
-              'Line_Absorption']
+              'Line_MultiGauss', 'Line_MultiGauss_doublet', 
+              'Line_GaussHermite_doublet', 'Line_Absorption']
 tie_funcs = ['tie_MultiGauss_amp_c', 'tie_MultiGauss_dv_c', 'tie_MultiGauss_dv_w0', 
              'tie_MultiGauss_dv_w1', 'tie_MultiGauss_dv_w2', 'tie_MultiGauss_dv_w3', 
              'tie_MultiGauss_dv_w4',
@@ -456,6 +456,72 @@ class Line_MultiGauss_doublet(Fittable1DModel):
             flux /= np.max(flux)
 
         return flux
+
+
+# Create a Line_GaussHermite_doublet class, following the structure of Line_MultiGauss_doublet and Line_GaussHermite.
+class Line_GaussHermite_doublet(Fittable1DModel):
+    '''
+    Line doublet with Gauss-Hermite model.
+
+    Parameters
+    ----------
+    x : array like
+        Wavelength, units: arbitrary.
+    amp_c0 : float
+        The amplitude of the core component of the first line.
+    amp_c1 : float
+        The amplitude of the core component of the second line.
+    dv_c : float
+        The velocity shift from the central wavelength of the core component, 
+        units: km/s.
+    sigma_c : float
+        The velocity dispersion of the core component, units: km/s.
+    h3 : float
+        The h3 parameter of the Gauss-Hermite function, describing the skewness of the line profile.
+    h4 : float
+        The h4 parameter of the Gauss-Hermite function, describing the kurtosis of the line profile.
+    wavec0 : float
+        The central wavelength of the first line, units: same as x.
+    wavec1 : float
+        The central wavelength of the second line, units: same as x.
+    clip : bool (default: False)
+        Whether to replace the negative value to 0.
+    **kwargs : dict
+        Additional parameters like bounds, fixed, and meta.
+    '''
+    amp_c0 = Parameter(default=1, bounds=(0, None))
+    amp_c1 = Parameter(default=1, bounds=(0, None))
+    dv_c = Parameter(default=0, bounds=(-2000, 2000))
+    sigma_c = Parameter(default=200, bounds=(20, 10000))
+    h3 = Parameter(default=0, bounds=(-0.4, 0.4))
+    h4 = Parameter(default=0, bounds=(-0.4, 0.4))
+    wavec0 = Parameter(default=5000, fixed=True)
+    wavec1 = Parameter(default=5000, fixed=True)
+
+    def __init__(self, amp_c0=amp_c0, amp_c1=amp_c1, dv_c=dv_c, sigma_c=sigma_c, 
+                 h3=h3, h4=h4, wavec0=wavec0, wavec1=wavec1, clip=True, **kwargs):
+        self._clip = clip
+        super().__init__(amp_c0=amp_c0, amp_c1=amp_c1, dv_c=dv_c, sigma_c=sigma_c, 
+                         h3=h3, h4=h4, wavec0=wavec0, wavec1=wavec1, **kwargs)
+    
+    def evaluate(self, x, amp_c0, amp_c1, dv, sigma, h3, h4, wavec0, wavec1):
+        v0 = (x - wavec0) / wavec0 * ls_km  # convert to velocity (km/s)
+        w0 = (v0 - dv)/ sigma
+        v1 = (x - wavec1) / wavec1 * ls_km  # convert to velocity (km/s)
+        w1 = (v1 - dv)/ sigma
+
+        G0 = amp_c0 * np.exp(-0.5 * w0**2)
+        G1 = amp_c1 * np.exp(-0.5 * w1**2)
+        H3_0 = (2 * w0**3 - 3 * w0) / 3**0.5
+        H4_0 = (4 * w0**4 - 12 * w0**2 + 3) / 24**0.5
+        H3_1 = (2 * w1**3 - 3 * w1) / 3**0.5
+        H4_1 = (4 * w1**4 - 12 * w1**2 + 3) / 24**0.5
+        f = G0 * (1 + h3 * H3_0 + h4 * H4_0) + G1 * (1 + h3 * H3_1 + h4 * H4_1)
+
+        if self._clip == 1:
+            f[f < 0] = 0
+
+        return f
 
 
 class Line_Absorption(Fittable1DModel):

@@ -7,9 +7,9 @@ from scipy.ndimage import gaussian_filter1d
 from .constants import ls_km
 from .utils import line_wave_dict
 
-line_funcs = ['Line_Gaussian', 'Line_GaussHermite', 'Line_template', 
-              'Line_MultiGauss', 'Line_MultiGauss_doublet', 
-              'Line_GaussHermite_doublet', 'Line_Absorption']
+line_funcs = ['Line_template', 'Line_GaussHermite', 'Line_GaussHermite_doublet', 
+              'Line_Gaussian', 'Line_MultiGauss', 'Line_MultiGauss_doublet', 
+              'Line_Absorption', 'Line_Absorption_doublet']
 tie_funcs = ['tie_MultiGauss_amp_c', 'tie_MultiGauss_dv_c', 'tie_MultiGauss_dv_w0', 
              'tie_MultiGauss_dv_w1', 'tie_MultiGauss_dv_w2', 'tie_MultiGauss_dv_w3', 
              'tie_MultiGauss_dv_w4',
@@ -558,6 +558,49 @@ class Line_Absorption(Fittable1DModel):
         #tau_v = tau_0 * (1/(sigma * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((v - dv)/ sigma)**2)
         tau_v = 10**logtau0 * np.exp(-0.5 * ((v - dv)/ sigma)**2)
         f = 1 - Cf + Cf* np.exp(-1*tau_v)
+
+        return f
+
+
+class Line_Absorption_doublet(Fittable1DModel):
+    '''
+    The absorption line doublet profile with the sigma as the velocity.
+    Parameters
+    ----------
+    x : array like
+        Wavelength, units: arbitrary.
+    logtau0 : float
+        The optical depth at line center in the logarithmic scale for the first line.
+    dv : float
+        The velocity of the central line offset from wavec, units: km/s.
+    sigma : float
+        The velocity dispersion of the line profile, units: km/s.
+    wavec0 : float
+        The central wavelength of the first line, units: same as x.
+    wavec1 : float
+        The central wavelength of the second line, units: same as x.
+    Cf : float
+        The covering fraction of the absorbing gas, between 0 and 1.
+    '''
+    logtau0 = Parameter(default=0, bounds=(-2, 2))
+    logtau1 = Parameter(default=0, bounds=(-2, 2))
+    dv = Parameter(default=0, bounds=(-10000, 10000))
+    sigma = Parameter(default=200, bounds=(20, 10000))
+    Cf = Parameter(default=1, bounds=(0, 1))
+
+    wavec0 = Parameter(default=5000, fixed=True)
+    wavec1 = Parameter(default=5100, fixed=True)
+
+    @staticmethod
+    def evaluate(x, logtau0, logtau1, dv, sigma, Cf, wavec0, wavec1):
+        """
+        Absorption Gaussian model function for doublet lines.
+        """
+        v0 = (x - wavec0) / wavec0 * ls_km  # convert to velocity (km/s)
+        v1 = (x - wavec1) / wavec1 * ls_km  # convert to velocity (km/s)
+        tau_v0 = 10**logtau0 * np.exp(-0.5 * ((v0 - dv)/ sigma)**2)
+        tau_v1 = 10**logtau1 * np.exp(-0.5 * ((v1 - dv)/ sigma)**2)
+        f = (1 - Cf + Cf* np.exp(-1*tau_v0)) * (1 - Cf + Cf* np.exp(-1*tau_v1))
 
         return f
 

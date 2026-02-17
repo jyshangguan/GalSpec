@@ -23,7 +23,7 @@ class WindowedPowerLaw1D(Fittable1DModel):
     def evaluate(self, x, amplitude, x_0, alpha, x_min, x_max):
         """Power law that is zero outside [x_min, x_max]."""
         y = amplitude * (x / x_0)**-alpha
-        mask = (x >= x_min) & (x <= x_max)
+        mask = (x >= x_min) & (x < x_max)
         return np.where(mask, y, 0.0)
     
 
@@ -38,7 +38,7 @@ class BlackBody(Fittable1DModel):
         """Evaluate the black body radiation at wavelength x."""
         bb_lam = _planck_B_lambda(x * u.AA.to(u.cm), temperature)
         bb_lam /= np.max([bb_lam.max(), 1e-16])  # Normalize for convenience
-        mask = (x >= x_min) & (x <= x_max)
+        mask = (x >= x_min) & (x < x_max)
         bb_lam = np.where(mask, bb_lam, 0.0)
         return scale * bb_lam
 

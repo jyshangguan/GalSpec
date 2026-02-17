@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from .line_profile import Line_MultiGauss, Line_MultiGauss_doublet, Line_Gaussian
+from .continuum import WindowedPowerLaw1D, BlackBody
 
 import matplotlib as mpl
 mpl.rc("xtick", direction="in", labelsize=16)
@@ -147,7 +148,7 @@ def plot_fit_new(wave, flux, model, weight=None, error=None, ax=None, axr=None, 
 
 def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0=None, 
              ylim1=None, xlabel=None, ylabel=None, legend_kwargs=None, plot_weight=True, 
-             ignore_list=None, legend_map=None):
+             ignore_list=None, legend_map=None, mask_list=None):
     '''
     Plot the fitting result.
 
@@ -175,6 +176,8 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
         X-axis label.
     ylabel : string
         Y-axis label.
+    mask_list : list, optional
+        A list of tuples specifying the wavelength ranges to be masked in the plot.
     
     Returns
     -------
@@ -203,7 +206,23 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
     
     legend_dict = _map_legend(model, legend_map, ignore_list)
 
-    # Plotting   
+    # Plotting
+    flux_model = model(wave)
+    flux_res = flux - flux_model
+
+    # Mask the region with weight=0
+    if weight is not None:
+        fltr = weight == 0
+        flux_model[fltr] = np.nan
+        flux_res[fltr] = np.nan
+
+    if mask_list is not None:
+        flux = flux.copy()
+        for mask_range in mask_list:
+            mask = (wave >= mask_range[0]) & (wave <= mask_range[1])
+            flux[mask] = np.nan
+            flux_res[mask] = np.nan
+
     ax.step(wave, flux, lw=1, color='k', label='Data')
 
     if (weight is not None) & plot_weight:
@@ -212,7 +231,7 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
         axt.set_ylabel('Weight', fontsize=16)
         axt.minorticks_on()
 
-    ax.plot(wave, model(wave), lw=2, color='C3', alpha=0.7, label='Total model')
+    ax.plot(wave, flux_model, lw=2, color='C3', alpha=0.7, label='Total model')
     
     if 'multi' in model.submodel_names:
         m_multi = model['multi'](wave)
@@ -228,6 +247,10 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
         else:
             y = m(wave)
 
+        if isinstance(m, (WindowedPowerLaw1D, BlackBody)):
+            fltr = (wave >= m.x_min) & (wave <= m.x_max)
+            y[~fltr] = np.nan
+
         color, label = legend_dict[m.name]
         ax.plot(wave, y, lw=0.5, color=color, label=label)
 
@@ -240,9 +263,6 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
                         y = msub(wave)
                     ax.plot(wave, y, lw=0.5, ls='--', color=color)
     
-    flux_res = flux - model(wave)
-    # Mask the region with weight=0
-    flux_res[weight == 0] = np.nan
     axr.step(wave, flux_res, lw=1, color='k')
     axr.axhline(0, color='k', ls='--', lw=1.0)
     

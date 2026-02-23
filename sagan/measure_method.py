@@ -117,11 +117,13 @@ def line_absorption_ew(model, model_names, wave_rest):
     for model_name in model_names:
         if model_name in model.submodel_names:
             flux_list.append(model[model_name](wave_rest))
+        else:
+            print(f"Model {model_name} not found in the model dictionary.")
         
     if len(flux_list) == 0:
         return np.nan
 
-    flux = np.sum(flux_list, axis=0)
+    flux = np.product(flux_list, axis=0)
     ew = np.trapz((1 - flux), wave_rest)
     return ew
 

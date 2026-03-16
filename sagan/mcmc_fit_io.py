@@ -286,11 +286,19 @@ def save_mcmc_fit_to_fits(mcmc_fit, filename, thin=1):
     )
     hdul.append(model_param_table)
     
-    # Save submodel information
-    submodel_names = np.array(mcmc_fit.model.submodel_names, dtype='U100')
-    col_submodel = fits.Column(name='SUBMODEL_NAME', format='A100', array=submodel_names)
-    submodel_table = fits.BinTableHDU.from_columns([col_submodel], name='SUBMODELS')
-    hdul.append(submodel_table)
+    # Save submodel information (if available)
+    if hasattr(mcmc_fit.model, 'submodel_names'):
+        submodel_names = np.array(mcmc_fit.model.submodel_names, dtype='U100')
+        col_submodel = fits.Column(name='SUBMODEL_NAME', format='A100', array=submodel_names)
+        submodel_table = fits.BinTableHDU.from_columns([col_submodel], name='SUBMODELS')
+        hdul.append(submodel_table)
+    else:
+        # Model doesn't have submodel_names (e.g., variable-convolved models)
+        # Save empty table
+        submodel_names = np.array([], dtype='U100')
+        col_submodel = fits.Column(name='SUBMODEL_NAME', format='A100', array=submodel_names)
+        submodel_table = fits.BinTableHDU.from_columns([col_submodel], name='SUBMODELS')
+        hdul.append(submodel_table)
     
     # Write to file
     hdul.writeto(filename, overwrite=True)
@@ -476,14 +484,50 @@ def _check_convolution(m):
     Returns (has_convolution, convolution_info)
     """
     conv_tag = getattr(m, '_gaussconv1d_callswap', None)
+    conv_tag_var = getattr(m, '_gaussconv1d_var_callswap', None)
     meta = getattr(m, 'meta', {}) or {}
-    
+
+    # Check for variable LSF convolution first
+    if conv_tag_var and isinstance(conv_tag_var, dict):
+        info = {
+            'conv_tag': True,
+            'conv_type': 'variable',  # Mark as variable convolution
+        }
+
+        # Check meta for variable LSF info
+        if meta.get('lsf_variable'):
+            info['lsf_conv'] = True
+            info['lsf_variable'] = True
+            if 'lsf_wave_range' in meta:
+                info['lsf_wave_range'] = meta['lsf_wave_range']
+            if 'lsf_resolution_wave_range' in meta:
+                info['lsf_resolution_wave_range'] = meta['lsf_resolution_wave_range']
+
+        # Extract ResolutionCurve data if available
+        if 'resolution_curve' in conv_tag_var:
+            rc = conv_tag_var['resolution_curve']
+            if hasattr(rc, '_wave_raw') and hasattr(rc, '_R_raw'):
+                # Save the wavelength and R arrays
+                info['res_wave_raw'] = rc._wave_raw
+                info['res_R_raw'] = rc._R_raw
+                info['res_wave_unit'] = rc._wave_unit
+                info['res_interpolation'] = rc._interpolation
+                info['res_extrapolate'] = rc._extrapolate
+
+        # Also save wavec if available
+        if 'wavec' in conv_tag_var:
+            info['wavec'] = conv_tag_var['wavec']
+
+        return True, info
+
+    # Check for constant LSF convolution
     if conv_tag and isinstance(conv_tag, dict):
         info = {
             'conv_tag': True,
+            'conv_type': 'constant',  # Mark as constant convolution
             'conv_sigx': float(conv_tag.get('sigma_x', 0))
         }
-        
+
         # Also check meta for LSF info
         if meta.get('lsf_convolved'):
             info['lsf_conv'] = True
@@ -493,9 +537,9 @@ def _check_convolution(m):
                 lsf_info = meta['lsf_info']
                 info['lsf_wavec'] = float(lsf_info.get('wavec', 0))
                 info['lsf_R'] = float(lsf_info.get('R', 0))
-        
+
         return True, info
-    
+
     return False, {}
 
 
@@ -557,14 +601,17 @@ def serialize_model_tree(model, node_id=0):
         else:
             # Single model - check if it has convolution applied
             # Get the original class if convolution was applied
-            if has_conv and conv_tag and isinstance(conv_tag := getattr(m, '_gaussconv1d_callswap', None), dict):
-                if 'orig_cls' in conv_tag:
-                    orig_cls = conv_tag['orig_cls']
-                    class_name = orig_cls.__name__
-                    class_module = orig_cls.__module__
-                else:
-                    class_name = m.__class__.__name__
-                    class_module = m.__class__.__module__
+            conv_tag = getattr(m, '_gaussconv1d_callswap', None)
+            conv_tag_var = getattr(m, '_gaussconv1d_var_callswap', None)
+
+            if has_conv and conv_tag and isinstance(conv_tag, dict) and 'orig_cls' in conv_tag:
+                orig_cls = conv_tag['orig_cls']
+                class_name = orig_cls.__name__
+                class_module = orig_cls.__module__
+            elif has_conv and conv_tag_var and isinstance(conv_tag_var, dict) and 'orig_cls' in conv_tag_var:
+                orig_cls = conv_tag_var['orig_cls']
+                class_name = orig_cls.__name__
+                class_module = orig_cls.__module__
             else:
                 class_name = m.__class__.__name__
                 class_module = m.__class__.__module__
@@ -625,8 +672,12 @@ def extract_special_data(model, has_conv=False, conv_info=None):
     # Get the original class name for checking the model type
     # If convolution was applied, we need to check the original class
     conv_tag = getattr(model, '_gaussconv1d_callswap', None)
+    conv_tag_var = getattr(model, '_gaussconv1d_var_callswap', None)
+
     if has_conv and conv_tag and isinstance(conv_tag, dict) and 'orig_cls' in conv_tag:
         class_name = conv_tag['orig_cls'].__name__
+    elif has_conv and conv_tag_var and isinstance(conv_tag_var, dict) and 'orig_cls' in conv_tag_var:
+        class_name = conv_tag_var['orig_cls'].__name__
     else:
         class_name = model.__class__.__name__
     
@@ -725,14 +776,22 @@ def deserialize_model_tree(nodes, special_data=None, param_values=None):
             # Apply convolution to compound model if it had it
             if node.get('has_convolution', False):
                 node_special = special_data.get(node['node_id'], {})
-                if node_special.get('lsf_conv') or node_special.get('conv_tag'):
+                if node_special.get('lsf_conv') or node_special.get('conv_tag') or node_special.get('lsf_variable'):
                     model = apply_convolution(model, node_special)
             
             return model
         
         else:
             # Reconstruct single model
-            return deserialize_single_model(node, special_data.get(node['node_id'], {}), param_values)
+            model = deserialize_single_model(node, special_data.get(node['node_id'], {}), param_values)
+
+            # Apply convolution to single model if it had it
+            if node.get('has_convolution', False):
+                node_special = special_data.get(node['node_id'], {})
+                if node_special.get('lsf_conv') or node_special.get('conv_tag') or node_special.get('lsf_variable'):
+                    model = apply_convolution(model, node_special)
+
+            return model
     
     return build_model(root_node)
 
@@ -741,9 +800,49 @@ def apply_convolution(model, conv_info):
     """
     Apply LSF convolution to a model based on saved convolution info.
     """
+    # Check if this is variable LSF convolution
+    if conv_info.get('conv_type') == 'variable' or conv_info.get('lsf_variable'):
+        try:
+            from .convolution_var import convolve_lsf_var, ResolutionCurve
+
+            # Need resolution curve data
+            if 'res_wave_raw' in conv_info and 'res_R_raw' in conv_info:
+                # Reconstruct ResolutionCurve
+                wave_raw = conv_info['res_wave_raw']
+                R_raw = conv_info['res_R_raw']
+                wave_unit = conv_info.get('res_wave_unit', None)
+                interpolation = conv_info.get('res_interpolation', 'loglog')
+                extrapolate = conv_info.get('res_extrapolate', 'bounds')
+
+                rc = ResolutionCurve(wave_raw, R_raw, wave_unit=wave_unit,
+                                    interpolation=interpolation, extrapolate=extrapolate)
+
+                # Get wavec
+                wavec = conv_info.get('wavec')
+                if wavec is None:
+                    print("Warning: Variable LSF convolution missing wavec, skipping")
+                    return model
+
+                # Re-apply variable LSF convolution
+                model = convolve_lsf_var(model, wavec=wavec, resolution_data=rc)
+                return model
+            else:
+                print("Warning: Variable LSF convolution missing resolution data, skipping")
+                return model
+
+        except ImportError:
+            print("Warning: Could not import convolve_lsf_var, skipping variable LSF convolution")
+        except Exception as e:
+            print(f"Warning: Failed to apply variable LSF convolution: {e}")
+            import traceback
+            traceback.print_exc()
+
+        return model
+
+    # Handle constant LSF convolution (original code)
     try:
         from .convolution import convolve_lsf
-        
+
         # Restore LSF convolution using the saved parameters
         if 'lsf_wavec' in conv_info and 'lsf_R' in conv_info:
             wavec = conv_info['lsf_wavec']
@@ -755,7 +854,7 @@ def apply_convolution(model, conv_info):
         print("Warning: Could not import convolve_lsf, skipping LSF convolution")
     except Exception as e:
         print(f"Warning: Failed to apply LSF convolution: {e}")
-    
+
     return model
 
 

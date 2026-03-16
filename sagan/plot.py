@@ -252,7 +252,7 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
             y[~fltr] = np.nan
 
         color, label = legend_dict[m.name]
-        ax.plot(wave, y, lw=0.5, color=color, label=label)
+        ax.plot(wave, y, lw=1, color=color, label=label)
 
         if (isinstance(m, Line_MultiGauss)) | (isinstance(m, Line_MultiGauss_doublet)):
             if m.n_components > 1:

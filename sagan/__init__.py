@@ -7,4 +7,7 @@ from .plot import *
 from .mcmc_fit import *
 from .measure_method import *
 from .convolution import *
+from .convolution_var import *
 from .mcmc_fit_io import *
+from .dynesty_fit import *
+from .dynesty_fit_io import *

@@ -7,7 +7,7 @@ from .utils import splitter, package_path
 from .constants import ls_km
 
 
-__all__ = ['IronTemplate']
+__all__ = ['IronTemplate', 'IronTemplate_new']
 
 
 irontemp_boroson1992 = Table.read('{0}{1}data{1}irontemplate_boroson1992.ipac'.format(package_path, splitter),
@@ -87,7 +87,83 @@ class IronTemplate(Fittable1DModel):
         f = amplitude * np.interp(x, self._wave_temp * (1 + z), flux_conv)
 
         return f
-    
+
+
+class IronTemplate_new(Fittable1DModel):
+    '''
+    This is a Fe template of AGN from I Zw 1 (Boroson & Green 1992).
+    Modified version of IronTemplate with:
+    - sigma instead of stddev (same meaning)
+    - dv parameter for velocity shift
+    - z as a fixed parameter
+
+    Parameters
+    ----------
+    x : array like
+        Wavelength, units: Angstrom.
+    amplitude : float
+        Amplitude of the template, units: arbitrary.
+    sigma : float
+        Velocity dispersion of the AGN, units: km/s. Lower limit about 390 km/s.
+    z : float
+        Redshift of the AGN (fixed parameter).
+    dv : float
+        Velocity shift of the template, units: km/s.
+    template_name : string
+        The name of the template.
+        park2022 : Based on Mrk 493 from Park et al. (2022).
+        boroson1992 : Based on I Zw 1 from Boroson & Green (1992).
+
+    Returns
+    -------
+    flux_intp : array like
+        The interpolated flux of iron emission.
+    '''
+
+    amplitude = Parameter(default=1, bounds=(0, None))
+    sigma = Parameter(default=900/2.3548, bounds=(900/2.3548, None))
+    z = Parameter(default=0, fixed=True)
+    dv = Parameter(default=0, bounds=(-2000, 2000))
+
+    def __init__(self, amplitude=amplitude, sigma=sigma, z=z, dv=dv, template_name='park2022', **kwargs):
+        super().__init__(amplitude=amplitude, sigma=sigma, z=z, dv=dv, **kwargs)
+
+        if template_name == 'park2022':
+            wave_temp = wave_park2022
+            flux_temp = flux_park2022
+            self._stddev_intr = 800 / 2.3548  # Velocity dispersion of Mrk 493.
+        elif template_name == 'boroson1992':
+            wave_temp = wave_boroson1992
+            flux_temp = flux_boroson1992
+            self._stddev_intr = 900 / 2.3548  # Velocity dispersion of I Zw 1.
+        else:
+            raise KeyError('Cannot recognize the iron template model ({})!'.format(template_name))
+
+        fltr = (wave_temp > 4500) & (wave_temp < 5500)
+        self._vmin, self._vmax = np.min(wave_temp[fltr]), np.max(wave_temp[fltr])
+        fmax = np.max(flux_temp[fltr])
+        self._wave_temp = wave_temp
+        self._flux_temp = flux_temp / fmax
+        self._vchan = (wave_temp[1] - wave_temp[0]) / wave_temp[0] * ls_km  # Velocity width per channel
+
+    def evaluate(self, x, amplitude, sigma, z, dv):
+        """
+        Gaussian model function with velocity shift.
+        """
+        if sigma < self._stddev_intr:
+            flux_conv = self._flux_temp
+        else:
+            sig = np.sqrt(sigma**2 - self._stddev_intr**2) / self._vchan
+            flux_conv = gaussian_filter1d(self._flux_temp, sig)
+
+        # Apply both redshift (z) and velocity shift (dv) to wavelength grid
+        # dv is in km/s, so dv/ls_km gives the fractional wavelength shift
+        wave_shifted = self._wave_temp * (1 + z + dv / ls_km)
+        f = amplitude * np.interp(x, wave_shifted, flux_conv)
+
+        return f
+
+
 class IronTemplate_tied(Fittable1DModel):
     '''
     This is a Fe template of AGN from I Zw 1 (Boroson & Green 1992) with tied convolution kernel.

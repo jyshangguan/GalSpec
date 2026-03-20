@@ -36,14 +36,15 @@ SAGAN was developed for the study of low-redshift BAL QSOs with the following sc
 1. [Two-Stage Fitting Strategy](#two-stage-fitting-strategy) ⭐ **READ THIS FIRST**
 2. [CRITICAL: Weak Narrow Lines](#critical-weak-narrow-lines) ⭐ **NEW**
 3. [Iterative Model Building](#iterative-model-building-start-simple-add-complexity)
-4. [Data Preparation](#data-preparation)
-5. [Stage 1: Create Narrow Line Template](#stage-1-create-narrow-line-template)
-6. [Stage 2: Fit Broad Line Complexes](#stage-2-fit-broad-line-complexes)
-7. [Component Selection Guidelines](#component-selection-guidelines)
-8. [Parameter Tying Patterns](#parameter-tying-patterns)
-9. [MCMC Fitting Strategy](#mcmc-fitting-strategy)
-10. [Physical Measurements](#physical-measurements)
-11. [Complete Example](#complete-example)
+4. [Model Selection with BIC](#model-selection-with-bic) ⭐ **IMPORTANT**
+5. [Data Preparation](#data-preparation)
+6. [Stage 1: Create Narrow Line Template](#stage-1-create-narrow-line-template)
+7. [Stage 2: Fit Broad Line Complexes](#stage-2-fit-broad-line-complexes)
+8. [Component Selection Guidelines](#component-selection-guidelines)
+9. [Parameter Tying Patterns](#parameter-tying-patterns)
+10. [MCMC Fitting Strategy](#mcmc-fitting-strategy)
+11. [Physical Measurements](#physical-measurements)
+12. [Complete Example](#complete-example)
 
 ## Two-Stage Fitting Strategy ⭐ **READ THIS FIRST**
 
@@ -511,6 +512,147 @@ m4 = fitter(model4, wave, flux, weights=weight)
 8. [Physical Measurements](#physical-measurements)
 9. [Complete Example](#complete-example)
 
+## Model Selection with BIC ⭐ **IMPORTANT**
+
+When deciding between models with different complexity (e.g., 1 vs 2 broad components), use the Bayesian Information Criterion (BIC) for objective, statistical comparison.
+
+### Why BIC Matters
+
+**The Problem**: Adding more components always improves χ² (or at least doesn't make it worse). But is the improvement statistically justified?
+
+**The Solution**: BIC penalizes model complexity, balancing goodness-of-fit against the number of free parameters.
+
+### BIC Formula
+
+```
+BIC = χ² + k × ln(n)
+```
+
+where:
+- **χ²** = Σ[(flux - model)² / error²]  (total chi-squared)
+- **k** = number of free parameters (not fixed or tied)
+- **n** = number of data points
+
+### Interpretation
+
+When comparing two models:
+
+| ΔBIC (complex - simple) | Interpretation |
+|------------------------|----------------|
+| **ΔBIC < -10** | Strong evidence for **more complex** model |
+| **ΔBIC > 10** | Strong evidence for **simpler** model |
+| **\|ΔBIC\| < 10** | Weak evidence, prefer simpler model |
+
+Lower BIC = better model (accounting for complexity).
+
+### How to Use BIC
+
+```python
+from sagan.utils import calculate_bic
+
+# Fit simple model (1 component)
+model_simple = fitter(model_1comp, wave, flux, weights=1/error**2)
+bic_simple, chi2_simple, n_simple = calculate_bic(model_simple, wave, flux, error)
+
+# Fit complex model (2 components)
+model_complex = fitter(model_2comp, wave, flux, weights=1/error**2)
+bic_complex, chi2_complex, n_complex = calculate_bic(model_complex, wave, flux, error)
+
+# Compare
+delta_bic = bic_complex - bic_simple
+
+print(f"Simple:   BIC={bic_simple:.1f}, χ²/ν={chi2_simple/len(wave):.3f}, n={n_simple}")
+print(f"Complex:  BIC={bic_complex:.1f}, χ²/ν={chi2_complex/len(wave):.3f}, n={n_complex}")
+print(f"ΔBIC = {delta_bic:.1f}")
+
+if delta_bic < -10:
+    print("→ Use complex model (statistically justified)")
+elif delta_bic > 10:
+    print("→ Use simple model (penalty for extra params not worth it)")
+else:
+    print("→ Weak evidence, prefer simple model")
+```
+
+### Common Use Cases
+
+**1. Number of Broad Components**
+
+Decide whether Hα or Hβ needs 1, 2, or 3 Gaussian components:
+
+```python
+models = []
+bics = []
+
+for n_comp in [1, 2, 3]:
+    model = fit_broad_halpha(wave, flux, n_components=n_comp)
+    bic, _, _ = calculate_bic(model, wave, flux, error)
+    models.append(model)
+    bics.append(bic)
+
+best_n = np.argmin(bics)
+print(f"Optimal: {best_n + 1} components")
+```
+
+**2. Include [O III] Blue Wing?**
+
+[O III] 5007 often has a blue wing in AGN. Should you add it?
+
+```python
+# Model without wing
+model_no_wing = continuum + iron + broad_hb + narrow_hb + o3_core
+bic_no_wing, _, _ = calculate_bic(fit(model_no_wing), wave, flux, error)
+
+# Model with wing
+model_with_wing = continuum + iron + broad_hb + narrow_hb + o3_core + o3_wing
+bic_with_wing, _, _ = calculate_bic(fit(model_with_wing), wave, flux, error)
+
+if bic_with_wing < bic_no_wing - 10:
+    print("→ Include [O III] wing")
+```
+
+**3. Include Fe II Template?**
+
+Fe II emission blends with Hβ. Should you include it?
+
+```python
+bic_no_fe = calculate_bic(model_without_fe, wave, flux, error)[0]
+bic_with_fe = calculate_bic(model_with_fe, wave, flux, error)[0]
+
+if bic_with_fe < bic_no_fe - 10:
+    print("→ Include Fe II template")
+```
+
+### Important: Use BIC, Not Residuals!
+
+❌ **WRONG Approach**:
+```python
+# Don't use arbitrary thresholds!
+if np.max(np.abs(residuals)) > 5:
+    add_second_component()
+```
+
+✅ **CORRECT Approach**:
+```python
+# Use statistical criterion
+bic1 = calculate_bic(model_1comp, wave, flux, error)[0]
+bic2 = calculate_bic(model_2comp, wave, flux, error)[0]
+
+if bic2 < bic1 - 10:
+    use_2component_model()
+```
+
+**Why?** Residuals can be misleading. BIC properly accounts for:
+- Sample size (larger datasets require stronger evidence)
+- Number of parameters (penalizes overfitting)
+- Statistical significance (not arbitrary thresholds)
+
+### Practical Tips
+
+1. **Always calculate BIC for competing models** - don't guess
+2. **Report ΔBIC in your analysis** - shows statistical justification
+3. **Don't over-interpret small ΔBIC** (|ΔBIC| < 10 is weak)
+4. **BIC works for any model comparison** - not just broad lines
+
 ## Data Preparation
 
 ### 1. Initial Setup
@@ -563,24 +705,112 @@ if len(peaks) > 0:
 
 ### 3. Define Fitting Windows
 
-Based on the J0925+6409 example, use these wavelength windows:
+⚠️ **CRITICAL: Always Plot First**
+
+Before defining wavelength regions:
+1. **Plot the full spectrum** to visualize all features
+2. **Check continuum visibility** on both sides of lines
+3. **Adjust range based on broad line width** - very broad lines need wider ranges
+4. **Exclude contaminating lines** that would bias the fit
+
+### General Guidelines
+
+**Include**:
+- Full emission line complex (all related lines)
+- Sufficient continuum on both blue and red sides
+- Typically 200-1000 Å depending on line width
+
+**Exclude**:
+- Strong unrelated lines that contaminate the fit
+- Regions with bad data, cosmic rays, or detector defects
+
+### Example Ranges (Adjust as Needed!)
+
+**Hα Complex** (rest frame):
+```python
+# Typical: 6450-6700 Å
+# For very broad lines (FWHM > 5000 km/s): 6400-6800 Å
+
+# Plot first to check!
+fig, ax = plt.subplots()
+ax.plot(wave_rest, flux)
+ax.axvline(6563, color='r', linestyle='--', label='Hα')
+ax.axvline(6450, color='k', linestyle=':', label='Suggested range')
+ax.axvline(6700, color='k', linestyle=':')
+
+# Check continuum visible on both sides
+# Adjust if needed:
+ha_region = (wave_rest > 6450) & (wave_rest < 6700)  # MODIFY AS NEEDED
+```
+
+**Hβ Complex** (rest frame):
+```python
+# Typical: 4500-5400 Å
+# Excludes: Hγ (4340) - would contaminate blue continuum
+# For very broad lines: may need 4400-5400 Å
+
+hb_region = (wave_rest > 4500) & (wave_rest < 5400)  # MODIFY AS NEEDED
+```
+
+**Decision Process**:
+```python
+# 1. Plot region
+fig, ax = plt.subplots(figsize=(14, 6))
+ax.plot(wave_rest, flux, 'k-', linewidth=1)
+
+# 2. Mark major features
+from sagan.utils import line_wave_dict
+ax.axvline(line_wave_dict['Halpha'], color='r', linestyle='--', alpha=0.7, label='Hα')
+ax.axvline(line_wave_dict['Hbeta'], color='b', linestyle='--', alpha=0.7, label='Hβ')
+ax.axvline(line_wave_dict['Hgamma'], color='orange', linestyle='--', alpha=0.5, label='Hγ')
+
+# 3. Check continuum visibility
+# Is continuum visible on both sides?
+# If not, extend range
+
+# 4. Define range (ADJUST BASED ON PLOT)
+region_min = 6450  # Adjust based on continuum visibility
+region_max = 6700  # Adjust based on continuum visibility
+ax.axvspan(region_min, region_max, alpha=0.2, label='Fitting range')
+```
+
+### Creating Weight Arrays
+
+Based on your chosen windows:
 
 ```python
-# Hα region: 6100-7000 Å (rest)
-# Hβ + Hγ region: 4200-5400 Å (rest)
-# He I region: 5400-6100 Å (rest)
-
-line_windows = [(4200, 5400), (5400, 6100), (6100, 7000)]
+# Example for multi-region fitting
+line_windows = [
+    (4500, 5400),  # Hβ region - ADJUST AS NEEDED
+    (6450, 6700),  # Hα region - ADJUST AS NEEDED
+]
 
 # Create weight array
 weight_lines = np.zeros_like(wave_rest)
 for window in line_windows:
     weight_lines[(wave_rest >= window[0]) & (wave_rest <= window[1])] = 1
 
-# Mask bad pixels
+# Mask bad pixels (if any)
+# These are examples - adjust for your data
 weight_lines[(wave_rest > 5398) & (wave_rest < 5403)] = 0  # Detector defect
 weight_lines[(wave_rest > 6097) & (wave_rest < 6103)] = 0  # Detector defect
 ```
+
+### Why Visual Inspection is Critical
+
+For objects with **very broad lines** (FWHM > 5000 km/s):
+- Standard ranges may not include enough continuum
+- This causes biased continuum estimation
+- Results in poor fit quality
+
+**Solution**: Extend range until continuum is visible on both sides:
+```python
+# If FWHM ≈ 10000 km/s (~220 Å at Hα):
+# Standard range: 6450-6700 (250 Å width)
+# Extended range: 6400-6800 (400 Å width) ← Use this instead
+```
+
+**Remember**: The ranges above are EXAMPLES. Always adjust based on your data!
 
 ## Stage 1: Create Narrow Line Template
 
@@ -1577,23 +1807,61 @@ m_fit_he1['nHeI_5876'].dv.tied = sagan.tie_template_dv('nHalpha')
 
 ### Continuum: WindowedPowerLaw1D
 
-For AGN, use a power-law continuum:
+**For AGN spectra, always use a power-law continuum first:**
 
 ```python
-cont = sagan.WindowedPowerLaw1D(
-    amplitude=1.0,       # Continuum level
-    x_0=5000,            # Reference wavelength (Å)
-    alpha=-1.0,          # Power-law index (F_ν ∝ ν^α)
-    x_min=4500,          # Window start (Å)
-    x_max=5500,          # Window end (Å)
+from sagan.continuum import WindowedPowerLaw1D
+
+cont = WindowedPowerLaw1D(
+    amplitude=cont_level,    # Continuum level at reference wavelength
+    x_0=line_wave_dict['Hbeta'],  # Reference wavelength (Å)
+    alpha=-1.0,              # Power-law index (F_ν ∝ ν^α)
+    x_min=4500,              # Window start (Å) - prevents extrapolation
+    x_max=5400,              # Window end (Å) - prevents extrapolation
     name='continuum'
 )
 ```
 
-**Typical values**:
-- amplitude: 1-20 (normalized units)
-- alpha: -0.5 to -1.5
-- x_0: central wavelength of fitting window
+**Why Power-Law?**
+- AGN continuum follows a power law: F_ν ∝ ν^α
+- Physical model for AGN accretion disk
+- Typically α ≈ -0.5 to -1.5
+
+**Why Window It?**
+- Prevents numerical issues at short wavelengths
+- Constrains continuum to your fitting range
+- Avoids extrapolation artifacts
+
+**Parameter Estimation**:
+```python
+# Estimate continuum level from line-free regions
+cont_regions = ((wave > 4500) & (wave < 4700)) | \
+               ((wave > 5100) & (wave < 5250))
+cont_level = np.median(flux[cont_regions])
+
+# Estimate power-law index from two continuum regions
+cont1 = np.median(flux[(wave > 4500) & (wave < 4600)])
+cont2 = np.median(flux[(wave > 5300) & (wave < 5400)])
+alpha_init = -np.log(cont2/cont1) / np.log(5350/4550)
+
+print(f"Continuum level: {cont_level:.2f}")
+print(f"Power-law index: {alpha_init:.2f}")
+```
+
+**When Power-Law Fails**:
+
+If you encounter numerical errors (NonFiniteValueError, warnings):
+
+```python
+# Fallback: Use Polynomial1D
+from astropy.modeling import models
+cont = models.Polynomial1D(degree=1, c0=cont_level, c1=0)
+```
+
+This is rare with proper windowing. Only use polynomial if:
+- Power-law produces numerical errors
+- Very small wavelength range (< 50 Å)
+- Non-AGN object (e.g., star-forming galaxy)
 
 ### Narrow Lines: Line_template
 

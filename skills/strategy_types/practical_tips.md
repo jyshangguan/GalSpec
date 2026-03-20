@@ -55,6 +55,105 @@ Follow the iterative approach - don't start with a complex model.
 - Residuals look random
 - New component amplitude is consistent with zero
 
+## 3.5 Model Selection with BIC ⭐ **IMPORTANT**
+
+**The Problem**: Adding more components always improves χ², but is it statistically justified?
+
+**The Solution**: Use BIC (Bayesian Information Criterion) for objective model comparison.
+
+### Why BIC Matters
+
+BIC balances:
+- **Goodness of fit** (χ²)
+- **Model complexity** (number of parameters)
+- **Sample size** (ln n penalty)
+
+```python
+from sagan.utils import calculate_bic
+
+# Fit 1-component model
+model_1comp = fitter(model_1, wave, flux, weights=1/error**2)
+bic1, chi2_1, n1 = calculate_bic(model_1comp, wave, flux, error)
+
+# Fit 2-component model
+model_2comp = fitter(model_2, wave, flux, weights=1/error**2)
+bic2, chi2_2, n2 = calculate_bic(model_2comp, wave, flux, error)
+
+# Compare
+delta_bic = bic2 - bic1
+
+print(f"1-comp: BIC={bic1:.1f}, χ²/ν={chi2_1/len(wave):.3f}, n={n1}")
+print(f"2-comp: BIC={bic2:.1f}, χ²/ν={chi2_2/len(wave):.3f}, n={n2}")
+print(f"ΔBIC = {delta_bic:.1f}")
+
+if delta_bic < -10:
+    print("→ Use 2-component (statistically justified)")
+elif delta_bic > 10:
+    print("→ Use 1-component (simpler preferred)")
+else:
+    print("→ Weak evidence, prefer simpler 1-component")
+```
+
+### BIC Interpretation
+
+| ΔBIC (complex - simple) | Interpretation |
+|------------------------|----------------|
+| **ΔBIC < -10** | Strong evidence for complex model |
+| **ΔBIC > 10** | Strong evidence for simple model |
+| **\|ΔBIC\| < 10** | Weak evidence, prefer simple |
+
+Lower BIC = better model (accounts for complexity).
+
+### Use BIC, Not Residuals!
+
+❌ **WRONG**:
+```python
+# Don't use arbitrary thresholds!
+if np.max(np.abs(residuals)) > 5:
+    add_second_component()
+```
+
+✅ **CORRECT**:
+```python
+# Use statistical criterion
+bic1 = calculate_bic(model_1comp, wave, flux, error)[0]
+bic2 = calculate_bic(model_2comp, wave, flux, error)[0]
+
+if bic2 < bic1 - 10:
+    use_2component_model()
+```
+
+### Common Use Cases
+
+**1. Number of Broad Components**
+```python
+# Test 1, 2, 3 components
+for n_comp in [1, 2, 3]:
+    model = fit_broad_halpha(wave, flux, n_components=n_comp)
+    bic[n_comp] = calculate_bic(model, wave, flux, error)[0]
+
+best_n = np.argmin(bic)
+print(f"Optimal: {best_n + 1} components")
+```
+
+**2. Include [O III] Wing?**
+```python
+bic_no_wing = calculate_bic(model_no_wing, wave, flux, error)[0]
+bic_with_wing = calculate_bic(model_with_wing, wave, flux, error)[0]
+
+if bic_with_wing < bic_no_wing - 10:
+    print("→ Include [O III] wing")
+```
+
+**3. Include Fe II Template?**
+```python
+bic_no_fe = calculate_bic(model_without_fe, wave, flux, error)[0]
+bic_with_fe = calculate_bic(model_with_fe, wave, flux, error)[0]
+
+if bic_with_fe < bic_no_fe - 10:
+    print("→ Include Fe II template")
+```
+
 ## 4. LSF Convolution Rules
 
 **What to convolve**:
@@ -131,6 +230,65 @@ nha = sagan.Line_template(
 **When to use fixed-width vs empirical template**:
 - **Empirical template**: S/N > 20, clear narrow line detection
 - **Fixed-width Gaussian**: S/N < 20, or narrow lines absent
+
+## 6.5 Continuum Modeling for AGN
+
+**First Choice: WindowedPowerLaw1D**
+
+For AGN spectra, always try a power-law continuum first:
+
+```python
+from sagan.continuum import WindowedPowerLaw1D
+
+cont = WindowedPowerLaw1D(
+    amplitude=cont_level,    # From data
+    x_0=line_wave_dict['Hbeta'],  # Reference wavelength
+    alpha=-1.0,              # Power-law index (F_ν ∝ ν^α)
+    x_min=wave_min,          # Window start - prevents extrapolation
+    x_max=wave_max,          # Window end - prevents extrapolation
+    name='continuum'
+)
+```
+
+**Why Power-Law?**
+- AGN continuum is physical: F_ν ∝ ν^α
+- α ≈ -0.5 to -1.5 for typical AGN
+- Power-law from accretion disk emission
+
+**Why Window It?**
+- Prevents numerical issues at λ → 0
+- Constrains model to fitting range
+- Avoids extrapolation artifacts
+
+**Parameter Estimation**:
+```python
+# Continuum level from line-free regions
+cont_regions = ((wave > 4500) & (wave < 4700)) | \
+               ((wave > 5100) & (wave < 5250))
+cont_level = np.median(flux[cont_regions])
+
+# Power-law index from two continuum regions
+cont1 = np.median(flux[(wave > 4500) & (wave < 4600)])
+cont2 = np.median(flux[(wave > 5300) & (wave < 5400)])
+alpha_init = -np.log(cont2/cont1) / np.log(5350/4550)
+
+print(f"Continuum: {cont_level:.2f}, α={alpha_init:.2f}")
+```
+
+**When Power-Law Fails**:
+
+If you get numerical errors (NonFiniteValueError):
+
+```python
+# Fallback: Polynomial1D
+from astropy.modeling import models
+cont = models.Polynomial1D(degree=1, c0=cont_level, c1=0)
+```
+
+This is rare with proper windowing. Only use polynomial if:
+- Power-law produces numerical errors
+- Very small range (< 50 Å)
+- Non-AGN object (e.g., star-forming galaxy)
 
 ## 7. Monitor χ² and Residuals
 

@@ -33,8 +33,8 @@ except ImportError:
     corner = None
 
 __all__ = ['package_path', 'splitter', 'line_wave_dict', 'line_label_dict',
-           'wave_to_velocity', 'velocity_to_wave', 'down_spectres', 
-           'ReadSpectrum']
+           'wave_to_velocity', 'velocity_to_wave', 'down_spectres',
+           'ReadSpectrum', 'calculate_bic']
 
 
 if platform == "linux" or platform == "linux2":  # Linux
@@ -142,6 +142,91 @@ def velocity_to_wave(velocity, wave0):
         Wavelength.
     '''
     return (velocity / ls_km + 1 )* wave0
+
+
+def calculate_bic(model, wave, flux, error=None):
+    '''
+    Calculate the Bayesian Information Criterion (BIC) for a fitted model.
+
+    BIC = χ² + k * ln(n)
+
+    where:
+    - χ² = sum(((flux - model(wave)) / error)²)  [or sum((flux - model(wave))²) if error=None]
+    - k = number of free parameters (not fixed and not tied)
+    - n = number of data points
+
+    Lower BIC indicates a better model, accounting for both fit quality
+    and model complexity (penalizing extra parameters).
+
+    Parameters
+    ----------
+    model : astropy.modeling.Model
+        Fitted model (can be a compound model).
+    wave : array like
+        Wavelength array.
+    flux : array like
+        Flux array.
+    error : array like, optional
+        Error array. If not provided, χ² is calculated without error weighting.
+
+    Returns
+    -------
+    bic : float
+        Bayesian Information Criterion value.
+    chi2 : float
+        Total χ² value.
+    n_params : int
+        Number of free parameters.
+
+    Examples
+    --------
+    >>> from sagan.utils import calculate_bic
+    >>> # Fit a model
+    >>> model_fit = fitter(model_init, wave, flux, weights=1/error**2)
+    >>> # Calculate BIC
+    >>> bic, chi2, n_params = calculate_bic(model_fit, wave, flux, error)
+    >>> print(f"BIC: {bic:.1f}, χ²: {chi2:.1f}, Parameters: {n_params}")
+
+    >>> # Compare two models
+    >>> bic1, _, _ = calculate_bic(model1_fit, wave, flux, error)
+    >>> bic2, _, _ = calculate_bic(model2_fit, wave, flux, error)
+    >>> delta_bic = bic2 - bic1
+    >>> if delta_bic < -10:
+    ...     print("Strong evidence for model 2")
+    >>> elif delta_bic > 10:
+    ...     print("Strong evidence for model 1")
+    ... else:
+    ...     print("Weak evidence, prefer simpler model")
+    '''
+    # Calculate χ²
+    model_flux = model(wave)
+    if error is not None:
+        chi2 = np.sum(((flux - model_flux) / error)**2)
+    else:
+        chi2 = np.sum((flux - model_flux)**2)
+
+    # Count free parameters (not fixed and not tied)
+    n_params = 0
+    seen = set()
+
+    # Traverse the compound model tree
+    for item in model.traverse_postorder():
+        for param_name in item.param_names:
+            # Create unique identifier for this parameter
+            param_id = f"{item.name}.{param_name}"
+            if param_id not in seen:
+                seen.add(param_id)
+                p = getattr(item, param_name)
+                if not (p.fixed or p.tied):
+                    n_params += 1
+
+    # Number of data points
+    n_data = len(wave)
+
+    # Calculate BIC
+    bic = chi2 + n_params * np.log(n_data)
+
+    return bic, chi2, n_params
 
 
 def down_spectres(wave, flux, R_org, R_new, wave_new=None, wavec=None, dw=None, 

@@ -869,6 +869,80 @@ vel = wave_to_velocity(wave_obs, wave_rest)  # km/s
 wave_obs = velocity_to_wave(vel, wave_rest)  # Å
 ```
 
+### calculate_bic
+
+Calculate the Bayesian Information Criterion (BIC) for model comparison.
+
+```python
+from sagan.utils import calculate_bic
+
+# After fitting a model
+bic, chi2, n_params = calculate_bic(model_fit, wave, flux, error)
+
+print(f"BIC: {bic:.1f}")
+print(f"χ²: {chi2:.1f}")
+print(f"Free parameters: {n_params}")
+```
+
+**BIC Formula**: `BIC = χ² + k × ln(n)`
+
+where:
+- `χ²` = sum(((flux - model(wave)) / error)²)
+- `k` = number of free parameters (not fixed or tied)
+- `n` = number of data points
+
+**Model Comparison**:
+```python
+# Compare two models
+bic1, _, _ = calculate_bic(model1_fit, wave, flux, error)
+bic2, _, _ = calculate_bic(model2_fit, wave, flux, error)
+
+delta_bic = bic2 - bic1
+
+if delta_bic < -10:
+    print("Strong evidence for model 2 (ΔBIC < -10)")
+elif delta_bic > 10:
+    print("Strong evidence for model 1 (ΔBIC > 10)")
+else:
+    print("Weak evidence (|ΔBIC| < 10), prefer simpler model")
+```
+
+**Interpretation**:
+- ΔBIC < -10: Strong evidence for the new (more complex) model
+- ΔBIC > 10: Strong evidence for the baseline (simpler) model
+- |ΔBIC| < 10: Weak evidence, prefer the simpler model
+
+**Example: Deciding Number of Broad Components**:
+```python
+# Fit 1-component model
+model_1comp = fitter(model_1, wave, flux, weights=1/error**2)
+bic1, chi2_1, n1 = calculate_bic(model_1comp, wave, flux, error)
+
+# Fit 2-component model
+model_2comp = fitter(model_2, wave, flux, weights=1/error**2)
+bic2, chi2_2, n2 = calculate_bic(model_2comp, wave, flux, error)
+
+print(f"1-component: BIC={bic1:.1f}, χ²/ν={chi2_1/len(wave):.3f}, n={n1}")
+print(f"2-component: BIC={bic2:.1f}, χ²/ν={chi2_2/len(wave):.3f}, n={n2}")
+print(f"ΔBIC = {bic2 - bic1:.1f}")
+
+if bic2 < bic1 - 10:
+    print("→ Use 2-component model")
+else:
+    print("→ Use 1-component model")
+```
+
+**Parameters**:
+- `model` (astropy.modeling.Model): Fitted model (can be compound)
+- `wave` (array): Wavelength values
+- `flux` (array): Flux values
+- `error` (array, optional): Error values. If None, χ² is calculated without weighting.
+
+**Returns**:
+- `bic` (float): BIC value
+- `chi2` (float): Total χ²
+- `n_params` (int): Number of free parameters
+
 ### ReadSpectrum Class
 
 ```python

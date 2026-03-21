@@ -1,6 +1,11 @@
 ---
 name: sagan-spectral-fitting
 description: This skill should be used when the user asks to "fit astronomical spectra", "spectral fitting", "fit AGN spectrum", "fit emission lines", "fit absorption lines", "fit Type 1 AGN", "fit BAL QSO", mentions "SAGAN package", "spectral analysis", "line profile fitting", "MCMC fitting", "Bayesian inference", or discusses fitting astronomical spectra with complex line profiles, iron templates, BAL troughs, or emission/absorption line decomposition. Also use when user needs to model continuum, broad lines, narrow lines, absorption components, or measure physical parameters from spectra.
+
+**CRITICAL KEYWORD TRIGGERS - Must read specified files BEFORE creating a plan:**
+- "doublet", "[S II]", "S II", "[N II]", "N II", "[O III]", "O III", "narrow line template", "LSF", "instrumental profile" → MUST read: `fitting_strategies/narrow_line_template.md`
+- "Type 1 AGN", "broad Hα", "broad Hβ", "broad line", "Balmer" → MUST read: `fitting_strategies/type1_agn.md`
+- "BAL", "absorption trough", "broad absorption line" → MUST read: `fitting_strategies/type1_agn.md` (BAL section)
 version: 1.0.0
 ---
 
@@ -33,6 +38,36 @@ Use this skill when you need to:
 - Type 2 AGN (narrow-line AGN)
 - Galaxies with stellar continua
 - Any object with emission/absorption lines
+
+---
+
+## ⚠️ Task-Specific Documentation Routing
+
+**BEFORE creating a plan, read the specified file first:**
+
+| Task / Keywords | MUST Read This File |
+|-----------------|---------------------|
+| **Fit doublet lines** ([S II], [N II], [O III]) | `fitting_strategies/narrow_line_template.md` |
+| **Derive narrow line template** from doublets | `fitting_strategies/narrow_line_template.md` |
+| **Characterize instrumental LSF** or line profile | `fitting_strategies/narrow_line_template.md` |
+| **Fit Type 1 AGN** with broad Balmer lines | `fitting_strategies/type1_agn.md` |
+| **Fit BAL QSO** with absorption troughs | `fitting_strategies/type1_agn.md` |
+| **Broad Hα / Hβ fitting** | `fitting_strategies/type1_agn.md` |
+| Simple single emission line | `function_reference/line_profile_models.md` |
+| Parameter tying between components | `function_reference/parameter_tying.md` |
+
+### Critical Keywords
+
+**If user mentions ANY of these, STOP and read `narrow_line_template.md` first:**
+- "doublet", "[S II]", "S II doublet", "[N II] doublet", "[O III] doublet"
+- "narrow line template", "derive template", "extract template"
+- "LSF", "line spread function", "instrumental profile", "instrumental broadening"
+- "6716", "6731", "6716/6731" (referring to [S II] wavelengths)
+
+**If user mentions ANY of these, STOP and read `type1_agn.md` first:**
+- "Type 1 AGN", "Type 1", "broad line AGN"
+- "broad Hα", "broad Hbeta", "broad Balmer", "broad permitted lines"
+- "BAL", "BAL QSO", "absorption trough", "broad absorption line"
 
 ---
 
@@ -70,15 +105,18 @@ ax, axr = sagan.plot.plot_fit_new(wave, flux, model_fit, error=ferr)
 
 ### Key Components
 
-| Component | Class | Usage |
-|-----------|-------|-------|
-| Power-law continuum | `WindowedPowerLaw1D` | AGN continuum |
-| Narrow lines | `Line_template` | Forbidden lines |
-| Broad lines | `Line_MultiGauss` | Permitted lines |
-| Asymmetric lines | `Line_GaussHermite` | Skewed profiles |
-| Absorption | `Line_Absorption` | BAL troughs |
-| Iron template | `IronTemplate` | Fe II emission |
-| Stellar continuum | `StarSpectrum` | Host galaxy |
+| Component | Class | Usage | Documentation |
+|-----------|-------|-------|---------------|
+| **Doublet lines** | `Line_MultiGauss_doublet` | **Fitting [S II], [N II], [O III] doublets** | `fitting_strategies/narrow_line_template.md` ⭐ |
+| Power-law continuum | `WindowedPowerLaw1D` | AGN continuum | `function_reference/continuum_models.md` |
+| Narrow lines | `Line_template` | Forbidden lines using extracted profile | `function_reference/line_profile_models.md` |
+| Broad lines | `Line_MultiGauss` | Permitted lines (Hα, Hβ) | `function_reference/line_profile_models.md` |
+| Asymmetric lines | `Line_GaussHermite` | Skewed profiles | `function_reference/line_profile_models.md` |
+| Absorption | `Line_Absorption` | BAL troughs | `function_reference/line_profile_models.md` |
+| Iron template | `IronTemplate` | Fe II emission | `function_reference/iron_templates.md` |
+| Stellar continuum | `StarSpectrum` | Host galaxy | `function_reference/stellar_continuum.md` |
+
+**⭐ CRITICAL:** For fitting [S II], [N II], or [O III] doublets to derive the instrumental LSF/narrow line template, **ALWAYS use `Line_MultiGauss_doublet`**. See `fitting_strategies/narrow_line_template.md` for the complete workflow.
 
 ---
 
@@ -218,14 +256,16 @@ Example notebooks are available in the `example/` directory:
 
 ## Tips for Best Results
 
-1. **Start with LSQ fitting** to get initial parameters before MCMC
-2. **Use appropriate component types**: Line_template for narrow lines, Line_MultiGauss for broad lines
-3. **Apply LSF convolution** after absorption multiplication
-4. **Check convergence**: nsteps / tau_max should be > 50
-5. **Tie parameters** to reduce degeneracies (narrow line dv, doublet ratios)
-6. **Use separate MCMC runs** for different component groups (Balmer vs others)
-7. **Verify extinction correction** before fitting
-8. **Normalize spectrum** to local continuum for line fitting
+1. **CRITICAL: Read routing documentation first** - Before creating any plan, check the "Task-Specific Documentation Routing" table above. For doublet fitting or narrow line template derivation, you MUST read `fitting_strategies/narrow_line_template.md` first.
+2. **For doublet lines ([S II], [N II], [O III])**: Use `Line_MultiGauss_doublet` class, NOT separate Gaussian components. See `narrow_line_template.md` for workflow.
+3. **Start with LSQ fitting** to get initial parameters before MCMC
+4. **Use appropriate component types**: Line_template for narrow lines, Line_MultiGauss for broad lines, Line_MultiGauss_doublet for doublets
+5. **Apply LSF convolution** after absorption multiplication
+6. **Check convergence**: nsteps / tau_max should be > 50
+7. **Tie parameters** to reduce degeneracies (narrow line dv, doublet ratios)
+8. **Use separate MCMC runs** for different component groups (Balmer vs others)
+9. **Verify extinction correction** before fitting
+10. **Normalize spectrum** to local continuum for line fitting
 
 ---
 

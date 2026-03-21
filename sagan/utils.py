@@ -3,7 +3,7 @@ from sys import platform
 import numpy as np
 import matplotlib.pyplot as plt
 from .constants import ls_km
-from scipy.ndimage import gaussian_filter1d
+from scipy.ndimage import gaussian_filter1d, median_filter
 from copy import deepcopy
 from astropy.modeling import CompoundModel
 
@@ -34,7 +34,7 @@ except ImportError:
 
 __all__ = ['package_path', 'splitter', 'line_wave_dict', 'line_label_dict',
            'wave_to_velocity', 'velocity_to_wave', 'down_spectres',
-           'ReadSpectrum', 'calculate_bic']
+           'ReadSpectrum', 'calculate_bic', 'detect_noise_mask']
 
 
 if platform == "linux" or platform == "linux2":  # Linux
@@ -227,6 +227,206 @@ def calculate_bic(model, wave, flux, error=None):
     bic = chi2 + n_params * np.log(n_data)
 
     return bic, chi2, n_params
+
+
+def detect_noise_mask(wave, flux, threshold=20.0, protection_margin=10.0,
+                      critical_lines=None, verbose=False):
+    '''
+    Detect and mask noise spikes in a spectrum while protecting emission lines.
+
+    This function uses a three-tier strategy:
+    1. Detect high S/N spikes using median filtering
+    2. Group spikes into continuous regions
+    3. Exclude regions near known emission lines
+    4. Return mask for remaining noise regions
+
+    Parameters
+    ----------
+    wave : array like
+        Rest-frame wavelength array (in Angstroms).
+    flux : array like
+        Flux array (same length as wave).
+    threshold : float, optional
+        Detection threshold in units of residual standard deviation.
+        Default is 20.0 (very conservative).
+    protection_margin : float, optional
+        Protection margin around each emission line in Angstroms.
+        Default is 10.0 Å.
+    critical_lines : dict, optional
+        Dictionary of emission line names and wavelengths to protect.
+        If None, uses CRITICAL_LINES from emission_lines module.
+        Format: {'LINE_NAME': wavelength, ...}
+    verbose : bool, optional
+        Print detailed information about detection process.
+        Default is False.
+
+    Returns
+    -------
+    noise_mask : boolean array
+        Boolean mask where True indicates pixels to mask (same length as wave).
+    candidate_regions : list of tuples
+        List of (wmin, wmax) tuples for all detected spike regions.
+    final_mask_regions : list of tuples
+        List of (wmin, wmax) tuples for regions that will be masked
+        (excluding those near emission lines).
+    excluded_regions : list of tuples
+        List of (wmin, wmax, line_name) tuples for regions excluded
+        because they are near protected emission lines.
+
+    Examples
+    --------
+    >>> from sagan.utils import detect_noise_mask
+    >>> # Load spectrum
+    >>> wave, flux = load_spectrum()
+    >>> # Detect noise
+    >>> noise_mask, candidates, final, excluded = detect_noise_mask(
+    ...     wave, flux, threshold=20.0, protection_margin=10.0, verbose=True
+    ... )
+    >>> # Apply mask
+    >>> wave_clean = wave[~noise_mask]
+    >>> flux_clean = flux[~noise_mask]
+
+    Notes
+    -----
+    - The detection uses median filtering with a 21-pixel window
+    - Residuals are calculated as flux - median(flux)
+    - Detection threshold is applied to absolute residuals
+    - Regions are grouped if they are within 2 pixels of each other
+    - All wavelengths should be in the rest frame
+
+    References
+    ----------
+    Emission line wavelengths from:
+    http://astronomy.nmsu.edu/drewski/tableofemissionlines.html
+    '''
+    from .emission_lines import CRITICAL_LINES
+
+    # Use default critical lines if not provided
+    if critical_lines is None:
+        critical_lines = CRITICAL_LINES
+
+    # ========================================
+    # Step 1: Calculate local statistics
+    # ========================================
+    window = 21
+    flux_median = median_filter(flux, size=window)
+    residual = flux - flux_median
+
+    # Calculate residual std in continuum region (4200-4300 Å if available)
+    continuum_mask = (wave > 4200) & (wave < 4300)
+    if np.sum(continuum_mask) > 0:
+        residual_std = np.std(residual[continuum_mask])
+    else:
+        # Fallback: use global std
+        residual_std = np.std(residual)
+
+    # ========================================
+    # Step 2: Find high S/N spikes
+    # ========================================
+    high_sn_spikes = np.abs(residual) > threshold * residual_std
+
+    # Also find isolated single-pixel spikes (conservative)
+    gradient = np.abs(np.gradient(flux))
+    if np.sum(continuum_mask) > 0:
+        gradient_threshold = 10 * np.median(gradient[continuum_mask])
+    else:
+        gradient_threshold = 10 * np.median(gradient)
+    single_pixel_spikes = gradient > gradient_threshold
+
+    # Combine
+    potential_noise = high_sn_spikes | single_pixel_spikes
+
+    if verbose:
+        print(f"\n[Noise Detection]")
+        print(f"  Residual std: {residual_std:.4f}")
+        print(f"  Threshold: {threshold:.1f}σ")
+        print(f"  Spikes detected: {np.sum(potential_noise)} pixels "
+              f"({100*np.sum(potential_noise)/len(wave):.2f}%)")
+
+    # ========================================
+    # Step 3: Group into continuous regions
+    # ========================================
+    noise_indices = np.where(potential_noise)[0]
+    candidate_regions = []
+
+    if len(noise_indices) > 0:
+        current_start = noise_indices[0]
+        current_end = noise_indices[0]
+
+        for i in range(1, len(noise_indices)):
+            if noise_indices[i] - noise_indices[i-1] <= 2:
+                current_end = noise_indices[i]
+            else:
+                w_start = wave[current_start]
+                w_end = wave[current_end]
+                candidate_regions.append((w_start - 2, w_end + 2))
+                current_start = noise_indices[i]
+                current_end = noise_indices[i]
+
+        # Add last region
+        w_start = wave[current_start]
+        w_end = wave[current_end]
+        candidate_regions.append((w_start - 2, w_end + 2))
+
+    candidate_regions.sort()
+
+    if verbose:
+        print(f"  Grouped into {len(candidate_regions)} regions")
+
+    # ========================================
+    # Step 4: Filter out regions near emission lines
+    # ========================================
+    final_mask_regions = []
+    excluded_regions = []
+
+    for wmin, wmax in candidate_regions:
+        near_line = False
+        nearby_line_name = None
+
+        for name, wave_c in critical_lines.items():
+            # Check if region overlaps with protected zone around line
+            line_min = wave_c - protection_margin
+            line_max = wave_c + protection_margin
+
+            # Overlap check
+            if not (wmax < line_min or wmin > line_max):
+                near_line = True
+                nearby_line_name = name
+                break
+
+        if near_line:
+            excluded_regions.append((wmin, wmax, nearby_line_name))
+        else:
+            final_mask_regions.append((wmin, wmax))
+
+    if verbose:
+        print(f"\n[Filtering Results]")
+        print(f"  Candidate regions: {len(candidate_regions)}")
+        print(f"  Excluded (near lines): {len(excluded_regions)}")
+        print(f"  Final mask regions: {len(final_mask_regions)}")
+
+        if len(excluded_regions) > 0:
+            print(f"\n  Excluded regions:")
+            for i, (wmin, wmax, line) in enumerate(excluded_regions):
+                print(f"    {i+1}. {wmin:.1f}-{wmax:.1f} Å (protected - {line})")
+
+        if len(final_mask_regions) > 0:
+            print(f"\n  Final mask regions:")
+            for i, (wmin, wmax) in enumerate(final_mask_regions):
+                print(f"    {i+1}. {wmin:.1f}-{wmax:.1f} Å")
+
+    # ========================================
+    # Step 5: Create final mask
+    # ========================================
+    noise_mask = np.zeros_like(wave, dtype=bool)
+    for wmin, wmax in final_mask_regions:
+        noise_mask |= (wave >= wmin) & (wave <= wmax)
+
+    if verbose:
+        print(f"\n  Pixels to mask: {np.sum(noise_mask)} "
+              f"({100*np.sum(noise_mask)/len(wave):.2f}%)")
+
+    return noise_mask, candidate_regions, final_mask_regions, excluded_regions
 
 
 def down_spectres(wave, flux, R_org, R_new, wave_new=None, wavec=None, dw=None, 

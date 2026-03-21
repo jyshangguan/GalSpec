@@ -94,7 +94,7 @@ The SAGAN documentation is organized into three main files:
 - Choosing between LSQ, MCMC, and Dynesty
 - Best practices and troubleshooting
 
-### 2. Type 1 AGN Strategy (`skills/strategy_types/type1_agn.md`)
+### 2. Type 1 AGN Strategy (`skills/fitting_strategies/type1_agn.md`)
 - Specific model building sequence for Type 1 AGN
 - Wavelength windows (Hα: 6100-7000 Å, Hβ: 4200-5400 Å)
 - Component selection guidelines
@@ -102,11 +102,12 @@ The SAGAN documentation is organized into three main files:
 - Complete working example from J0925+6409
 - Physical measurements (black hole masses, line fluxes)
 
-### 3. Function Reference (`skills/function_reference.md`)
+### 3. Function Reference (`skills/function_reference/`)
 - Complete documentation of all SAGAN functions
 - Organized by module (line_profile, continuum, iron_template, etc.)
 - Parameter descriptions and bounds
 - Usage examples for each function
+- Split into separate files by module for easier navigation
 
 ---
 
@@ -169,8 +170,8 @@ model = iron + bhb + nhb + no3
 **Documentation:**
 ```
 skills/sagan_spectral_fitting.md          # Main guide
-skills/strategy_types/type1_agn.md        # Type 1 AGN strategy
-skills/function_reference.md               # Function reference
+skills/fitting_strategies/type1_agn.md    # Type 1 AGN strategy
+skills/function_reference/                # Function reference (split by module)
 ```
 
 **Key Modules:**

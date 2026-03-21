@@ -34,8 +34,7 @@ SAGAN was developed for the study of low-redshift BAL QSOs with the following sc
 ## Table of Contents
 
 1. [Two-Stage Fitting Strategy](#two-stage-fitting-strategy) ⭐ **READ THIS FIRST**
-2. [CRITICAL: Weak Narrow Lines](#critical-weak-narrow-lines) ⭐ **NEW**
-3. [Iterative Model Building](#iterative-model-building-start-simple-add-complexity)
+2. [Iterative Model Building](#iterative-model-building-start-simple-add-complexity)
 4. [Model Selection with BIC](#model-selection-with-bic) ⭐ **IMPORTANT**
 5. [Data Preparation](#data-preparation)
 6. [Stage 1: Create Narrow Line Template](#stage-1-create-narrow-line-template)
@@ -63,6 +62,16 @@ When fitting Type 1 AGN spectra, the narrow forbidden lines (FWHM ~100-500 km/s)
 ### The Two Stages
 
 #### Stage 1: Create Narrow Line Template
+
+> **⚠️ CRITICAL: Do NOT use [N II] for the narrow line template**
+>
+> The [N II] λλ6548,6583 doublet is **strongly blended with broad Hα** and will produce incorrect templates.
+> 
+> **Always use [S II] λλ6716,6731 (primary) or [O III] λλ4959,5007 (secondary).**
+>
+> See [Narrow Line Template Guide](narrow_line_template.md) for detailed explanation.
+>
+
 **Goal**: Determine the intrinsic narrow line profile shape
 
 1. **Choose a clean narrow line region**:
@@ -101,177 +110,31 @@ When fitting Type 1 AGN spectra, the narrow forbidden lines (FWHM ~100-500 km/s)
 3. **Fit broad lines independently**:
    - Broad Hα, Hβ, Hγ with `Line_MultiGauss`
 
-## CRITICAL: Weak Narrow Lines ⭐ **NEW**
-
-### The Problem
-
-**When [S II] or [O III] lines have low S/N (<20), creating an empirical template from those lines will FAIL.**
-
-**Symptoms**:
-- Fitted sigma hits upper bounds (e.g., 9000 km/s)
-- Template looks noisy or unphysical
-- Subsequent fitting produces poor results
-
-**Real Example**:
-```
-Spectrum: DESI 39627747915469565
-[S II] 6716 S/N ~6 (too weak!)
-Fitted sigma: 9009 km/s → hitting bound
-Result: Template unusable
-```
-
-### The Solution: Fixed-Width Gaussian Template
-
-When narrow lines are too weak for empirical template extraction, use a **fixed-width Gaussian based on instrumental resolution**:
-
-```python
-# Calculate instrumental LSF width
-lsf_sigma = ls_km / (resolving_power * 2.3548)  # ~64 km/s for R=2000
-
-# Create fixed-width Gaussian template
-velc_temp = np.linspace(-500, 500, 1000)  # km/s
-flux_temp = np.exp(-0.5 * (velc_temp / lsf_sigma)**2)
-flux_temp = flux_temp / np.max(flux_temp)
-
-# Use this for ALL narrow lines
-nha = sagan.Line_template(
-    template_velc=velc_temp,
-    template_flux=flux_temp,
-    amplitude=estimated_amp,
-    dv=0,
-    wavec=line_wave_dict['Halpha'],
-    name='nHalpha'
-)
-```
-
-### Decision Flowchart
-
-```
-Check S/N of narrow line region
-    │
-    ├─ S/N > 20?
-    │   │
-    │   ├─ YES → Use empirical template (see Stage 1)
-    │   │         Fit [S II] or [O III] with Gaussians
-    │   │         Generate template from fit
-    │   │
-    │   └─ NO → Use fixed-width Gaussian
-    │             Based on instrumental resolution
-    │             sigma = c / (R * 2.3548)
-    │
-    └─ Proceed to Stage 2 with template
-```
-
-### How to Check S/N
-
-```python
-# In [S II] region
-s2_region = (wave_rest > 6700) & (wave_rest < 6745)
-flux_s2 = flux[s2_region]
-
-# Continuum estimate
-cont_mask = ((wave_rest > 6700) & (wave_rest < 6710)) | \
-            ((wave_rest > 6735) & (wave_rest < 6745))
-cont_level = np.median(flux_s2[cont_mask])
-noise = np.std(flux_s2[cont_mask])
-
-# S/N calculation
-peak_flux = np.max(flux_s2)
-sn_ratio = (peak_flux - cont_level) / noise
-
-print(f"[S II] S/N: {sn_ratio:.1f}")
-
-if sn_ratio < 20:
-    print("WARNING: S/N too low for empirical template")
-    print("         Use fixed-width Gaussian instead")
-```
-
-### When to Use Each Approach
-
-| Scenario | Template Type | When to Use |
-|----------|---------------|-------------|
-| **High-quality narrow lines** | Empirical from [S II] or [O III] | S/N > 20, clear detection |
-| **Weak narrow lines** | Fixed-width Gaussian | S/N < 20, or absent |
-| **No narrow lines** | Fixed-width Gaussian | Type 1 AGN with only broad lines |
-
-### Convolution Rules with Templates
-
-**IMPORTANT**: The convolution rules differ for empirical vs fixed-width templates:
-
-```python
-# For EMPIRICAL templates (from Stage 1):
-# Already includes instrumental broadening - DO NOT convolve
-narrow = sagan.Line_template(template_velc=velc_temp, template_flux=flux_temp, ...)
-broad_conv = sagan.convolve_lsf(broad, ...)  # Convolve only broad
-model = cont + broad_conv + narrow  # Narrow NOT convolved
-
-# For FIXED-WIDTH Gaussian templates:
-# Based on instrumental width - still DO NOT convolve
-# (the Gaussian already represents the instrumental profile)
-```
-
-**Key Point**: In both cases, **do NOT convolve the narrow line template**. The template already represents the line profile as it appears in the data (including instrumental broadening).
-   - No degeneracy with narrow lines (profile shape is fixed)
-
-### Parameter Reduction Example
-
-For a typical Hα region with narrow Hα, [N II] doublet, [S II] doublet, [O I] doublet:
-
-| Approach | Narrow Line Free Parameters |
-|----------|----------------------------|
-| **Without template** | ~7 lines × (amp + vel + width) = **21+ parameters** |
-| **With template + tied dv** | ~7 amplitudes + **1 velocity** = **8 parameters** |
-
-**This is a >60% reduction in free parameters**, leading to:
-- More robust fits
-- Better constrained uncertainties
-- Faster MCMC convergence
-- Physically meaningful results
-
-### Visual Overview
-
-```
-STAGE 1: Extract Narrow Line Template
-┌─────────────────────────────────────────────────────────┐
-│  Fit [S II] or [O III] with multiple Gaussians        │
-│  ─────────────────────────────────────────             │
-│  → Save best-fit profile as template                   │
-│  → Template contains: velc array + flux array         │
-└─────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-STAGE 2: Fit Broad Line Complexes
-┌─────────────────────────────────────────────────────────┐
-│  Hα region:                                             │
-│  ├─ Broad Hα: Line_MultiGauss (3 components)          │
-│  ├─ Narrow Hα: Line_template ────────┐                │
-│  ├─ [N II] 6583: Line_template ───────┤                │
-│  ├─ [N II] 6548: Line_template ───────┤                │
-│  ├─ [S II] 6716: Line_template ───────┤ All use        │
-│  ├─ [S II] 6731: Line_template ───────┤ SAME template  │
-│  ├─ [O I] 6300: Line_template ────────┤ from Stage 1  │
-│  └─ [O I] 6364: Line_template ────────┘                │
-│                                                          │
-│  Tying:                                                 │
-│  └─ All narrow lines dv tied to nHalpha.dv            │
-│     (1 velocity parameter for ALL narrow lines)        │
-└─────────────────────────────────────────────────────────┘
-```
-
-### Common Mistakes to Avoid
-
-❌ **Wrong**: Fit broad and narrow lines simultaneously without a template
-❌ **Wrong**: Use different templates for different narrow lines
-❌ **Wrong**: Let each narrow line have its own velocity parameter
-❌ **Wrong**: Use `Line_Gaussian` for narrow lines in Stage 2
-❌ **Wrong**: Start with a complex model with many components
-
-✅ **Correct**: Extract template once from [S II] or [O III], reuse for everything
-✅ **Correct**: Tie all narrow line velocities together
-✅ **Correct**: Use `Line_template` for all narrow lines in Stage 2
-✅ **Correct**: Start with a simple model, gradually add components
-
 ## Iterative Model Building: Start Simple, Add Complexity
+
+**Critical Principle**: Always start with the simplest model that captures the basic features, then gradually increase complexity. This prevents the fit from getting stuck in local minima and ensures each component is necessary.
+
+**NOTE**: This section focuses on iterative addition of **broad line components**. For **narrow lines**, include ALL of them from the start using the template (they are well-constrained and don't need iterative addition).
+
+### Critical Principle: Component Addition Strategy
+
+**What to include from the start:**
+- ALL narrow lines (using template)
+- Continuum
+- At least 1 broad line component
+- Absorption (if BAL QSO)
+
+**What to add iteratively:**
+- Additional broad line components (2nd, 3rd Gaussians)
+- Narrow line wind components (if needed)
+- Additional absorption components (if needed)
+
+**Why this approach:**
+- Narrow lines are well-constrained by template → include all at once
+- Broad line complexity is uncertain → add components one by one
+- Prevents degeneracies while allowing model complexity to evolve
+
+### Why Start Simple?
 
 **Critical Principle**: Always start with the simplest model that captures the basic features, then gradually increase complexity. This prevents the fit from getting stuck in local minima and ensures each component is necessary.
 
@@ -441,7 +304,7 @@ print(f"\nFinal model: {fitting_stages[i]['name']}")
 ### Decision Flowchart
 
 ```
-Start: Continuum + 1 broad Gaussian + 1 narrow template
+Start: Continuum + ALL narrow lines (template) + 1 broad Gaussian
     │
     ├─ Fit quality: χ² >> 1?
     │   │
@@ -450,8 +313,8 @@ Start: Continuum + 1 broad Gaussian + 1 narrow template
     │   │   ├─ Broad line wings poorly fit?
     │   │   │   → Add second broad component
     │   │   │
-    │   │   ├─ Narrow lines present but not fit?
-    │   │   │   → Add more narrow lines ([N II], [S II])
+    │   │   ├─ Broad line core asymmetric?
+    │   │   │   → Add third broad component
     │   │   │
     │   │   └─ Absorption trough visible?
     │   │       → Add absorption component
@@ -462,6 +325,8 @@ Start: Continuum + 1 broad Gaussian + 1 narrow template
     └─ Re-fit with new model
         └─ Repeat evaluation
 ```
+
+**IMPORTANT**: Do NOT add narrow lines iteratively - include ALL narrow lines from the start using the template. Only iterate on broad line components.
 
 ### Practical Example: Hα Region
 
@@ -814,9 +679,39 @@ For objects with **very broad lines** (FWHM > 5000 km/s):
 
 ## Stage 1: Create Narrow Line Template
 
-**Goal**: Extract the intrinsic narrow line profile shape from a clean, isolated line region.
+**Timing**: This is the FIRST step after data preparation and redshift verification.
+
+**Purpose**: Extract the intrinsic narrow line profile shape from a clean, isolated line region.
+
+**Key Principle**: All narrow forbidden lines share the same profile shape. Once extracted,
+this template will be used for ALL subsequent narrow line fitting.
+
+> **⚠️ CRITICAL: Do NOT use [N II] for the narrow line template**
+>
+> The [N II] λλ6548,6583 doublet is **strongly blended with broad Hα** and will produce incorrect templates.
+>
+> **Always use [S II] λλ6716,6731 (primary) or [O III] λλ4959,5007 (secondary).**
+>
+> See [Narrow Line Template Guide](narrow_line_template.md) for detailed explanation.
+>
+
+**Note**: If narrow lines have S/N < 20, use a fixed-width Gaussian template based on
+instrumental resolution. See [Narrow Line Template Guide](narrow_line_template.md)
+section "Option 3: Fixed-Width Gaussian (FALLBACK - Low S/N)" for details.
 
 ### Choose Your Template Source
+
+**Priority Order**:
+1. **[S II] λλ6716,6731 doublet** (PRIMARY - Always use if available)
+2. **[O III] λλ4959,5007 doublet** (SECONDARY - Use only if [S II] unavailable/weak)
+
+**Wavelength Ranges** (rest frame):
+- [S II] region: **6690-6760 Å** (narrow range around the doublet)
+- [O III] region: **4900-5050 Å** (narrow range around the doublet)
+
+**CRITICAL**: Inspect the spectrum to ensure NO other lines are present in the chosen range.
+For [S II], verify no contamination from broad Hα wing (should be >150 Å away).
+For [O III], check for blue wing component - may need to mask it.
 
 #### Option 1: [S II] λλ6716,6731 Doublet (Preferred)
 
@@ -829,26 +724,6 @@ For objects with **very broad lines** (FWHM > 5000 km/s):
 ```python
 # Define [S II] region
 s2_region = (wave_rest > 6700) & (wave_rest < 6745)
-
-# Fit continuum
-from astropy.modeling import models, fitting
-cont_s2 = models.Polynomial1D(degree=1)
-fitter = fitting.LevMarLSQFitter()
-
-# Continuum-only regions (avoid emission lines)
-cont_mask = ((wave_rest > 6700) & (wave_rest < 6710)) | \
-            ((wave_rest > 6735) & (wave_rest < 6745))
-
-cont_fit = fitter(cont_s2, wave_rest[s2_region][cont_mask[s2_region]],
-                  flux_obs[s2_region][cont_mask[s2_region]])
-
-# Normalize spectrum
-flux_norm = flux_obs[s2_region] / cont_fit(wave_rest[s2_region])
-
-# Convert to velocity space (relative to [S II] 6716)
-velc_sii = (wave_rest[s2_region] - line_wave_dict['SII_6716']) / \
-           line_wave_dict['SII_6716'] * ls_km
-flux_sii = flux_norm / np.max(flux_norm)
 ```
 
 #### Option 2: [O III] λλ4959,5007 Doublet
@@ -872,6 +747,19 @@ o3_mask = (velc_o3 > -300) & (velc_o3 < 200)  # Keep only core
 **BEST PRACTICE**: For doublets, use `Line_MultiGauss_doublet` to tie kinematics:
 
 ```python
+from sagan.continuum import WindowedPowerLaw1D
+from sagan.utils import line_wave_dict
+
+# Local continuum (power-law for small range)
+cont_local = WindowedPowerLaw1D(
+    amplitude=15.0,
+    x_0=6720.0,
+    alpha=0.5,
+    x_min=6700,
+    x_max=6745,
+    name='cont_local'
+)
+
 # RECOMMENDED: Use Line_MultiGauss_doublet for [S II]
 sii_doublet = sagan.Line_MultiGauss_doublet(
     n_components=1,
@@ -884,28 +772,10 @@ sii_doublet = sagan.Line_MultiGauss_doublet(
     name='SII_doublet'
 )
 
-# Add local continuum
-cont_local = models.Polynomial1D(degree=1, name='cont_local')
-
-# Combine
 model_init = cont_local + sii_doublet
-
-# Fit
-fitter = fitting.LevMarLSQFitter()
-model_fit = fitter(model_init, wave_rest[s2_region], flux_obs[s2_region],
-                   weights=1/ferr_obs[s2_region]**2, maxiter=10000)
-
-# Visual check
-import matplotlib.pyplot as plt
-fig, ax = plt.subplots(figsize=(10, 4))
-ax.step(velc_sii, flux_sii, where='mid', color='k', label='Data')
-ax.plot(velc_sii, model_fit(wave_rest[s2_region])/np.max(flux_sii),
-        color='C3', lw=2, label='Fit')
-ax.set_xlabel('Velocity (km/s)')
-ax.set_ylabel('Normalized Flux')
-ax.legend()
-plt.show()
 ```
+
+**For complete continuum fitting strategies**, see [Narrow Line Template Guide](narrow_line_template.md).
 
 **Why use Line_MultiGauss_doublet?**
 - Both lines share the **same velocity shift** (`dv_c`)
@@ -932,6 +802,31 @@ sii_doublet = sagan.Line_MultiGauss_doublet(
 )
 ```
 
+### Fit the Model
+
+```python
+from astropy.modeling import fitting
+
+# Fit
+fitter = fitting.LevMarLSQFitter()
+model_fit = fitter(model_init, wave_rest[s2_region], flux_obs[s2_region],
+                   weights=1/ferr_obs[s2_region]**2, maxiter=10000)
+
+# Visual check
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(10, 4))
+ax.step(velc_sii, flux_sii, where='mid', color='k', label='Data')
+ax.plot(velc_sii, model_fit(wave_rest[s2_region])/np.max(flux_sii),
+        color='C3', lw=2, label='Fit')
+ax.set_xlabel('Velocity (km/s)')
+ax.set_ylabel('Normalized Flux')
+ax.legend()
+plt.show()
+```
+
+**See also**: [Narrow Line Template Guide](narrow_line_template.md) for complete details,
+troubleshooting, and quality checks.
+
 ### Generate and Save the Template
 
 **⚠️ CRITICAL: Template must ALWAYS be centered at dv=0**
@@ -939,39 +834,36 @@ sii_doublet = sagan.Line_MultiGauss_doublet(
 The measured dv from the [S II] fit indicates **redshift error**, not the line profile shape. The template should only capture the **profile shape**.
 
 ```python
-# Get fitted parameters
-amp0 = model_sii_fit['SII_doublet'].amp_c0.value
-amp1 = model_sii_fit['SII_doublet'].amp_c1.value
-dv_measured = model_sii_fit['SII_doublet'].dv_c.value  # ← Store this!
-sig = model_sii_fit['SII_doublet'].sigma_c.value
+# Generate template using gen_template() method
+# This extracts single-line profile shape from the doublet model
+sii_doublet_fit = model_fit['SII_doublet']
 
-# IMPORTANT: dv_measured indicates redshift error
-print(f"Measured dv = {dv_measured:.0f} km/s")
-print(f"This indicates redshift error: Δz = {-dv_measured/ls_km:.6f}")
-print(f"Corrected redshift: z = {z - dv_measured/ls_km:.6f}")
-
-# Generate velocity array
+# Create velocity array
 velc_temp = np.linspace(-800, 800, 2000)  # km/s
 
-# Generate template with dv=0 (NOT dv_measured!)
-flux_6716 = amp0 * np.exp(-0.5 * ((velc_temp - 0) / sig)**2)  # ← Use dv=0!
-flux_6731 = amp1 * np.exp(-0.5 * ((velc_temp - 0) / sig)**2)  # ← Use dv=0!
-
-flux_temp = (flux_6716 + flux_6731)
-flux_temp = flux_temp / np.max(flux_temp)
+# Generate template - CRITICAL: Use gen_template() for doublets
+# This method:
+# - Extracts single-line profile from doublet
+# - Includes all components (core + wings)
+# - Normalizes to peak = 1
+# - Centers at dv = 0
+flux_temp = sii_doublet_fit.gen_template(velc_temp, normalized=True)
 
 # Save template
-np.savetxt('narrow_template.txt', np.column_stack([velc_temp, flux_temp]),
+np.savetxt('narrow_template.txt',
+           np.column_stack([velc_temp, flux_temp]),
            header='velocity_kms normalized_flux')
 ```
+
+**IMPORTANT**: Always use `gen_template()` when fitting with `Line_MultiGauss_doublet`.
+This method correctly extracts the single-line profile shape. Manual evaluation of the
+doublet model will include both lines in the template, which is incorrect.
 
 **Why dv=0?**
 - Template captures **line profile shape only**
 - Any velocity shift is due to redshift inaccuracy
 - Use `dv` parameter in `Line_template` to apply velocity shift during fitting
 - If template itself is shifted, you can't distinguish redshift error from real kinematics
-
-**See Also**: `typical_bugs.md` for more on parameter tying issues
 
 ### Generate and Save the Template
 
@@ -1066,18 +958,6 @@ model_fit = fitter(model, wave, flux, weights=weight)
 # Check residuals → decide if broad needs 2nd component
 # NOT: check residuals → decide if need [N II] (already included!)
 ```
-
-**❌ WRONG: Adding components iteratively**
-```python
-# Bad approach - adds narrow lines one by one
-model = continuum + broad_ha
-model = fit(model, ...)
-model = model + nha  # ← Don't do this!
-model = fit(model, ...)
-model = model + nii_6583  # ← Don't do this!
-```
-
-**See Also**: `typical_bugs.md` - Bug #1: Tying a Parameter to Itself
 
 ### ⚠️ Important Note on dv Parameter
 
@@ -1259,8 +1139,8 @@ m_init_ha['NII_6548'].amplitude.tied = sagan.tie_template_amplitude('NII_6583', 
 m_init_ha['OI_6364'].amplitude.tied = sagan.tie_template_amplitude('OI_6300', ratio=3.0)
 # Note: [S II] ratio is physics-dependent, leave FREE
 
-# 2. Tie ALL narrow line velocities to nHalpha
-narrow_lines_ha = ['nHalpha', 'NII_6583', 'NII_6548', 'SII_6716', 'SII_6731', 'OI_6300', 'OI_6364']
+# 2. Tie ALL narrow line velocities to nHalpha (skip nHalpha itself!)
+narrow_lines_ha = ['NII_6583', 'NII_6548', 'SII_6716', 'SII_6731', 'OI_6300', 'OI_6364']
 for ln in narrow_lines_ha:
     m_init_ha[ln].dv.tied = sagan.tie_template_dv('nHalpha')
 
@@ -2418,15 +2298,15 @@ print(f"Narrow line dv: {m_fit_final['nHalpha'].dv.value:.1f} km/s")
 
 ## References
 
+- **[Main Fitting Guide](../sagan_spectral_fitting.md)** - General workflow
+- **[Narrow Line Template Guide](narrow_line_template.md)** - Template generation details
+- **[Function Reference](../function_reference/)** - Complete API documentation
+- **[Common Issues](../typical_bugs.md)** - Typical bugs and solutions
+
 - **Shangguan et al. (2026)**: Low-redshift BAL QSO analysis methodology
 - **Storey & Zeippen (2000)**: Atomic data for forbidden line ratios
 - **Vestergaard & Osmer (2009)**: Black hole mass estimators
 - **Kovačević et al. (2013)**: Iron template implementation
-
-## Related Documentation
-
-- **[Main Fitting Guide](../sagan_spectral_fitting.md)** - General workflow and data preparation
-- **[Function Reference](../function_reference.md)** - Complete function documentation
 
 ---
 

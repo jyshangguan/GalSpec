@@ -19,6 +19,50 @@
 
 ---
 
+---
+
+## ⚠️ CRITICAL WARNING: Do NOT Use [N II] for Narrow Line Template
+
+**NEVER use [N II] λλ6548,6583 to generate the narrow line template.**
+
+### Why [N II] is Unsuitable
+
+The [N II] doublet is **strongly blended with the broad Hα component**:
+
+```
+Hα rest wavelength:        6562.8 Å
+[N II] 6548:               6548.0 Å  (Δλ = 14.8 Å → ~680 km/s)
+[N II] 6583:               6583.5 Å  (Δλ = 20.7 Å → ~950 km/s)
+```
+
+### Problems with Using [N II]
+
+1. **Broad Hα contamination**: Broad Hα typically has FWHM = 2000-5000 km/s, extending well beyond the [N II] lines
+2. **Asymmetric blending**: The broad Hα wing is often redshifted or asymmetric, contaminating [N II] differently
+3. **Degenerate fits**: When fitting [N II] + broad Hα simultaneously, the narrow line width becomes poorly constrained
+4. **Incorrect template**: The extracted "narrow" profile will include broad line flux, giving widths that are too large
+
+### The Correct Approach
+
+**PRIMARY CHOICE: [S II] λλ6716,6731 doublet** ⭐⭐⭐
+- **Well-separated from Hα** (Δλ = 153-167 Å → ~7000 km/s from Hα center)
+- **No broad component contamination** - both are forbidden lines
+- **Both lines have similar strength** - provides strong constraints
+- **Clean continuum on both sides** - easier continuum fitting
+- **Doublet ratio validates fit** - [S II] 6716/6731 ratio ~0.5-1.0
+
+**SECONDARY CHOICE: [O III] λλ4959,5007 doublet** ⭐⭐
+- **Well-separated from Hβ** (Hβ at 4861 Å, Δλ = 98-145 Å)
+- **Very strong in many AGN** - high S/N
+- **Note**: May have blue wing from outflow (may require masking wing region)
+
+**NEVER USE:**
+- ❌ [N II] λλ6548,6583 (blended with broad Hα)
+- ❌ Hα or any broad permitted line
+- ❌ Any line blended with broad components
+
+---
+
 ## Overview
 
 The narrow line template is a **single-line profile shape** extracted from a clean emission line (typically [S II] λλ6716,6731 or [O III] λλ4959,5007). This template captures the intrinsic narrow line width and any substructure (e.g., core + wing components).
@@ -80,43 +124,74 @@ no3 = Line_template(template_velc=velc_temp, template_flux=flux_temp,
 
 ## Choosing the Template Source
 
-### Option 1: [S II] λλ6716,6731 Doublet (Preferred ⭐)
+### Priority Order ⭐⭐⭐
 
-**Advantages:**
-- Isolated from strong broad lines
-- No iron contamination
-- Clean continuum on both sides
-- Doublet provides strong constraints
+**IMPORTANT**: Follow this priority order when selecting the template source:
 
-**Disadvantages:**
-- Sometimes does not have enough S/N
-- Sometimes the broad Hα line wing will blend
+1. **[S II] λλ6716,6731 doublet** (PRIMARY CHOICE - Always use if available)
+2. **[O III] λλ4959,5007 doublet** (SECONDARY CHOICE - Use only if [S II] unavailable/weak)
+3. **Fixed-width Gaussian** (FALLBACK - Only if S/N < 20 for both above)
+
+### ⭐⭐⭐ Option 1: [S II] λλ6716,6731 Doublet (PRIMARY)
+
+**Why this is the BEST choice:**
+
+- **Well-isolated from broad Hα**: Separated by ~7000 km/s (Δλ = 153-167 Å)
+- **Pure forbidden lines**: No broad component contamination possible
+- **Doublet provides strong constraints**: Two lines with similar widths
+- **Clean continuum**: Line-free regions on both sides for robust continuum fitting
+- **Doublet ratio validates fit**: [S II] 6716/6731 flux ratio ~0.5-1.0 (density-sensitive)
+
+**When to use:** ALWAYS, if available with S/N > 20
 
 **Wavelength range (rest frame):** 6700-6745 Å
 
-**When to use:** Always, if available and S/N > 20
+**Potential issues:**
+- Sometimes weak in low-luminosity AGN
+- May be contaminated by broad Hα wing if Hα is extremely broad (FWHM > 10,000 km/s)
 
-### Option 2: [O III] λλ4959,5007 Doublet
+**Check for contamination:**
+```python
+# Fit [S II] region and check residuals
+# If residuals show broad component under [S II], mask the region or use [O III]
+```
 
-**Advantages:**
-- Very strong lines (high S/N)
-- Doublet provides constraints
+### ⭐⭐ Option 2: [O III] λλ4959,5007 Doublet (SECONDARY)
 
-**Disadvantages:**
-- Often has blue wing (outflow)
-- May require masking the wing region
+**Why this is the SECOND choice:**
+
+- **Very strong in most AGN**: Higher S/N than [S II]
+- **Well-separated from Hβ**: Hβ at 4861 Å, [O III] at 4959/5007 Å (Δλ = 98-145 Å)
+- **Doublet provides constraints**: Fixed theoretical ratio (1:2.98)
+
+**When to use:** If [S II] is unavailable, has S/N < 20, or is contaminated
 
 **Wavelength range (rest frame):** 4940-5020 Å
 
-**When to use:** If [S II] is unavailable, low S/N, or contaminated
+**Potential issues:**
+- **Blue wing from outflow**: [O III] often has blueshifted wing from NLR outflow
+- **May require masking**: Exclude the wing region (-500 to -1000 km/s) when generating template
+- **Iron contamination**: Possible Fe II emission in this region (rare)
 
-### Option 3: Fixed-Width Gaussian (Low S/N)
+**Masking procedure for blue wing:**
+```python
+# If strong blue wing present, mask it when fitting
+mask_wing = (velc > -1000) & (velc < -100)  # Mask wing region
+wave_fit = wave[~mask_wing]
+flux_fit = flux[~mask_wing]
+```
+
+### Option 3: Fixed-Width Gaussian (FALLBACK - Low S/N)
 
 **When to use:** S/N < 20 for both [S II] and [O III]
 
+**Approach:** Use instrumental resolution as the width
+
 ```python
 # Calculate instrumental LSF width
-lsf_sigma = ls_km / (resolving_power * 2.3548)  # ~64 km/s for R=2000
+ls_km = 299792.458  # Speed of light in km/s
+resolving_power = 2000  # SDSS spectrograph
+lsf_sigma = ls_km / (resolving_power * 2.3548)  # ~64 km/s
 
 # Create fixed-width Gaussian
 velc_temp = np.linspace(-500, 500, 1000)
@@ -124,9 +199,13 @@ flux_temp = np.exp(-0.5 * (velc_temp / lsf_sigma)**2)
 flux_temp = flux_temp / np.max(flux_temp)
 ```
 
-**Note:** This is based on instrumental resolution, not empirical measurement.
+**Note:** This is based on instrumental resolution only, not empirical measurement from the spectrum.
 
----
+### ❌ NEVER USE: [N II] λλ6548,6583
+
+**See WARNING section above** - [N II] is blended with broad Hα and will produce incorrect templates.
+
+
 
 ## Step-by-Step Workflow
 
@@ -290,7 +369,17 @@ if len(crossings) >= 2:
 
 #### 6.3. Plot Fitting Result (REQUIRED)
 
-**Always use `sagan.plot.plot_fit()` to visualize the fit:**
+**Always use `sagan.plot.plot_fit()` or the specialized narrow line plotting functions:**
+
+> **Standard Plotting**: For standardized narrow line template plotting, see `NARROW_LINE_TEMPLATE_PLOTTING_GUIDE.md` for the two standard plot types:
+> - **Type A (Diagnostic Plot)**: 3-panel plot for intermediate fitting steps
+> - **Type B (Validation Plot)**: 4-panel plot for final template validation
+>
+> **Reusable Functions**: `sagan/plot.py` provides two specialized functions:
+> - `plot_narrow_line_diagnostic()`: Creates Type A diagnostic plots
+> - `plot_narrow_line_template_validation()`: Creates Type B validation plots
+
+For simple fitting visualization:
 
 ```python
 from sagan import plot
@@ -361,12 +450,7 @@ print(f"✓ χ² comparison: Δχ² = {chi2_temp - chi2_orig:.1f}")
 ### Step 7: Save Template
 
 ```python
-# Save as NumPy (for Python use)
-np.savez('narrow_template.npz',
-          velc_temp=velc_temp,
-          flux_temp=flux_temp)
-
-# Save as ASCII (for portability)
+# Save as ASCII text
 np.savetxt('narrow_template.txt',
            np.column_stack([velc_temp, flux_temp]),
            header='velocity_kms normalized_flux')
@@ -405,12 +489,7 @@ Before proceeding to Stage 2, verify:
 ### Loading the Template
 
 ```python
-# Load template
-data = np.load('narrow_template.npz')
-velc_temp = data['velc_temp']
-flux_temp = data['flux_temp']
-
-# Or from ASCII
+# Load template from ASCII file
 velc_temp, flux_temp = np.loadtxt('narrow_template.txt', unpack=True)
 ```
 
@@ -649,7 +728,6 @@ if len(crossings) >= 2:
 # ========================================
 # Save template
 # ========================================
-np.savez('narrow_template.npz', velc_temp=velc_temp, flux_temp=flux_temp)
 np.savetxt('narrow_template.txt',
            np.column_stack([velc_temp, flux_temp]),
            header='velocity_kms normalized_flux')
@@ -660,8 +738,7 @@ print('='*60)
 print('Files created:')
 print('  - sii_fitting_result.png (fit visualization)')
 print('  - narrow_template_profile.png (template shape)')
-print('  - narrow_template.npz (template data)')
-print('  - narrow_template.txt (template ASCII)')
+print('  - narrow_template.txt (template data)')
 print('='*60)
 ```
 
@@ -670,6 +747,9 @@ print('='*60)
 ## References
 
 - **Type 1 AGN Fitting Strategy**: `type1_agn.md`
-- **Function Reference**: `function_reference.md`
+- **Function Reference**: `../function_reference/` (split by module)
 - **Key Points Summary**: `KEY_POINTS_TEMPLATE_GENERATION.md`
 - **SAGAN Source**: `sagan/line_profile.py:432` (`gen_template()` implementation)
+- **Plotting Guide**: `NARROW_LINE_TEMPLATE_PLOTTING_GUIDE.md` (Standard plotting formats)
+- **Reusable Plotting Functions**: `sagan/plot.py` (`plot_narrow_line_diagnostic()`, `plot_narrow_line_template_validation()`)
+- **Example Script**: `example/narrow_line_template_template.py` (Template script for users)

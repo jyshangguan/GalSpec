@@ -27,24 +27,28 @@ if [ ! -d "$PACKAGE_DIR" ]; then
     exit 1
 fi
 
-# Create skill directory if it doesn't exist
-echo -e "${YELLOW}Creating skill directory...${NC}"
-mkdir -p "$SKILL_DIR"
+# Remove existing installation if it exists
+if [ -e "$SKILL_DIR" ]; then
+    echo -e "${YELLOW}Removing existing installation...${NC}"
+    rm -rf "$SKILL_DIR"
+fi
 
-# Copy skill file
-echo -e "${YELLOW}Installing skill file...${NC}"
-cp "$PACKAGE_DIR/skills/sagan-spectral-fitting/SKILL.md" "$SKILL_DIR/"
+# Create symbolic link to skills directory
+echo -e "${YELLOW}Creating symbolic link to skills directory...${NC}"
+ln -s "$PACKAGE_DIR/skills" "$SKILL_DIR"
 
 # Verify installation
-if [ -f "$SKILL_DIR/SKILL.md" ]; then
-    echo -e "${GREEN}✓ Skill file installed successfully${NC}"
+if [ -L "$SKILL_DIR" ] && [ -e "$SKILL_DIR" ]; then
+    echo -e "${GREEN}✓ Skill linked successfully (symbolic link)${NC}"
     echo ""
-    echo "Skill location: $SKILL_DIR/SKILL.md"
+    echo "Skill location: $SKILL_DIR"
+    echo "Source directory: $PACKAGE_DIR/skills"
     echo ""
-    echo "Documentation files:"
-    echo "  - Main guide: $PACKAGE_DIR/skills/sagan_spectral_fitting.md"
-    echo "  - Type 1 AGN strategy: $PACKAGE_DIR/skills/strategy_types/type1_agn.md"
-    echo "  - Function reference: $PACKAGE_DIR/skills/function_reference.md"
+    echo "Linked files:"
+    echo "  - SKILL.md (main skill definition)"
+    echo "  - fitting_strategies/ (strategy guides)"
+    echo "  - function_reference.md"
+    echo "  - typical_bugs.md"
     echo ""
     echo -e "${YELLOW}IMPORTANT: Restart Claude Code completely (quit and reopen)${NC}"
     echo ""

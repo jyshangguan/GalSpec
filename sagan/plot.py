@@ -11,7 +11,8 @@ mpl.rc("ytick.major", width=1., size=8)
 mpl.rc("xtick.minor", width=1., size=5)
 mpl.rc("ytick.minor", width=1., size=5)
 
-__all__ = ['plot_fit', 'plot_fit_new', 'reorder_legend']
+__all__ = ['plot_fit', 'plot_fit_new', 'reorder_legend',
+           'plot_narrow_line_diagnostic', 'plot_narrow_line_template_validation']
 
 
 def plot_fit_new(wave, flux, model, weight=None, error=None, ax=None, axr=None, xlim=None, ylim0=None, 
@@ -359,3 +360,244 @@ def reorder_legend(ax, order):
             new_handles.append(label_handle_dict[label])
 
     return new_handles, new_labels
+
+
+def plot_narrow_line_diagnostic(wave, flux, ferr, model, title,
+                               line_waves=None, filename='diagnostic.png'):
+    """
+    Create a 3-panel diagnostic plot for narrow line fitting.
+
+    This is the standard plot type for intermediate fitting steps in
+    narrow line template generation. It shows:
+    - Panel 1: Main fit with data, model, and line positions
+    - Panel 2: Raw residuals
+    - Panel 3: Normalized residuals with ±3σ lines
+
+    Parameters
+    ----------
+    wave : array
+        Wavelength (rest frame)
+    flux : array
+        Flux values
+    ferr : array
+        Flux errors
+    model : astropy Model
+        Fitted model
+    title : str
+        Plot title
+    line_waves : list, optional
+        List of line wavelengths to mark (e.g., [6716.44, 6730.82] for [S II])
+    filename : str, optional
+        Output filename (default: 'diagnostic.png')
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object
+    axes : ndarray
+        Array of axes objects [ax_main, ax_resid, ax_norm]
+
+    Examples
+    --------
+    >>> from sagan.utils import line_wave_dict
+    >>> line_waves = [line_wave_dict['SII_6716'], line_wave_dict['SII_6731']]
+    >>> plot_narrow_line_diagnostic(wave_s2, flux_s2, ferr_s2, model_fit,
+    ...                             '1-Component [S II] Fit',
+    ...                             line_waves=line_waves,
+    ...                             filename='sii_fit_1comp.png')
+    """
+    import numpy as np
+
+    fig, axes = plt.subplots(3, 1, figsize=(12, 10))
+
+    # Panel 1: Main fit
+    ax = axes[0]
+    ax.errorbar(wave, flux, yerr=ferr, fmt='o', markersize=3,
+                color='k', capsize=2, label='Data', alpha=0.7)
+    wave_plot = np.linspace(wave[0], wave[-1], 200)
+    ax.plot(wave_plot, model(wave_plot), 'r-', lw=2, label='Model')
+
+    # Mark line positions if provided
+    if line_waves is not None:
+        colors = ['b', 'g', 'c', 'm', 'y']
+        labels = ['Line 1', 'Line 2', 'Line 3', 'Line 4', 'Line 5']
+        for i, lw in enumerate(line_waves):
+            ax.axvline(lw, color=colors[i % len(colors)],
+                      linestyle='--', alpha=0.3, label=labels[i])
+
+    ax.set_ylabel('Flux')
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # Panel 2: Raw residuals
+    resid = flux - model(wave)
+    ax = axes[1]
+    ax.plot(wave, resid, 'r-', lw=1)
+    ax.axhline(0, color='k', linestyle=':', alpha=0.5)
+    ax.set_ylabel('Residuals')
+    ax.grid(True, alpha=0.3)
+
+    # Panel 3: Normalized residuals
+    ax = axes[2]
+    ax.plot(wave, resid/ferr, 'b-', lw=1)
+    ax.axhline(0, color='k', linestyle=':', alpha=0.5)
+    ax.axhline(3, color='r', linestyle=':', alpha=0.5)
+    ax.axhline(-3, color='r', linestyle=':', alpha=0.5)
+    ax.set_ylabel('Normalized Residuals')
+    ax.set_xlabel('Wavelength (Å, rest frame)')
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(filename, dpi=150, bbox_inches='tight')
+
+    return fig, axes
+
+
+def plot_narrow_line_template_validation(wave, flux, ferr,
+                                         model_gaussian, model_template,
+                                         velc_temp, flux_temp,
+                                         title='Template Validation',
+                                         line_waves=None,
+                                         filename='validation.png'):
+    """
+    Create a 4-panel validation plot for narrow line template quality.
+
+    This is the standard plot type for final template validation. It shows:
+    - Panel 1: Template shape in velocity space with FWHM
+    - Panel 2: Original Gaussian fit
+    - Panel 3: Template-based fit
+    - Panel 4: Residuals comparison
+
+    Parameters
+    ----------
+    wave : array
+        Wavelength (rest frame)
+    flux : array
+        Flux values
+    ferr : array
+        Flux errors
+    model_gaussian : astropy Model
+        Original Gaussian fit (1 or 2 components)
+    model_template : astropy Model
+        Template-based fit
+    velc_temp : array
+        Template velocity array (km/s)
+    flux_temp : array
+        Template normalized flux
+    title : str, optional
+        Overall title (default: 'Template Validation')
+    line_waves : list, optional
+        List of line wavelengths to mark
+    filename : str, optional
+        Output filename (default: 'validation.png')
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The figure object
+    axes : ndarray
+        2x2 array of axes objects
+
+    Examples
+    --------
+    >>> from sagan.utils import line_wave_dict
+    >>> line_waves = [line_wave_dict['SII_6716'], line_wave_dict['SII_6731']]
+    >>> plot_narrow_line_template_validation(
+    ...     wave_s2, flux_s2, ferr_s2,
+    ...     model_gaussian_fit, model_template_fit,
+    ...     velc_temp, flux_temp,
+    ...     title='[S II] Template Validation',
+    ...     line_waves=line_waves,
+    ...     filename='sii_template_validation.png'
+    ... )
+    """
+    import numpy as np
+    from scipy.interpolate import interp1d
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+    # Calculate FWHM of template
+    f_interp = interp1d(velc_temp, flux_temp, kind='cubic',
+                        bounds_error=False, fill_value=0)
+    velc_fine = np.linspace(velc_temp[0], velc_temp[-1], 10000)
+    flux_fine = f_interp(velc_fine)
+    crossings = np.where(np.diff(np.sign(flux_fine - 0.5)))[0]
+    if len(crossings) >= 2:
+        fwhm = velc_fine[crossings[-1]] - velc_fine[crossings[0]]
+    else:
+        fwhm = np.nan
+
+    # Calculate χ² values
+    resid_gaussian = flux - model_gaussian(wave)
+    resid_template = flux - model_template(wave)
+    chi2_gaussian = np.sum((resid_gaussian / ferr)**2)
+    chi2_template = np.sum((resid_template / ferr)**2)
+
+    # Panel 1: Template shape
+    ax = axes[0, 0]
+    ax.plot(velc_temp, flux_temp, 'k-', lw=2)
+    ax.axvline(0, color='r', linestyle='--', alpha=0.5, label='Center')
+    ax.axhline(0.5, color='b', linestyle=':', alpha=0.5, label='Half max')
+    ax.set_xlabel('Velocity (km/s)')
+    ax.set_ylabel('Normalized Flux')
+    ax.set_title(f'Template Shape (FWHM={fwhm:.1f} km/s)')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # Panel 2: Gaussian fit
+    ax = axes[0, 1]
+    ax.errorbar(wave, flux, yerr=ferr, fmt='o', markersize=3,
+                color='k', capsize=2, label='Data', alpha=0.7)
+    wave_plot = np.linspace(wave[0], wave[-1], 200)
+    ax.plot(wave_plot, model_gaussian(wave_plot), 'r-', lw=2,
+            label='Gaussian fit')
+
+    if line_waves is not None:
+        colors = ['b', 'g', 'c', 'm', 'y']
+        for i, lw in enumerate(line_waves):
+            ax.axvline(lw, color=colors[i % len(colors)],
+                      linestyle='--', alpha=0.3)
+
+    ax.set_ylabel('Flux')
+    ax.set_title(f'Gaussian Fit ($\\chi^2$={chi2_gaussian:.1f})')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # Panel 3: Template fit
+    ax = axes[1, 0]
+    ax.errorbar(wave, flux, yerr=ferr, fmt='o', markersize=3,
+                color='k', capsize=2, label='Data', alpha=0.7)
+    ax.plot(wave_plot, model_template(wave_plot), 'g-', lw=2,
+            label='Template fit')
+
+    if line_waves is not None:
+        colors = ['b', 'g', 'c', 'm', 'y']
+        for i, lw in enumerate(line_waves):
+            ax.axvline(lw, color=colors[i % len(colors)],
+                      linestyle='--', alpha=0.3)
+
+    ax.set_ylabel('Flux')
+    ax.set_xlabel('Wavelength (Å, rest frame)')
+    ax.set_title(f'Template Fit ($\\chi^2$={chi2_template:.1f})')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # Panel 4: Residuals comparison
+    ax = axes[1, 1]
+    ax.plot(wave, resid_gaussian, 'r-', lw=1, label='Gaussian resids',
+            alpha=0.7)
+    ax.plot(wave, resid_template, 'g--', lw=1, label='Template resids',
+            alpha=0.7)
+    ax.axhline(0, color='k', linestyle=':', alpha=0.5)
+    ax.set_ylabel('Residuals')
+    ax.set_xlabel('Wavelength (Å, rest frame)')
+    ax.set_title(f'$\\Delta\\chi^2$ = {chi2_template - chi2_gaussian:.1f}')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.suptitle(title, fontsize=14, y=0.995)
+    plt.tight_layout()
+    plt.savefig(filename, dpi=150, bbox_inches='tight')
+
+    return fig, axes

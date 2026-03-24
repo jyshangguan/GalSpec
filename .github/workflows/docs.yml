@@ -38,13 +38,22 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e .
-          pip install sphinx sphinx-book-theme sphinx-autodoc-typehints
-          pip install nbsphinx sphinxcontrib-bibtex
+          pip install -r docs/requirements.txt
 
       - name: Build documentation
         run: |
           cd docs
           make html
+      
+      - name: Verify Sphinx output
+        run: |
+          echo "=== docs/build ==="
+          ls -la docs/build || true
+          echo "=== docs/build/html ==="
+          ls -la docs/build/html || true
+          echo "=== find docs/build (top 200 files) ==="
+          find docs/build -maxdepth 3 -type f | head -n 200 || true
+          test -f docs/build/html/index.html
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
@@ -52,8 +61,8 @@ jobs:
           path: docs/build/html
 
   deploy:
-    # Deploy only on pushes to main branch
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Deploy only on pushes to main or dev branch
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

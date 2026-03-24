@@ -241,23 +241,28 @@ class Multi_StarSpectrum(Fittable1DModel):
         '''
         Stellar model function.
         '''
-        
+
         s = sigma / ls_km
-        
+
         ln_lam = np.log(self.star_data[self.Star_types[0]][2])
         nsig = s / (ln_lam[1] - ln_lam[0])
         nsig = max(nsig, 1e-6)
-        
-        flux_convolved = amp_0 * interp1d(self.star_data[self.Star_types[0]][2], 
-                                          gaussian_filter(self.star_data[self.Star_types[0]][3], nsig))(x)+\
-                         amp_1 * interp1d(self.star_data[self.Star_types[1]][2], 
-                                          gaussian_filter(self.star_data[self.Star_types[1]][3], nsig))(x)+\
-                         amp_2 * interp1d(self.star_data[self.Star_types[2]][2], 
-                                          gaussian_filter(self.star_data[self.Star_types[2]][3], nsig))(x)+\
-                         amp_3 * interp1d(self.star_data[self.Star_types[3]][2], 
-                                          gaussian_filter(self.star_data[self.Star_types[3]][3], nsig))(x)+\
-                         amp_4 * interp1d(self.star_data[self.Star_types[4]][2], 
-                                          gaussian_filter(self.star_data[self.Star_types[4]][3], nsig))(x)
+
+        flux_convolved = amp_0 * interp1d(self.star_data[self.Star_types[0]][2],
+                                          gaussian_filter(self.star_data[self.Star_types[0]][3], nsig),
+                                          bounds_error=False, fill_value="extrapolate")(x)+\
+                         amp_1 * interp1d(self.star_data[self.Star_types[1]][2],
+                                          gaussian_filter(self.star_data[self.Star_types[1]][3], nsig),
+                                          bounds_error=False, fill_value="extrapolate")(x)+\
+                         amp_2 * interp1d(self.star_data[self.Star_types[2]][2],
+                                          gaussian_filter(self.star_data[self.Star_types[2]][3], nsig),
+                                          bounds_error=False, fill_value="extrapolate")(x)+\
+                         amp_3 * interp1d(self.star_data[self.Star_types[3]][2],
+                                          gaussian_filter(self.star_data[self.Star_types[3]][3], nsig),
+                                          bounds_error=False, fill_value="extrapolate")(x)+\
+                         amp_4 * interp1d(self.star_data[self.Star_types[4]][2],
+                                          gaussian_filter(self.star_data[self.Star_types[4]][3], nsig),
+                                          bounds_error=False, fill_value="extrapolate")(x)
         return flux_convolved
 
 

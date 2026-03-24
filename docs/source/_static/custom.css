@@ -1,0 +1,187 @@
+/* Custom CSS for SAGAN documentation */
+
+/* Adjust the width of the main content */
+.bd-page-width {
+    max-width: 90rem;
+}
+
+/* Adjust the sidebar width */
+.bd-sidebar-primary {
+    width: 20rem;
+}
+
+/* Style for code blocks */
+.highlight {
+    background-color: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 0.25rem;
+    padding: 1rem;
+    margin: 1rem 0;
+}
+
+/* Style for inline code */
+.docutils.literal {
+    background-color: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 0.25rem;
+    padding: 0.2em 0.4em;
+    font-size: 0.9em;
+}
+
+/* Style for admonitions */
+.admonition {
+    margin: 1.5rem 0;
+    padding: 1rem;
+    border-left: 0.5rem solid;
+    background-color: #f8f9fa;
+    border-radius: 0.25rem;
+}
+
+.admonition.note {
+    border-left-color: #4dabf7;
+    background-color: #e7f5ff;
+}
+
+.admonition.warning {
+    border-left-color: #ff922b;
+    background-color: #fff4e6;
+}
+
+.admonition.tip {
+    border-left-color: #51cf66;
+    background-color: #ebfbee;
+}
+
+/* Style for tables */
+.docutils table {
+    border-collapse: collapse;
+    margin: 1.5rem 0;
+    width: 100%;
+}
+
+.docutils th,
+.docutils td {
+    border: 1px solid #dee2e6;
+    padding: 0.75rem;
+    text-align: left;
+}
+
+.docutils th {
+    background-color: #f8f9fa;
+    font-weight: 600;
+}
+
+/* Style for figures */
+figure {
+    margin: 2rem 0;
+    text-align: center;
+}
+
+figure img {
+    max-width: 100%;
+    height: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 0.25rem;
+}
+
+figure caption {
+    margin-top: 0.5rem;
+    font-size: 0.9em;
+    color: #6c757d;
+}
+
+/* Style for parameter lists */
+.field-list {
+    margin: 1.5rem 0;
+}
+
+.field-list .field-name {
+    font-weight: 600;
+    color: #495057;
+}
+
+.field-list .field-body {
+    margin-left: 1rem;
+}
+
+/* Style for toctree */
+.toctree-wrapper {
+    margin: 1.5rem 0;
+}
+
+.toctree-wrapper ul {
+    list-style-type: none;
+    padding-left: 0;
+}
+
+.toctree-wrapper li {
+    margin: 0.5rem 0;
+}
+
+.toctree-wrapper a {
+    color: #495057;
+    text-decoration: none;
+}
+
+.toctree-wrapper a:hover {
+    color: #228be6;
+    text-decoration: underline;
+}
+
+/* Adjust font sizes */
+h1 {
+    font-size: 2.5rem;
+    font-weight: 700;
+    margin-bottom: 1.5rem;
+}
+
+h2 {
+    font-size: 2rem;
+    font-weight: 600;
+    margin-top: 2.5rem;
+    margin-bottom: 1rem;
+}
+
+h3 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-top: 2rem;
+    margin-bottom: 1rem;
+}
+
+/* Style for math equations */
+.math {
+    font-size: 1.1em;
+    margin: 1rem 0;
+}
+
+/* Style for version badges */
+.version-badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    background-color: #228be6;
+    color: white;
+    border-radius: 0.25rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin-left: 0.5rem;
+}
+
+/* Adjust header spacing */
+header.bd-header {
+    padding: 0.5rem 1rem;
+}
+
+/* Adjust navigation */
+.bd-topbar-nav {
+    font-size: 0.9rem;
+}
+
+/* Style for code block captions */
+div.highlight-caption {
+    margin-top: -0.5rem;
+    margin-bottom: 1rem;
+    font-size: 0.9em;
+    color: #6c757d;
+    text-align: center;
+}

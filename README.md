@@ -4,6 +4,10 @@
 
 SAGAN is a Python package for fitting astronomical spectra, specifically designed for AGN and galaxy spectra with complex emission and absorption line features.
 
+<p align="center">
+  <img src="logo.png" alt="SAGAN Logo" width="300"/>
+</p>
+
 ## Key Features
 
 - **Astropy Integration**: All models inherit from Astropy's modeling framework

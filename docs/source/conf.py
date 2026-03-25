@@ -46,8 +46,8 @@ source_suffix = {
 html_theme = 'sphinx_book_theme'
 html_static_path = ['_static']
 html_title = 'SAGAN Documentation'
-# html_logo = '../_static/logo.png'  # Uncomment if you have a logo
-# html_favicon = '../_static/favicon.ico'  # Uncomment if you have a favicon
+html_logo = '_static/logo.png'  # Logo for sidebar/header
+# html_favicon = '_static/favicon.ico'  # Uncomment if you have a favicon
 
 # Theme options
 html_theme_options = {

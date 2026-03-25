@@ -23,7 +23,7 @@ Key Features
 ------------
 
 * **Astropy Integration**: All models inherit from Astropy's modeling framework, ensuring compatibility with standard astronomical tools
-* **Multiple Fitting Methods**: Support for least-squares, MCMC (emcee), and nested sampling (dynesty) algorithms
+* **Multiple Fitting Methods**: Support for least-squares, MCMC (emcee), and nested sampling (dynesty; under development) algorithms
 * **Comprehensive Line Database**: Built-in database of UV/optical emission lines for AGN and galaxy analysis
 * **Template Support**: Iron (Fe II) templates and stellar population models included
 * **Flexible Model Composition**: Easily combine continuum, line, and template components

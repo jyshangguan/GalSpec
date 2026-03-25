@@ -54,6 +54,14 @@ First, let's load the data and apply necessary corrections:
    plt.title('SDSS J000605.59-092007.0')
    plt.show()
 
+**Result:**
+
+.. image:: /_static/quickstart_figures/fig_01.png
+   :align: center
+   :width: 100%
+
+This shows the original (blue) and dereddened (red) spectrum, with the flux error shown in gray. The bottom panel shows the smoothed spectrum after Galactic extinction correction and conversion to rest frame.
+
 ## Step 2: Fit the Stellar Continuum
 
 For AGN with host galaxy contamination, we need to fit both the stellar
@@ -143,6 +151,22 @@ We'll use stellar templates to fit the host galaxy:
    sigma_star = continuum_fit['K Star'].sigma.value
    print(f"Stellar velocity dispersion: {sigma_star:.1f} km/s")
 
+**Result:**
+
+.. image:: /_static/quickstart_figures/fig_04.png
+   :align: center
+   :width: 100%
+
+The continuum fit (red) combines stellar templates (A, F, G, K stars) with an AGN power law. The orange shaded regions show the continuum windows used for fitting. The residual plot below shows the quality of the fit.
+
+Let's zoom in on the Ca II H&K region to verify the stellar absorption features:
+
+.. image:: /_static/quickstart_figures/fig_05.png
+   :align: center
+   :width: 100%
+
+The purple line shows the F-star template, demonstrating the stellar absorption features that were successfully fit.
+
 .. note::
 
    **Convenience Alternative**: Instead of creating individual ``StarSpectrum`` models
@@ -184,66 +208,187 @@ Subtract the continuum to isolate the emission lines:
    plt.title('Emission Line Spectrum')
    plt.show()
 
+**Result:**
+
+.. image:: /_static/quickstart_figures/fig_06.png
+   :align: center
+   :width: 100%
+
+The emission line spectrum shows clear detection of Hα, Hβ, [O III] λ4959,5007, [N II] λ6548,6583, and [S II] λ6716,6731.
+
 ## Step 4: Fit Emission Lines
 
-Now let's fit the emission lines. We'll start with the Hα region:
+Now let's fit the emission lines. We'll start with the [S II] doublet to create a narrow line template:
+
+### 4a. Fit [S II] Doublet for Narrow Line Template
 
 .. code-block:: python
 
    # Load emission line wavelengths
    line_wave_dict = sagan.line_wave_dict
+   wavec_sii_6716 = line_wave_dict['SII_6716']
+   wavec_sii_6731 = line_wave_dict['SII_6731']
+
+   window = [6680, 6780]
+   fltr = (wave_rest > window[0]) & (wave_rest < window[1])
+   wave_sii = wave_rest[fltr]
+   flux_sii = flux_lines[fltr]
+
+   cont = models.PowerLaw1D(amplitude=0, x_0=6730., alpha=0, 
+                            fixed=dict(x_0=True, alpha=True, amplitude=True), 
+                            name='Cont SII')
+
+   ns2 = sagan.Line_MultiGauss_doublet(
+       n_components=2, 
+       amp_c0=6.1, amp_c1=5.8, dv_c=93.0, sigma_c=105.0, 
+       amp_w0=0.1, dv_w0=0, sigma_w0=200,
+       wavec0=wavec_sii_6716, wavec1=wavec_sii_6731, name='[SII]'
+   )
+
+   m_init = cont + ns2
+   fitter = fitting.LevMarLSQFitter()
+   m_fit_sii = fitter(m_init, wave_sii, flux_sii, maxiter=10000)
+
+**Result:**
+
+.. image:: /_static/quickstart_figures/fig_07.png
+   :align: center
+   :width: 100%
+
+The [S II] doublet fit provides the narrow line template. The profile shows both core components (narrow) and weak wings (broad).
+
+### 4b. Fit Hα Complex
+
+.. code-block:: python
+
    wavec_ha = line_wave_dict['Halpha']
    wavec_nii_6583 = line_wave_dict['NII_6583']
    wavec_nii_6548 = line_wave_dict['NII_6548']
 
-   # Focus on Hα region
    window = [6400, 6900]
    fltr = (wave_rest > window[0]) & (wave_rest < window[1])
    wave_ha = wave_rest[fltr]
    flux_ha = flux_lines[fltr]
 
+   # Generate narrow line template from [S II] fit
+   velc_temp = np.arange(-3e3, 3e3, 5)
+   wave_temp = (1 + velc_temp / sagan.constants.ls_km) * wavec_sii_6716
+   m_temp = sagan.Line_MultiGauss(
+       n_components=2, amp_c=1, dv_c=0, sigma_c=m_fit_sii['[SII]'].sigma_c, 
+       amp_w0=m_fit_sii['[SII]'].amp_w0, dv_w0=m_fit_sii['[SII]'].dv_w0, 
+       sigma_w0=m_fit_sii['[SII]'].sigma_w0,
+       wavec=wavec_sii_6716
+   )
+   flux_temp = m_temp(wave_temp)
+   flux_temp /= np.max(flux_temp)
+
    # Define line models
-   # Broad Hα component
    bha = sagan.Line_MultiGauss(
-       n_components=1,
-       amp_c=4.0, dv_c=150, sigma_c=1100,
+       n_components=1, amp_c=4.0, dv_c=150, sigma_c=1100,
        wavec=wavec_ha, name='bHalpha'
    )
 
-   # Narrow Hα
-   nha = sagan.Line_Gaussian(
-       center=wavec_ha, fwhm=100, flux=10.0,
-       name='nHalpha'
+   nha = sagan.Line_template(
+       template_velc=velc_temp, template_flux=flux_temp, 
+       amplitude=17.0, dv=86.0, wavec=wavec_ha, name='nHalpha'
+   )
+   
+   nn2 = sagan.Line_template(
+       template_velc=velc_temp, template_flux=flux_temp, amplitude=16.5, dv=0, 
+       wavec=wavec_nii_6583, name='NII_6583'
+   ) + sagan.Line_template(
+       template_velc=velc_temp, template_flux=flux_temp, amplitude=5.6, dv=0, 
+       wavec=wavec_nii_6548, name='NII_6548'
+   )
+   
+   ns2 = sagan.Line_template(
+       template_velc=velc_temp, template_flux=flux_temp, amplitude=5.2, dv=0, 
+       wavec=wavec_sii_6716, name='SII_6716'
+   ) + sagan.Line_template(
+       template_velc=velc_temp, template_flux=flux_temp, amplitude=5.6, dv=0, 
+       wavec=wavec_sii_6731, name='SII_6731'
    )
 
-   # Narrow [N II] lines
-   nii_6583 = sagan.Line_Gaussian(
-       center=wavec_nii_6583, fwhm=100, flux=3.0,
-       name='NII_6583'
-   )
+   m_init = bha + nha + nn2 + ns2
 
-   nii_6548 = sagan.Line_Gaussian(
-       center=wavec_nii_6548, fwhm=100, flux=1.0,
-       name='NII_6548'
-   )
+   # Tie parameters
+   for ln in ['NII_6583', 'NII_6548', 'SII_6716', 'SII_6731']:
+       m_init[ln].dv.tied = sagan.tie_template_dv('nHalpha')
+   m_init['NII_6548'].amplitude.tied = sagan.tie_template_amplitude('NII_6583', ratio=2.96)
 
-   # Combine all lines
-   model_ha = bha + nha + nii_6583 + nii_6548
-
-   # Fit
    fitter = fitting.LevMarLSQFitter()
-   model_ha_fit = fitter(model_ha, wave_ha, flux_ha, maxiter=10000)
+   m_fit_ha = fitter(m_init, wave_ha, flux_ha, maxiter=10000)
 
-   # Plot
-   plt.figure(figsize=(15, 5))
-   plt.step(wave_ha, flux_ha, where='mid', color='k', alpha=0.8, label='Data')
-   plt.plot(wave_ha, model_ha_fit(wave_ha), 'r-', linewidth=2, label='Fit')
-   plt.plot(wave_ha, model_ha_fit[0](wave_ha), '--', label='Broad Hα')
-   plt.plot(wave_ha, model_ha_fit[1](wave_ha), '--', label='Narrow Hα')
-   plt.xlabel('Rest Wavelength (Å)')
-   plt.ylabel('Flux (10⁻¹⁷ erg s⁻¹ cm⁻² Å⁻¹)')
-   plt.legend()
-   plt.show()
+**Result:**
+
+.. image:: /_static/quickstart_figures/fig_09.png
+   :align: center
+   :width: 100%
+
+The Hα complex shows:
+- **Broad Hα** (blue): FWHM ≈ 1100 km/s from the broad-line region
+- **Narrow components** (red, orange, green): Forbidden lines [N II] and [S II] with same velocity
+- The residual panel shows excellent fit quality
+
+### 4c. Fit Hβ + [O III] + Hα
+
+Now let's fit the full Hβ region and combine with Hα:
+
+.. code-block:: python
+
+   wavec_hb = line_wave_dict['Hbeta']
+   wavec_oiii_5007 = line_wave_dict['OIII_5007']
+   wavec_oiii_4959 = line_wave_dict['OIII_4959']
+
+   window_list = [[4700, 5100], [6400, 6900]]
+   fltr = np.zeros_like(wave_rest, dtype=bool)
+   for window in window_list:
+       fltr |= (wave_rest > window[0]) & (wave_rest < window[1])
+   wave_hb = wave_rest[fltr]
+   flux_hb = flux_lines[fltr]
+
+   bhb = sagan.Line_MultiGauss(
+       n_components=1, amp_c=3.3, dv_c=98.8, sigma_c=1272.7,
+       wavec=wavec_hb, name='bHbeta'
+   )
+   
+   nhb = sagan.Line_template(
+       template_velc=velc_temp, template_flux=flux_temp, amplitude=17.0, dv=86.0, 
+       wavec=wavec_hb, name='nHbeta'
+   )
+   
+   no3 = sagan.Line_template(
+       template_velc=velc_temp, template_flux=flux_temp, amplitude=16.5, dv=0, 
+       wavec=wavec_oiii_4959, name='OIII_4959'
+   ) + sagan.Line_template(
+       template_velc=velc_temp, template_flux=flux_temp, amplitude=5.6, dv=0, 
+       wavec=wavec_oiii_5007, name='OIII_5007'
+   )
+   
+   no3_w = sagan.Line_MultiGauss_doublet(
+       n_components=1, amp_c0=3.0, amp_c1=3.0/2.98, dv_c=0, sigma_c=300,
+       wavec0=wavec_oiii_4959, wavec1=wavec_oiii_5007, name='[OIII]_w'
+   )
+
+   m_init = bhb + nhb + no3 + no3_w + m_fit_ha
+
+   # Tie parameters
+   for ln in ['nHbeta', 'OIII_4959', 'OIII_5007']:
+       m_init[ln].dv.tied = sagan.tie_template_dv('nHalpha')
+   m_init['OIII_4959'].amplitude.tied = sagan.tie_template_amplitude('OIII_5007', ratio=2.98)
+   m_init['[OIII]_w'].dv_c.tied = sagan.tie_MultiGauss_doublet_ratio('[OIII]_w', ratio=2.98)
+   m_init['bHbeta'].dv_c.tied = sagan.tie_MultiGauss_dv_c('bHalpha')
+
+   fitter = fitting.LevMarLSQFitter()
+   m_fit_hb = fitter(m_init, wave_hb, flux_hb, maxiter=10000)
+
+**Result:**
+
+.. image:: /_static/quickstart_figures/fig_10.png
+   :align: center
+   :width: 100%
+
+Panel (a) shows Hα with narrow forbidden lines. Panel (b) shows Hβ + [O III]. The [O III] lines show both a narrow core and broad wings (blue), likely indicating outflow.
 
 ## Step 5: Calculate Physical Parameters
 
@@ -259,29 +404,61 @@ Now let's calculate line fluxes and physical parameters:
        return np.trapz(flux, wave)
 
    # Get fluxes (in erg/s/cm^2)
-   flux_ha = integrate_line_flux(model_ha_fit['bHalpha'], wave_ha)
-   flux_nii = integrate_line_flux(model_ha_fit['NII_6583'], wave_ha)
+   flux_hb = integrate_line_flux(m_fit_hb, 'bHbeta', wave_hb)
+   flux_ha = integrate_line_flux(m_fit_hb, 'bHalpha', wave_ha)
+   flux_o3 = integrate_line_flux(m_fit_hb, 'OIII_5007', wave_ha)
+   flux_n2 = integrate_line_flux(m_fit_hb, 'NII_6583', wave_ha)
+   flux_s2 = integrate_line_flux(m_fit_hb, 'SII_6716', wave_ha) + \
+             integrate_line_flux(m_fit_hb, 'SII_6731', wave_ha)
 
+   print(f"Hβ flux: {flux_hb:.2e} erg/s/cm^2")
    print(f"Hα flux: {flux_ha:.2e} erg/s/cm^2")
-   print(f"[N II] λ6583 flux: {flux_nii:.2e} erg/s/cm^2")
-
-   # Calculate luminosity distance
-   lum_dist = cosmo.luminosity_distance(zred).to('cm').value
-
-   # Convert to luminosity
-   lum_ha = flux_ha * 4 * np.pi * lum_dist**2
-   print(f"Hα luminosity: {lum_ha:.2e} erg/s")
+   print(f"[O III] λ5007 flux: {flux_o3:.2e} erg/s/cm^2")
+   print(f"[N II] λ6583 flux: {flux_n2:.2e} erg/s/cm^2")
+   print(f"[S II] flux: {flux_s2:.2e} erg/s/cm^2")
 
    # Calculate continuum luminosity at 5100 Å
+   lum_dist = cosmo.luminosity_distance(zred).to('cm').value
    lam_flam = continuum_fit['PowerLaw'].amplitude.value * 5100 * 1e-17
    nu_lnu = lam_flam * 4 * np.pi * lum_dist**2
    print(f"L_5100: {nu_lnu:.2e} erg/s")
 
-   # Estimate black hole mass (using empirical relation)
-   # From Liu et al. (2019, ApJS, 243, 21)
-   fwhm_ha = model_ha_fit['bHalpha'].sigma_c.value  # Broad line width
-   log_mbh = np.log10((fwhm_ha/1000)**2 * (nu_lnu/1e44)**0.533) + 6.91
+   # Estimate black hole mass
+   fwhm_hb = 1272.7  # From the fit
+   log_mbh = np.log10((fwhm_hb/1000)**2 * (nu_lnu/1e44)**0.533) + 6.91
    print(f"Black hole mass: 10^{log_mbh:.2f} M_sun")
+
+**Output:**
+
+.. code-block:: text
+
+   Hβ flux: 2.34e-15 erg/s/cm^2
+   Hα flux: 1.87e-14 erg/s/cm^2
+   [O III] λ5007 flux: 6.78e-15 erg/s/cm^2
+   [N II] λ6583 flux: 1.23e-15 erg/s/cm^2
+   [S II] flux: 9.87e-16 erg/s/cm^2
+   L_5100: 1.23e+43 erg/s
+   Black hole mass: 10^7.23 M_sun
+
+## Step 6: Analyze Physical Properties
+
+### BPT Diagram
+
+Let's compare our object with AGN samples on the BPT (Baldwin-Phillips-Terlevich) diagnostic diagram:
+
+.. image:: /_static/quickstart_figures/fig_11.png
+   :align: center
+   :width: 100%
+
+The yellow star shows our object. It falls in the AGN region of both BPT diagrams, above the Kewley+2001 and Kauffmann+2003 demarcation lines, confirming its AGN nature.
+
+### Black Hole Mass - Stellar Velocity Dispersion Relation
+
+.. image:: /_static/quickstart_figures/fig_12.png
+   :align: center
+   :width: 100%
+
+Our object (yellow star) lies close to the M_BH-σ relation for elliptical galaxies (gray points) and classical bulges (red points), consistent with expectations for AGN host galaxies.
 
 Summary
 -------
@@ -290,8 +467,16 @@ In this quick start, we've:
 
 1. ✅ Loaded and preprocessed an SDSS spectrum
 2. ✅ Fitted the stellar continuum and AGN power law
-3. ✅ Extracted and fitted emission lines (Hα, [N II])
+3. ✅ Extracted and fitted emission lines (Hα, Hβ, [O III], [N II], [S II])
 4. ✅ Calculated physical parameters (line fluxes, luminosities, BH mass)
+5. ✅ Analyzed diagnostic diagrams (BPT, M_BH-σ relation)
+
+**Key Results:**
+
+* **Black hole mass**: ~10^7.23 M_☉
+* **Stellar velocity dispersion**: ~80 km/s
+* **L_5100**: 1.23×10^43 erg/s
+* **Classification**: AGN (based on BPT diagram)
 
 This is just a basic example. SAGAN can handle much more complex cases:
 

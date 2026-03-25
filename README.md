@@ -36,6 +36,32 @@ cd SAGAN
 pip install -e .
 ```
 
+## Claude Code Integration (Optional)
+
+SAGAN includes a Claude Code skill that allows you to use SAGAN directly within Claude Code for interactive spectral fitting assistance.
+
+To install the skill:
+
+```bash
+# From the SAGAN repository root
+./install_skill.sh
+```
+
+This will:
+- Create a symlink from `~/.claude/skills/sagan` to the `skills/` directory
+- Enable SAGAN commands in Claude Code
+
+To use the skill in Claude Code:
+```
+/skills
+Use SAGAN to fit the spectrum
+```
+
+To uninstall:
+```bash
+rm ~/.claude/skills/sagan
+```
+
 ## Quick Example
 
 ```python

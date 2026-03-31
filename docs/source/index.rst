@@ -32,11 +32,13 @@ Key Features
 Quick Start
 -----------
 
-Install SAGAN:
+Install SAGAN from source:
 
 .. code-block:: bash
 
-   pip install sagan
+   git clone https://github.com/jyshangguan/SAGAN.git
+   cd SAGAN
+   pip install -e .
 
 Fit a simple emission line:
 
@@ -53,7 +55,7 @@ Fit a simple emission line:
 
    # Create a model: continuum + emission line
    continuum = Linear1D(slope=0.0, intercept=1.0)
-   line = Line_Gaussian(center=6563, fwhm=10, flux=1.0, name='Halpha')
+   line = Line_Gaussian(amplitude=1.0, dv=0, sigma=200, wavec=6563, name='Halpha')
    model = continuum + line
 
    # Fit the model

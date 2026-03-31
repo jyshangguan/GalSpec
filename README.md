@@ -28,11 +28,7 @@ The documentation includes:
 
 ## Installation
 
-```bash
-pip install sagan
-```
-
-Or install from source:
+Install from source:
 
 ```bash
 git clone https://github.com/jyshangguan/SAGAN.git
@@ -80,14 +76,14 @@ flux = np.random.randn(len(wave)) * 0.1  # Your data here
 
 # Define model: continuum + Hα line
 continuum = Linear1D(slope=0.0, intercept=1.0)
-halpha = Line_Gaussian(center=6563, fwhm=10, flux=5.0)
+halpha = Line_Gaussian(amplitude=5.0, dv=0, sigma=200, wavec=6563)
 model = continuum + halpha
 
 # Fit
 fitter = LevMarLSQFitter()
 fitted_model = fitter(model, wave, flux)
 
-print(f"Hα flux: {fitted_model[1].flux.value:.3f}")
+print(f"Hα amplitude: {fitted_model[1].amplitude.value:.3f}")
 ```
 
 ## Example Notebooks

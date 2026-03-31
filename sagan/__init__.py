@@ -1,3 +1,5 @@
+__version__ = "0.1.0"
+
 from .continuum import *
 from .iron_template import *
 from .stellar_continuum import *

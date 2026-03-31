@@ -35,21 +35,10 @@ Analysis Dependencies
 Installation Methods
 --------------------
 
-Via pip (Recommended)
-~~~~~~~~~~~~~~~~~~~~~
-
-The easiest way to install SAGAN is using pip:
-
-.. code-block:: bash
-
-   pip install sagan
-
-This will install SAGAN and all required dependencies.
-
 From Source
 ~~~~~~~~~~~
 
-To install the latest development version from source:
+SAGAN is currently not available on PyPI. Install from source:
 
 1. Clone the repository:
 
@@ -81,12 +70,12 @@ This includes testing and development tools like pytest and Jupyter.
 Verification
 ------------
 
-To verify your installation, try importing SAGAN in Python:
+To verify your installation, check the version:
 
 .. code-block:: python
 
    import sagan
-   print(sagan.__version__)
+   print(f"SAGAN version: {sagan.__version__}")
 
 You should see the version number printed (e.g., ``0.1.0``).
 
@@ -94,9 +83,24 @@ Run a quick test:
 
 .. code-block:: python
 
+   import numpy as np
    from sagan import Line_Gaussian
-   line = Line_Gaussian(center=6563, fwhm=10, flux=1.0)
-   print(f"Created line model: {line.name}")
+
+   # Create an Hα emission line
+   halpha = Line_Gaussian(
+       amplitude=5.0,   # Peak amplitude
+       dv=0,           # No velocity shift (km/s)
+       sigma=200,      # Velocity dispersion (km/s)
+       wavec=6563,     # Hα wavelength (Angstroms)
+       name='Halpha'
+   )
+
+   # Evaluate the model
+   wave = np.linspace(6500, 6600, 100)
+   flux = halpha(wave)
+
+   print(f"Created line model: {halpha.name}")
+   print(f"Peak flux: {np.max(flux):.3f}")
 
 Troubleshooting
 ---------------
@@ -119,25 +123,20 @@ If you encounter errors about missing data files, try reinstalling:
 
 .. code-block:: bash
 
-   pip uninstall sagan
+   cd /path/to/SAGAN
    pip install -e .
 
 **Permission Errors**
 
 If you don't have permission to install to the system Python, use a virtual
-environment or the ``--user`` flag:
-
-.. code-block:: bash
-
-   pip install --user sagan
-
-Or use a virtual environment (recommended):
+environment (recommended):
 
 .. code-block:: bash
 
    python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
-   pip install sagan
+   cd /path/to/SAGAN
+   pip install -e .
 
 Next Steps
 ----------

@@ -2,7 +2,7 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-SAGAN: Spectral Analysis of Galaxy and Active galactic Nuclei (hahahah)
+SAGAN: Spectral Analysis of Galaxy and Active galactic Nuclei
 ==============================================================
 
 **SAGAN** is a Python package for fitting astronomical spectra, specifically designed for AGN and galaxy spectra with complex emission and absorption line features.

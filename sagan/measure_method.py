@@ -22,7 +22,7 @@ def line_emission_flux(model, model_names, wave_obs, wave_range=None):
         wave_obs = wave_obs[fltr]
         flux = flux[fltr]
 
-    int_flux = np.trapz(flux, wave_obs)
+    int_flux = np.trapezoid(flux, wave_obs)
     return int_flux
 
 def line_emission_fwhm(model, model_names, wave_rest, wavec):

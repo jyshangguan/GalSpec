@@ -3,7 +3,7 @@
 Demo: Fitting Emission Lines with Variable LSF Convolution
 
 This script demonstrates the complete workflow for fitting emission lines
-with variable LSF using the SAGAN package.
+with variable LSF using the GalSpec package.
 """
 
 import numpy as np
@@ -11,9 +11,9 @@ import matplotlib.pyplot as plt
 from astropy.io import fits
 from astropy.modeling import fitting
 import sys
-sys.path.insert(0, '/Users/shangguan/Softwares/my_modules/SAGAN')
+sys.path.insert(0, '/Users/shangguan/Softwares/my_modules/GalSpec')
 
-import sagan
+import galspec
 
 print("=" * 70)
 print("Demo: Fitting Emission Lines with Variable LSF Convolution")
@@ -60,7 +60,7 @@ for i in range(len(wave_res)):
     print(f"     {wave_res[i]*1e4:.0f} Å: R = {R_res[i]:.1f}")
 
 # Create ResolutionCurve
-resolution_curve = sagan.ResolutionCurve(wave_res, R_res, wave_unit='micron', interpolation='linear')
+resolution_curve = galspec.ResolutionCurve(wave_res, R_res, wave_unit='micron', interpolation='linear')
 
 print(f"   ✓ ResolutionCurve object created")
 
@@ -75,7 +75,7 @@ line2_wave = 4600.0
 intrinsic_sigma = 100.0  # km/s
 
 # Create intrinsic models (start with first line)
-compound_model = sagan.Line_MultiGauss(
+compound_model = galspec.Line_MultiGauss(
     n_components=1,
     amp_c=1.0,
     dv_c=0,
@@ -85,7 +85,7 @@ compound_model = sagan.Line_MultiGauss(
 )
 
 # Add second line
-line2 = sagan.Line_MultiGauss(
+line2 = galspec.Line_MultiGauss(
     n_components=1,
     amp_c=1.0,
     dv_c=0,
@@ -99,7 +99,7 @@ compound_model += line2
 print(f"   ✓ Compound model created with 2 lines")
 
 # Apply variable LSF convolution to the compound model
-compound_convolved = sagan.convolve_lsf_var(
+compound_convolved = galspec.convolve_lsf_var(
     compound_model,
     wavec=wave,  # Use full wavelength array
     resolution_data=resolution_curve,
@@ -118,7 +118,7 @@ flux_compound = compound_convolved(wave)
 
 print("\n4. Calculating expected line widths...")
 
-c = sagan.constants.ls_km
+c = galspec.constants.ls_km
 
 R_line1 = resolution_curve.get_resolution(0.44)
 R_line2 = resolution_curve.get_resolution(0.46)
@@ -160,7 +160,7 @@ print("\n5. Fitting compound model with variable LSF...")
 # Use total σ as initial guess (expected if we were fitting without convolution)
 # Note: When fitting a CONVOLVED model, we hope to recover the INTRINSIC σ,
 # but this is only possible when LSF σ is not dominant
-init_compound = sagan.Line_MultiGauss(
+init_compound = galspec.Line_MultiGauss(
     n_components=1,
     amp_c=flux_obs.max(),  # Guess from data
     dv_c=0,
@@ -169,7 +169,7 @@ init_compound = sagan.Line_MultiGauss(
     name='line1'
 )
 
-line2_init = sagan.Line_MultiGauss(
+line2_init = galspec.Line_MultiGauss(
     n_components=1,
     amp_c=flux_obs.max(),
     dv_c=0,
@@ -183,7 +183,7 @@ init_compound += line2_init
 print(f"   ✓ Initial compound model created with 2 lines")
 
 # 2. Apply variable LSF convolution to initial compound model
-init_compound_conv = sagan.convolve_lsf_var(
+init_compound_conv = galspec.convolve_lsf_var(
     init_compound,
     wavec=wave,
     resolution_data=resolution_curve,
@@ -265,7 +265,7 @@ ax.plot(wave_subset1, compound_fit1, 'b-', linewidth=2.5, label='Compound fit')
 # We need to access the left submodel (line1) directly
 line1_component_unconvolved = best_fit_compound.left(wave_subset1)
 # Convolve it separately for visualization
-line1_init_temp = sagan.Line_MultiGauss(
+line1_init_temp = galspec.Line_MultiGauss(
     n_components=1,
     amp_c=best_fit_compound.left.amp_c.value,
     dv_c=best_fit_compound.left.dv_c.value,
@@ -273,7 +273,7 @@ line1_init_temp = sagan.Line_MultiGauss(
     wavec=line1_wave,
     name='temp'
 )
-line1_component_conv = sagan.convolve_lsf_var(
+line1_component_conv = galspec.convolve_lsf_var(
     line1_init_temp,
     wavec=wave,
     resolution_data=resolution_curve,
@@ -309,7 +309,7 @@ ax.plot(wave_subset2, compound_fit2, 'b-', linewidth=2.5, label='Compound fit')
 
 # Also show individual line component from compound fit (unconvolved)
 # We need to access the right submodel (line2) directly
-line2_init_temp = sagan.Line_MultiGauss(
+line2_init_temp = galspec.Line_MultiGauss(
     n_components=1,
     amp_c=best_fit_compound.right.amp_c.value,
     dv_c=best_fit_compound.right.dv_c.value,
@@ -317,7 +317,7 @@ line2_init_temp = sagan.Line_MultiGauss(
     wavec=line2_wave,
     name='temp'
 )
-line2_component_conv = sagan.convolve_lsf_var(
+line2_component_conv = galspec.convolve_lsf_var(
     line2_init_temp,
     wavec=wave,
     resolution_data=resolution_curve,

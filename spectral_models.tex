@@ -1,0 +1,227 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{natbib}
+
+\title{SAGAN Spectral Modeling Components}
+\author{}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Spectral Modeling Components}
+
+This document describes the key spectral modeling components implemented in the SAGAN package for fitting astronomical spectra, particularly active galactic nuclei (AGN) and quasar spectra.
+
+\subsection{Line\_MultiGauss}
+
+The \texttt{Line\_MultiGauss} class models emission lines using multiple Gaussian components, consisting of a core component and optional wind components. The model is defined as:
+
+\begin{equation}
+F(\lambda) = F_{\rm core}(\lambda) + \sum_{i=0}^{N-1} F_{\rm wind,i}(\lambda)
+\end{equation}
+
+where the core component is:
+
+\begin{equation}
+F_{\rm core}(\lambda) = A_{\rm c} \exp\left[-\frac{1}{2}\left(\frac{v(\lambda) - v_{\rm c}}{\sigma_{\rm c}}\right)^2\right]
+\end{equation}
+
+and each wind component is:
+
+\begin{equation}
+F_{\rm wind,i}(\lambda) = A_{\rm c} \cdot a_{\rm w,i} \exp\left[-\frac{1}{2}\left(\frac{v(\lambda) - v_{\rm c} - \Delta v_{\rm w,i}}{\sigma_{\rm w,i}}\right)^2\right]
+\end{equation}
+
+Here, $v(\lambda) = c(\lambda - \lambda_0)/\lambda_0$ is the velocity offset from the line center $\lambda_0$, $A_{\rm c}$ is the core amplitude, $v_{\rm c}$ is the core velocity shift, $\sigma_{\rm c}$ is the core velocity dispersion, and $a_{\rm w,i}$, $\Delta v_{\rm w,i}$, and $\sigma_{\rm w,i}$ are the relative amplitude, velocity offset, and velocity dispersion of the $i$-th wind component, respectively. The number of components $N$ is a user-specified parameter, with $N=1$ corresponding to a single Gaussian profile.
+
+\subsection{Line\_MultiGauss\_doublet}
+
+The \texttt{Line\_MultiGauss\_doublet} class extends the multi-Gaussian formalism to model line doublets (e.g., [O~III] $\lambda\lambda$4959, 5007 or [S~II] $\lambda\lambda$6716, 6731). The model is:
+
+\begin{equation}
+F(\lambda) = F_0(\lambda) + F_1(\lambda)
+\end{equation}
+
+where each line component follows the multi-Gaussian structure:
+
+\begin{equation}
+F_j(\lambda) = F_{{\rm core},j}(\lambda) + \sum_{i=0}^{N-1} F_{{\rm wind},j,i}(\lambda)
+\end{equation}
+
+with:
+
+\begin{equation}
+F_{{\rm core},j}(\lambda) = A_{{\rm c},j} \exp\left[-\frac{1}{2}\left(\frac{v_j(\lambda) - v_{\rm c}}{\sigma_{\rm c}}\right)^2\right]
+\end{equation}
+
+\begin{equation}
+F_{{\rm wind},j,i}(\lambda) = A_{{\rm c},j} \cdot a_{\rm w,i} \exp\left[-\frac{1}{2}\left(\frac{v_j(\lambda) - v_{\rm c} - \Delta v_{\rm w,i}}{\sigma_{\rm w,i}}\right)^2\right]
+\end{equation}
+
+Here, $v_j(\lambda) = c(\lambda - \lambda_j)/\lambda_j$ for $j = 0, 1$ represents the velocity offset from each line center, and $A_{{\rm c},0}$ and $A_{{\rm c},1}$ are the individual core amplitudes for the two lines. Crucially, all velocity components ($v_{\rm c}$, $\Delta v_{\rm w,i}$) and velocity dispersions ($\sigma_{\rm c}$, $\sigma_{\rm w,i}$) are shared between the two lines, ensuring kinematic coupling while allowing independent amplitudes.
+
+\subsection{Line\_GaussHermite}
+
+The \texttt{Line\_GaussHermite} class models a single emission line with a fourth-order Gauss--Hermite expansion, allowing controlled deviations from a pure Gaussian profile. The model is:
+
+\begin{equation}
+F(\lambda) = G(\lambda)\left[1 + h_3 H_3\big(w(\lambda)\big) + h_4 H_4\big(w(\lambda)\big)\right]
+\end{equation}
+
+with
+
+\begin{equation}
+G(\lambda) = A\exp\left[-\frac{1}{2}w(\lambda)^2\right],
+\qquad
+w(\lambda) = \frac{v(\lambda)-v_0}{\sigma},
+\qquad
+v(\lambda)=c\frac{\lambda-\lambda_0}{\lambda_0},
+\end{equation}
+
+and Hermite basis functions implemented as:
+
+\begin{equation}
+H_3(w)=\frac{2w^3-3w}{\sqrt{3}},
+\qquad
+H_4(w)=\frac{4w^4-12w^2+3}{\sqrt{24}}.
+\end{equation}
+
+Here, $A$ is the line amplitude, $v_0$ is the velocity shift, and $\sigma$ is the velocity dispersion. The coefficients $h_3$ and $h_4$ control asymmetry (skewness-like distortion) and peak/wing shape (kurtosis-like distortion), respectively. In the implementation, an optional clipping mode sets negative model values to zero.
+
+\subsection{Line\_GaussHermite\_doublet}
+
+The \texttt{Line\_GaussHermite\_doublet} class extends the Gauss--Hermite formalism to doublets by summing two kinematically tied line components:
+
+\begin{equation}
+F(\lambda)=F_0(\lambda)+F_1(\lambda),
+\end{equation}
+
+where for $j\in\{0,1\}$,
+
+\begin{equation}
+F_j(\lambda)=A_j\exp\left[-\frac{1}{2}w_j(\lambda)^2\right]\left[1+h_3H_3\big(w_j(\lambda)\big)+h_4H_4\big(w_j(\lambda)\big)\right],
+\end{equation}
+
+\begin{equation}
+w_j(\lambda)=\frac{v_j(\lambda)-v_0}{\sigma},
+\qquad
+v_j(\lambda)=c\frac{\lambda-\lambda_j}{\lambda_j}.
+\end{equation}
+
+The two amplitudes $A_0$ and $A_1$ are independent, while $v_0$, $\sigma$, $h_3$, and $h_4$ are shared between the lines, enforcing common kinematics and common non-Gaussian line-shape distortions across the doublet. As with the single-line model, optional clipping can set negative values of the total profile to zero.
+
+\subsection{Line\_Absorption}
+
+The \texttt{Line\_Absorption} class models an absorption line as a Gaussian optical-depth profile with optional partial covering of the background source. The observed (normalized) flux is given by:
+
+\begin{equation}
+F(\lambda) = 1 - C_f + C_f \; e^{-\tau(\lambda)}
+\end{equation}
+
+where the optical depth profile is a Gaussian in velocity:
+
+\begin{equation}
+	au(\lambda) = \tau_0 \; \exp\left[-\frac{1}{2}\left(\frac{v(\lambda) - v_0}{\sigma}\right)^2\right],
+\end{equation}
+
+with $v(\lambda) = c(\lambda - \lambda_0)/\lambda_0$ the velocity offset from the line center $\lambda_0$. The parameters are:
+
+- $\tau_0$: optical depth at line center (unitless), controls the line strength.
+- $v_0$: velocity shift of the line center (km~s$^{-1}$).
+- $\sigma$: velocity dispersion of the absorbing gas (km~s$^{-1}$).
+- $C_f$: covering fraction (0 to 1). $C_f = 1$ corresponds to full covering, giving $F(\lambda)=e^{-\tau(\lambda)}$; $C_f<1$ models partial coverage where a fraction $1-C_f$ of the background remains unabsorbed.
+
+This formulation is commonly used to fit interstellar, circumgalactic, or intrinsic AGN absorption features where the absorber only partially covers the emission source or where saturated lines require a covering-fraction treatment.
+
+\subsection{IronTemplate}
+
+The \texttt{IronTemplate} class models the complex Fe~II and Fe~III emission from AGN using empirical templates. Two template options are available: the I~Zw~1 template from \citet{Boroson1992} or the Mrk~493 template from \citet{Park2022}. The model is:
+
+\begin{equation}
+F(\lambda) = A \cdot T_{\rm Fe}\left[\lambda/(1+z)\right] \otimes G(\sigma)
+\end{equation}
+
+where $T_{\rm Fe}$ is the normalized iron template, $A$ is the amplitude, $z$ is the redshift, and $G(\sigma)$ is a Gaussian convolution kernel accounting for the velocity dispersion $\sigma$ of the AGN broad-line region. The convolution accounts for the difference between the target dispersion and the intrinsic dispersion of the template ($\sigma_{\rm intr} \approx 384$~km~s$^{-1}$):
+
+\begin{equation}
+\sigma_{\rm conv} = \sqrt{\sigma^2 - \sigma_{\rm intr}^2}
+\end{equation}
+
+The template is interpolated to the observed wavelength grid after redshifting and convolution. A lower bound of $\sigma \geq 386$~km~s$^{-1}$ is enforced to prevent unphysical deconvolution.
+
+\subsection{WindowedPowerLaw1D}
+
+The \texttt{WindowedPowerLaw1D} class implements a power-law continuum model that is zero outside a specified wavelength range $[\lambda_{\rm min}, \lambda_{\rm max}]$:
+
+\begin{equation}
+F(\lambda) = \begin{cases}
+A \left(\frac{\lambda}{\lambda_0}\right)^{-\alpha} & \text{if } \lambda_{\rm min} \leq \lambda \leq \lambda_{\rm max} \\
+0 & \text{otherwise}
+\end{cases}
+\end{equation}
+
+where $A$ is the amplitude, $\lambda_0$ is the reference wavelength (typically fixed), and $\alpha$ is the power-law index. This model is useful for fitting localized continuum regions without affecting other spectral windows, making it particularly suitable for modeling AGN continuum components in specific wavelength ranges.
+
+\subsection{BlackBody}
+
+The \texttt{BlackBody} class models thermal emission using the Planck function:
+
+\begin{equation}
+F(\lambda) = \begin{cases}
+S \cdot B_\lambda(T) / \max[B_\lambda(T)] & \text{if } \lambda_{\rm min} \leq \lambda \leq \lambda_{\rm max} \\
+0 & \text{otherwise}
+\end{cases}
+\end{equation}
+
+where $B_\lambda(T)$ is the Planck function:
+
+\begin{equation}
+B_\lambda(T) = \frac{2hc^2}{\lambda^5} \frac{1}{\exp\left(\frac{hc}{\lambda k_B T}\right) - 1}
+\end{equation}
+
+Here, $T$ is the temperature in Kelvin, $S$ is a scaling factor, $h$ is Planck's constant, $c$ is the speed of light, $k_B$ is Boltzmann's constant, and the flux is normalized by its maximum value for numerical convenience. The optional wavelength limits $\lambda_{\rm min}$ and $\lambda_{\rm max}$ allow restricting the blackbody contribution to specific spectral regions, useful for modeling hot dust emission or stellar components in composite spectra.
+
+\subsection{Line Spread Function Convolution}
+
+The \texttt{convolve\_lsf} function accounts for instrumental broadening by convolving spectral models with a Gaussian line spread function (LSF). This is essential when fitting spectroscopic data where the observed line profiles are broadened by the instrument's finite spectral resolution.
+
+The LSF is characterized by a resolving power $R = \lambda/\Delta\lambda$ at a reference wavelength $\lambda_c$, where $\Delta\lambda$ is the full width at half maximum (FWHM) of the instrumental profile. The Gaussian kernel has a wavelength-space standard deviation:
+
+\begin{equation}
+\sigma_\lambda = \frac{\lambda_c}{R \cdot 2.3548}
+\end{equation}
+
+where the factor 2.3548 converts between FWHM and standard deviation (${\rm FWHM} = 2\sqrt{2\ln 2}\,\sigma \approx 2.3548\,\sigma$).
+
+For any spectral model $F_0(\lambda)$, the convolved model is:
+
+\begin{equation}
+F(\lambda) = \int_{-\infty}^{\infty} F_0(\lambda') \, G(\lambda - \lambda'; \sigma_\lambda) \, d\lambda'
+\end{equation}
+
+where $G(\lambda; \sigma_\lambda)$ is the normalized Gaussian kernel:
+
+\begin{equation}
+G(\lambda; \sigma_\lambda) = \frac{1}{\sqrt{2\pi}\sigma_\lambda} \exp\left[-\frac{\lambda^2}{2\sigma_\lambda^2}\right]
+\end{equation}
+
+The convolution is implemented using a Gaussian filter on uniformly-spaced wavelength grids. This operation is applied in-place to model instances, and importantly, it also convolves the analytical derivatives (\texttt{fit\_deriv}) when present, ensuring correct behavior with gradient-based fitting algorithms such as Levenberg--Marquardt.
+
+The convolved models retain metadata indicating the LSF parameters ($\lambda_c$, $R$, $\sigma_\lambda$), which can be inspected using the \texttt{find\_convolved\_submodels} function. This is particularly useful when working with composite models containing multiple convolved components.
+
+\section{References}
+
+\begin{thebibliography}{99}
+
+\bibitem[Boroson \& Green(1992)]{Boroson1992}
+Boroson, T.~A., \& Green, R.~F.\ 1992, \apjs, 80, 109
+
+\bibitem[Park et al.(2022)]{Park2022}
+Park, D., Woo, J.-H., Bennert, V.~N., et al.\ 2022, \apj, 839, 93
+
+\end{thebibliography}
+
+\end{document}

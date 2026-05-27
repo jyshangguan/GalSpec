@@ -1,8 +1,8 @@
 """
-Python Tools for SAGAN Spectral Analysis
+Python Tools for GalSpec Spectral Analysis
 
 This package provides reusable plotting and utility functions for AGN spectral analysis
-using the SAGAN (Spectral Analysis for Galaxies and AGN) package.
+using the GalSpec (Spectral Analysis for Galaxies and AGN) package.
 
 Modules
 -------
@@ -44,11 +44,11 @@ Usage
 
 See Also
 --------
-SAGAN documentation: ../fitting_strategies/continuum_fitting.md
+GalSpec documentation: ../fitting_strategies/continuum_fitting.md
 """
 
 __version__ = '1.0.0'
-__author__ = 'SAGAN Development Team'
+__author__ = 'GalSpec Development Team'
 
 from .plot_tools import (
     plot_continuum_fit_diagnostic,

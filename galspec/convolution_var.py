@@ -1,5 +1,5 @@
 """
-Variable LSF convolution for SAGAN
+Variable LSF convolution for GalSpec
 
 Implements wavelength-dependent resolving power convolution for instruments
 like JWST NIRSpec prism where resolving power varies significantly with wavelength.
@@ -32,8 +32,8 @@ _TAG_VAR = "_gaussconv1d_var_callswap"
 
 # Import configuration from base convolution module
 import sys
-if hasattr(sys.modules.get('sagan.convolution'), 'GaussianConv1DConfig'):
-    from sagan.convolution import GaussianConv1DConfig
+if hasattr(sys.modules.get('galspec.convolution'), 'GaussianConv1DConfig'):
+    from galspec.convolution import GaussianConv1DConfig
 else:
     @dataclass(frozen=True)
     class GaussianConv1DConfig:
@@ -174,7 +174,7 @@ class ResolutionCurve:
 
         Examples
         --------
-        >>> rc = ResolutionCurve('sagan/data/NIRSpec_prism_resolution.fits')
+        >>> rc = ResolutionCurve('galspec/data/NIRSpec_prism_resolution.fits')
         >>> R_2micron = rc.get_resolution(2.0)  # 2.0 microns
         >>> R_6563 = rc.get_resolution(6563)  # 6563 Angstroms (H-alpha)
         """
@@ -227,7 +227,7 @@ class ResolutionCurve:
 
         Examples
         --------
-        >>> rc = ResolutionCurve('sagan/data/NIRSpec_prism_resolution.fits')
+        >>> rc = ResolutionCurve('galspec/data/NIRSpec_prism_resolution.fits')
         >>> sigma = rc.get_sigma_x(2.0)  # at 2.0 microns
         """
         wave = self._normalize_wavelength(wavelength)
@@ -438,7 +438,7 @@ def convolve_lsf_var(
     Examples
     --------
     >>> import numpy as np
-    >>> import sagan
+    >>> import galspec
     >>> from astropy.modeling import models
     >>>
     >>> # Create a model
@@ -450,15 +450,15 @@ def convolve_lsf_var(
     >>> # Apply variable LSF convolution from arrays directly
     >>> wave_res = np.array([0.6, 1.0, 2.0, 3.0, 5.0])  # microns
     >>> R_res = np.array([30, 100, 200, 300, 350])
-    >>> model_conv = sagan.convolve_lsf_var(
+    >>> model_conv = galspec.convolve_lsf_var(
     ...     gauss,
     ...     wavec=wave,
     ...     resolution_data=(wave_res, R_res)
     ... )
     >>>
     >>> # Or using ResolutionCurve object
-    >>> rc = sagan.ResolutionCurve(wave_res, R_res, wave_unit='micron')
-    >>> model_conv2 = sagan.convolve_lsf_var(
+    >>> rc = galspec.ResolutionCurve(wave_res, R_res, wave_unit='micron')
+    >>> model_conv2 = galspec.convolve_lsf_var(
     ...     gauss,
     ...     wavec=wave,
     ...     resolution_data=rc
@@ -620,7 +620,7 @@ def convolve_lsf_var(
         model.meta["lsf_resolution_file"] = "ResolutionCurve_object"
 
     # Register class in module namespace (for pickling)
-    import sagan.convolution_var as conv_var_module
+    import galspec.convolution_var as conv_var_module
     setattr(conv_var_module, ConvolvedCls.__name__, ConvolvedCls)
     ConvolvedCls.__module__ = conv_var_module.__name__
 
@@ -684,8 +684,8 @@ def find_variable_convolved_submodels(
 
     Examples
     --------
-    >>> import sagan
-    >>> submodels = sagan.find_variable_convolved_submodels(compound_model)
+    >>> import galspec
+    >>> submodels = galspec.find_variable_convolved_submodels(compound_model)
     >>> for sm in submodels:
     ...     print(f"{sm.name}: {sm.meta.get('lsf_resolution_file')}")
     """
@@ -735,8 +735,8 @@ def refresh_variable_convolved_submodels_inplace(
 
     Examples
     --------
-    >>> import sagan
-    >>> n_refreshed = sagan.refresh_variable_convolved_submodels_inplace(model)
+    >>> import galspec
+    >>> n_refreshed = galspec.refresh_variable_convolved_submodels_inplace(model)
     >>> print(f"Refreshed {n_refreshed} submodels")
     """
     refreshed = 0

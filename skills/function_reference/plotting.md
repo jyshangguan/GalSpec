@@ -1,6 +1,6 @@
-# Plotting Functions (`sagan.plot`)
+# Plotting Functions (`galspec.plot`)
 
-Visualization functions for spectral fitting results in SAGAN.
+Visualization functions for spectral fitting results in GalSpec.
 
 ## Table of Contents
 
@@ -14,7 +14,7 @@ Visualization functions for spectral fitting results in SAGAN.
 Plot fitted spectrum with components and residuals.
 
 ```python
-ax, axr = sagan.plot.plot_fit_new(
+ax, axr = galspec.plot.plot_fit_new(
     wave,                   # Wavelength array (Å)
     flux,                   # Observed flux array
     model_fit,              # Fitted CompoundModel
@@ -58,7 +58,7 @@ plt.savefig('fit_result.png', dpi=300)
 Alternative plotting function with more options.
 
 ```python
-ax, axr = sagan.plot.plot_fit(
+ax, axr = galspec.plot.plot_fit(
     wave, flux, model,
     weight=None,
     error=None,
@@ -102,5 +102,5 @@ ax, axr = sagan.plot.plot_fit(
 
 ---
 
-**Module**: `sagan.plot`
-**Source File**: `sagan/plot.py`
+**Module**: `galspec.plot`
+**Source File**: `galspec/plot.py`

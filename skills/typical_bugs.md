@@ -1,6 +1,6 @@
-# Typical Bugs in SAGAN Spectral Fitting
+# Typical Bugs in GalSpec Spectral Fitting
 
-This file documents common bugs, mistakes, and pitfalls in SAGAN spectral fitting. Each bug includes:
+This file documents common bugs, mistakes, and pitfalls in GalSpec spectral fitting. Each bug includes:
 - **The Bug**: What went wrong
 - **Detection**: How to spot it
 - **The Fix**: Correct code/approach
@@ -17,7 +17,7 @@ When tying multiple parameters together, accidentally including the reference pa
 ```python
 # ❌ WRONG - includes 'nHalpha' in the loop!
 for ln in ['nHalpha', 'NII_6583', 'NII_6548']:
-    model[ln].dv.tied = sagan.tie_template_dv('nHalpha')
+    model[ln].dv.tied = galspec.tie_template_dv('nHalpha')
 ```
 
 **What Happens**:
@@ -29,7 +29,7 @@ for ln in ['nHalpha', 'NII_6583', 'NII_6548']:
 ```python
 # ✅ CORRECT - skip the reference parameter!
 for ln in ['NII_6583', 'NII_6548']:  # ← Don't include 'nHalpha'!
-    model[ln].dv.tied = sagan.tie_template_dv('nHalpha')
+    model[ln].dv.tied = galspec.tie_template_dv('nHalpha')
 ```
 
 **What Happens**:

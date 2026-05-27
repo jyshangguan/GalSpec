@@ -1,6 +1,6 @@
-# Measurement Methods (`sagan.measure_method`)
+# Measurement Methods (`galspec.measure_method`)
 
-Physical parameter measurements from fitted models in SAGAN.
+Physical parameter measurements from fitted models in GalSpec.
 
 ## Table of Contents
 
@@ -13,7 +13,7 @@ Physical parameter measurements from fitted models in SAGAN.
 Calculate FWHM of emission lines from fitted models.
 
 ```python
-from sagan.measure_method import line_emission_fwhm
+from galspec.measure_method import line_emission_fwhm
 
 fwhm, w_l, w_r, w_peak = line_emission_fwhm(
     model,                  # Fitted model
@@ -72,7 +72,7 @@ print(f"Broad Hα: {fwhm_ha:.0f} km/s")
 print(f"Narrow Hα: {fwhm_nha:.0f} km/s")
 
 # Calculate black hole mass (using broad Hα)
-from sagan.utils import line_wave_dict
+from galspec.utils import line_wave_dict
 
 # Virial mass formula (Vestergaard & Peterson 2006)
 import numpy as np
@@ -83,5 +83,5 @@ print(f"M_BH = {mass:.2e} M☉")
 
 ---
 
-**Module**: `sagan.measure_method`
-**Source File**: `sagan/measure_method.py`
+**Module**: `galspec.measure_method`
+**Source File**: `galspec/measure_method.py`

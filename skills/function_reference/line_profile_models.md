@@ -1,6 +1,6 @@
-# Line Profile Models (`sagan.line_profile`)
+# Line Profile Models (`galspec.line_profile`)
 
-All line profile models for emission and absorption lines in SAGAN.
+All line profile models for emission and absorption lines in GalSpec.
 
 ## Table of Contents
 
@@ -20,7 +20,7 @@ All line profile models for emission and absorption lines in SAGAN.
 Basic Gaussian emission/absorption line.
 
 ```python
-sagan.Line_Gaussian(
+galspec.Line_Gaussian(
     amplitude=1.0,          # Line peak amplitude
     dv=0,                   # Velocity shift (km/s), bounds: (-2000, 2000)
     sigma=200,              # Velocity dispersion (km/s), bounds: (20, 10000)
@@ -41,8 +41,8 @@ sagan.Line_Gaussian(
 
 **Example**:
 ```python
-from sagan.utils import line_wave_dict
-line = sagan.Line_Gaussian(
+from galspec.utils import line_wave_dict
+line = galspec.Line_Gaussian(
     amplitude=10.0,
     dv=-50,
     sigma=300,
@@ -58,7 +58,7 @@ line = sagan.Line_Gaussian(
 Fourth-order Gauss-Hermite expansion for asymmetric lines.
 
 ```python
-sagan.Line_GaussHermite(
+galspec.Line_GaussHermite(
     amplitude=1.0,
     dv=0,
     sigma=200,
@@ -87,7 +87,7 @@ where G is the Gaussian and H3, H4 are Hermite polynomials.
 
 **Example**:
 ```python
-line = sagan.Line_GaussHermite(
+line = galspec.Line_GaussHermite(
     amplitude=10.0,
     dv=-50,
     sigma=500,
@@ -105,7 +105,7 @@ line = sagan.Line_GaussHermite(
 Multiple Gaussian components for complex line profiles.
 
 ```python
-sagan.Line_MultiGauss(
+galspec.Line_MultiGauss(
     n_components=3,         # Number of Gaussian components
     amp_c=1.0,              # Core amplitude
     dv_c=0,                 # Core velocity shift (km/s)
@@ -137,7 +137,7 @@ sagan.Line_MultiGauss(
 **Example**:
 ```python
 # 3-component broad Hα
-bha = sagan.Line_MultiGauss(
+bha = galspec.Line_MultiGauss(
     n_components=3,
     amp_c=48.0,      # Core
     dv_c=-100,
@@ -165,7 +165,7 @@ for comp in bha.subcomponents:
 Doublet with multi-Gaussian profile (e.g., [O III] 4959,5007).
 
 ```python
-sagan.Line_MultiGauss_doublet(
+galspec.Line_MultiGauss_doublet(
     n_components=2,
     amp_c0=1.0,             # Amplitude of line 1
     amp_c1=1.0,             # Amplitude of line 2
@@ -185,7 +185,7 @@ sagan.Line_MultiGauss_doublet(
 **Example**:
 ```python
 # [O III] blue wing
-o3_wing = sagan.Line_MultiGauss_doublet(
+o3_wing = galspec.Line_MultiGauss_doublet(
     n_components=2,
     amp_c0=65.0,      # 5007
     amp_c1=22.0,      # 4959 (will be tied to 5007)
@@ -207,7 +207,7 @@ o3_wing = sagan.Line_MultiGauss_doublet(
 Doublet with Gauss-Hermite profile.
 
 ```python
-sagan.Line_GaussHermite_doublet(
+galspec.Line_GaussHermite_doublet(
     amp_c0=1.0,             # Amplitude of line 1
     amp_c1=1.0,             # Amplitude of line 2
     dv_c=0,                 # Common velocity shift
@@ -230,7 +230,7 @@ sagan.Line_GaussHermite_doublet(
 Template-based line profile from observed or theoretical spectra.
 
 ```python
-sagan.Line_template(
+galspec.Line_template(
     template_velc=velc_array,    # Velocity array (km/s)
     template_flux=flux_array,    # Flux array (normalized)
     amplitude=1.0,
@@ -255,7 +255,7 @@ sagan.Line_template(
 velc_temp, flux_temp = np.loadtxt('narrow_template.txt').T
 
 # Use for narrow Hα
-nha = sagan.Line_template(
+nha = galspec.Line_template(
     template_velc=velc_temp,
     template_flux=flux_temp,
     amplitude=50.0,
@@ -272,7 +272,7 @@ nha = sagan.Line_template(
 Gaussian absorption line profile.
 
 ```python
-sagan.Line_Absorption(
+galspec.Line_Absorption(
     logtau0=0.0,            # Log optical depth at line center
     dv=0,                   # Velocity shift (km/s)
     sigma=200,              # Velocity dispersion (km/s)
@@ -298,7 +298,7 @@ where τ₀ = 10^logtau0
 **Example**:
 ```python
 # BAL trough in Hα
-aha = sagan.Line_Absorption(
+aha = galspec.Line_Absorption(
     logtau0=2.0,      # Strong absorption
     dv=-160,          # Blue-shifted
     sigma=40,
@@ -315,7 +315,7 @@ aha = sagan.Line_Absorption(
 Doublet absorption lines (e.g., CIV 1548,1551).
 
 ```python
-sagan.Line_Absorption_doublet(
+galspec.Line_Absorption_doublet(
     logtau0=0.0,            # Log τ for line 1
     logtau1=0.0,            # Log τ for line 2
     dv=0,                   # Common velocity shift
@@ -333,5 +333,5 @@ sagan.Line_Absorption_doublet(
 
 ---
 
-**Module**: `sagan.line_profile`
-**Source File**: `sagan/line_profile.py`
+**Module**: `galspec.line_profile`
+**Source File**: `galspec/line_profile.py`

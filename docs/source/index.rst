@@ -1,11 +1,11 @@
-.. SAGAN documentation master file, created by sphinx-quickstart.
+.. GalSpec documentation master file, created by sphinx-quickstart.
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-SAGAN: Spectral Analysis of Galaxy and Active galactic Nuclei
-==============================================================
+GalSpec: Galaxy Spectrum Fitting
+=================================
 
-**SAGAN** is a Python package for fitting astronomical spectra, specifically designed for AGN and galaxy spectra with complex emission and absorption line features.
+**GalSpec** is a Python package for fitting astronomical spectra, specifically designed for AGN and galaxy spectra with complex emission and absorption line features.
 
 .. image:: https://img.shields.io/badge/python-3.9+-blue.svg
    :target: https://www.python.org/downloads/
@@ -32,12 +32,12 @@ Key Features
 Quick Start
 -----------
 
-Install SAGAN from source:
+Install GalSpec from source:
 
 .. code-block:: bash
 
-   git clone https://github.com/jyshangguan/SAGAN.git
-   cd SAGAN
+   git clone https://github.com/yourusername/galspec.git
+   cd galspec
    pip install -e .
 
 Fit a simple emission line:
@@ -46,7 +46,7 @@ Fit a simple emission line:
 
    import numpy as np
    from astropy.modeling.models import Linear1D
-   from sagan import Line_Gaussian
+   from galspec import Line_Gaussian
    from astropy.modeling.fitting import LevMarLSQFitter
 
    # Load your spectrum data
@@ -103,6 +103,6 @@ Indices and tables
 Links
 -----
 
-* **GitHub Repository**: https://github.com/jyshangguan/SAGAN
-* **Issue Tracker**: https://github.com/jyshangguan/SAGAN/issues
-* **Documentation**: https://jyshangguan.github.io/SAGAN/
+* **GitHub Repository**: https://github.com/yourusername/galspec
+* **Issue Tracker**: https://github.com/yourusername/galspec/issues
+* **Documentation**: https://yourusername.github.io/galspec/

@@ -1,6 +1,6 @@
-# I/O Functions (`sagan.mcmc_fit_io`, `sagan.dynesty_fit_io`)
+# I/O Functions (`galspec.mcmc_fit_io`, `galspec.dynesty_fit_io`)
 
-Save and load fitting results in SAGAN.
+Save and load fitting results in GalSpec.
 
 ## Table of Contents
 
@@ -14,13 +14,13 @@ Save and load fitting results in SAGAN.
 Save and load MCMC fitting results.
 
 ```python
-import sagan
+import galspec
 
 # Save MCMC results
-sagan.save_mcmc(mcmc_object, 'model.pkl')
+galspec.save_mcmc(mcmc_object, 'model.pkl')
 
 # Load MCMC results
-mcmc_loaded = sagan.load_mcmc('model.pkl')
+mcmc_loaded = galspec.load_mcmc('model.pkl')
 ```
 
 ### save_mcmc
@@ -28,7 +28,7 @@ mcmc_loaded = sagan.load_mcmc('model.pkl')
 Save complete MCMC fitting object to file.
 
 ```python
-sagan.save_mcmc(
+galspec.save_mcmc(
     mcmc_object,      # MCMC_Fit object
     filename          # Output filename (typically .pkl)
 )
@@ -50,7 +50,7 @@ sagan.save_mcmc(
 Load previously saved MCMC results.
 
 ```python
-mcmc_loaded = sagan.load_mcmc(filename)
+mcmc_loaded = galspec.load_mcmc(filename)
 ```
 
 **Parameters**:
@@ -66,14 +66,14 @@ mcmc_loaded = sagan.load_mcmc(filename)
 **Example**:
 ```python
 # After fitting
-mcmc = sagan.MCMC_Fit(model, wave, flux, ferr, ...)
+mcmc = galspec.MCMC_Fit(model, wave, flux, ferr, ...)
 samples, model_fit, param_names = mcmc.fit(progress=True)
 
 # Save results
-sagan.save_mcmc(mcmc, 'agn_halpha_mcmc.pkl')
+galspec.save_mcmc(mcmc, 'agn_halpha_mcmc.pkl')
 
 # Later, load and analyze
-mcmc_loaded = sagan.load_mcmc('agn_halpha_mcmc.pkl')
+mcmc_loaded = galspec.load_mcmc('agn_halpha_mcmc.pkl')
 model_best, par_names, theta_best = mcmc_loaded.get_best_fit()
 
 # Continue analysis
@@ -88,13 +88,13 @@ plt.savefig('corner_plot.png', dpi=300)
 Save and load Dynesty nested sampling results.
 
 ```python
-import sagan
+import galspec
 
 # Save Dynesty results
-sagan.save_dynesty(dynesty_object, 'model_dynesty.pkl')
+galspec.save_dynesty(dynesty_object, 'model_dynesty.pkl')
 
 # Load Dynesty results
-dynesty_loaded = sagan.load_dynesty('model_dynesty.pkl')
+dynesty_loaded = galspec.load_dynesty('model_dynesty.pkl')
 ```
 
 ### save_dynesty
@@ -102,7 +102,7 @@ dynesty_loaded = sagan.load_dynesty('model_dynesty.pkl')
 Save complete Dynesty fitting object to file.
 
 ```python
-sagan.save_dynesty(
+galspec.save_dynesty(
     dynesty_object,   # Dynesty_Fit object
     filename          # Output filename (typically .pkl)
 )
@@ -124,7 +124,7 @@ sagan.save_dynesty(
 Load previously saved Dynesty results.
 
 ```python
-dynesty_loaded = sagan.load_dynesty(filename)
+dynesty_loaded = galspec.load_dynesty(filename)
 ```
 
 **Parameters**:
@@ -138,16 +138,16 @@ dynesty_loaded = sagan.load_dynesty(filename)
 **Example**:
 ```python
 # After fitting
-dynesty_fit = sagan.Dynesty_Fit(model, wave, flux, ferr, ...)
+dynesty_fit = galspec.Dynesty_Fit(model, wave, flux, ferr, ...)
 results = dynesty_fit.fit()
 
 print(f"Log Z: {results.logz:.2f} ± {results.logzerr:.2f}")
 
 # Save results
-sagan.save_dynesty(dynesty_fit, 'agn_halpha_dynesty.pkl')
+galspec.save_dynesty(dynesty_fit, 'agn_halpha_dynesty.pkl')
 
 # Later, load and analyze
-dynesty_loaded = sagan.load_dynesty('agn_halpha_dynesty.pkl')
+dynesty_loaded = galspec.load_dynesty('agn_halpha_dynesty.pkl')
 model_best, par_names, theta_best = dynesty_loaded.get_best_fit()
 
 # Get parameter constraints
@@ -161,7 +161,7 @@ print(f"Hα amplitude: {np.median(halpha_amp_samples):.2f} ± {np.std(halpha_amp
 
 1. **Use Descriptive Filenames**: Include object name, spectral region, and date
    ```python
-   sagan.save_mcmc(mcmc, 'J1234+5678_Halpha_20250320.pkl')
+   galspec.save_mcmc(mcmc, 'J1234+5678_Halpha_20250320.pkl')
    ```
 
 2. **Organize Results**: Keep results in a dedicated directory
@@ -169,7 +169,7 @@ print(f"Hα amplitude: {np.median(halpha_amp_samples):.2f} ± {np.std(halpha_amp
    import os
    results_dir = 'fitting_results'
    os.makedirs(results_dir, exist_ok=True)
-   sagan.save_mcmc(mcmc, f'{results_dir}/model.pkl')
+   galspec.save_mcmc(mcmc, f'{results_dir}/model.pkl')
    ```
 
 3. **Document Fits**: Keep a log file alongside saved results
@@ -181,10 +181,10 @@ print(f"Hα amplitude: {np.median(halpha_amp_samples):.2f} ± {np.std(halpha_amp
        f.write(f"BIC: {bic:.1f}\n")
    ```
 
-4. **Version Control**: Track major changes in SAGAN version
+4. **Version Control**: Track major changes in GalSpec version
    ```python
-   import sagan
-   print(f"SAGAN version: {sagan.__version__}")  # Check before saving
+   import galspec
+   print(f"GalSpec version: {galspec.__version__}")  # Check before saving
    ```
 
 ---
@@ -225,5 +225,5 @@ with open('results_essential.pkl', 'wb') as f:
 
 ---
 
-**Modules**: `sagan.mcmc_fit_io`, `sagan.dynesty_fit_io`
-**Source Files**: `sagan/mcmc_fit_io.py`, `sagan/dynesty_fit_io.py`
+**Modules**: `galspec.mcmc_fit_io`, `galspec.dynesty_fit_io`
+**Source Files**: `galspec/mcmc_fit_io.py`, `galspec/dynesty_fit_io.py`

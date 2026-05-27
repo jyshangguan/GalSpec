@@ -1,6 +1,6 @@
-# Stellar Continuum (`sagan.stellar_continuum`)
+# Stellar Continuum (`galspec.stellar_continuum`)
 
-Stellar spectrum template models in SAGAN.
+Stellar spectrum template models in GalSpec.
 
 ## Table of Contents
 
@@ -14,7 +14,7 @@ Stellar spectrum template models in SAGAN.
 Single stellar spectrum template.
 
 ```python
-sagan.StarSpectrum(
+galspec.StarSpectrum(
     amplitude=1.0,
     star_type='G',          # 'A', 'F', 'G', 'K', or 'M'
     velscale=200,           # Velocity scale for rebinning (km/s)
@@ -33,7 +33,7 @@ sagan.StarSpectrum(
 
 **Example**:
 ```python
-stellar = sagan.StarSpectrum(
+stellar = galspec.StarSpectrum(
     amplitude=0.3,
     star_type='G',
     velscale=200,
@@ -50,7 +50,7 @@ stellar = sagan.StarSpectrum(
 Multiple stellar components (e.g., bulge + disk).
 
 ```python
-sagan.Multi_StarSpectrum(
+galspec.Multi_StarSpectrum(
     n_components=2,
     star_types=['G', 'K'],   # Stellar types for each component
     amplitudes=[1.0, 0.5],   # Relative amplitudes
@@ -63,5 +63,5 @@ sagan.Multi_StarSpectrum(
 
 ---
 
-**Module**: `sagan.stellar_continuum`
-**Source File**: `sagan/stellar_continuum.py`
+**Module**: `galspec.stellar_continuum`
+**Source File**: `galspec/stellar_continuum.py`

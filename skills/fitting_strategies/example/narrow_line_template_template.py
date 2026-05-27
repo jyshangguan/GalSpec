@@ -4,7 +4,7 @@ Narrow Line Template Generation Template
 
 This script is a template for generating narrow line templates from emission
 lines. It demonstrates the standard workflow and plotting format recommended
-by SAGAN.
+by GalSpec.
 
 Instructions:
 1. Copy this script to your working directory
@@ -12,7 +12,7 @@ Instructions:
 3. Run the script step by step to ensure quality at each stage
 4. All plots will be saved automatically with standardized format
 
-Author: SAGAN Community
+Author: GalSpec Community
 Version: 1.0
 """
 
@@ -22,13 +22,13 @@ from astropy.modeling import fitting
 from astropy.io import fits
 import sys
 
-# TODO: Modify path to point to your SAGAN installation
-sys.path.insert(0, '/path/to/SAGAN')
+# TODO: Modify path to point to your GalSpec installation
+sys.path.insert(0, '/path/to/GalSpec')
 
-import sagan
-from sagan.utils import line_wave_dict
-from sagan.continuum import WindowedPowerLaw1D
-from sagan.plot import plot_narrow_line_diagnostic, plot_narrow_line_template_validation
+import galspec
+from galspec.utils import line_wave_dict
+from galspec.continuum import WindowedPowerLaw1D
+from galspec.plot import plot_narrow_line_diagnostic, plot_narrow_line_template_validation
 
 # ========================================
 # USER CONFIGURATION SECTION
@@ -164,7 +164,7 @@ cont_1 = WindowedPowerLaw1D(
     name=f'Cont_{TEMPLATE_LINE}_1'
 )
 
-doublet_1 = sagan.Line_MultiGauss_doublet(
+doublet_1 = galspec.Line_MultiGauss_doublet(
     n_components=1,
     amp_c0=5.0,      # TODO: Set based on your line strength
     amp_c1=4.0,      # TODO: Set based on your line strength
@@ -227,7 +227,7 @@ if user_input.lower() == 'y':
         name=f'Cont_{TEMPLATE_LINE}_2'
     )
 
-    doublet_2 = sagan.Line_MultiGauss_doublet(
+    doublet_2 = galspec.Line_MultiGauss_doublet(
         n_components=2,
         amp_c0=model_fit_1.amp_c0_1.value,
         amp_c1=model_fit_1.amp_c1_1.value,
@@ -350,7 +350,7 @@ cont_verify = WindowedPowerLaw1D(
 )
 
 # Create template lines for both doublet members
-line1_temp = sagan.Line_template(
+line1_temp = galspec.Line_template(
     template_velc=velc_temp,
     template_flux=flux_temp,
     amplitude=model_final.amp_c0_1.value,
@@ -359,7 +359,7 @@ line1_temp = sagan.Line_template(
     name=f'{TEMPLATE_LINE}_1'
 )
 
-line2_temp = sagan.Line_template(
+line2_temp = galspec.Line_template(
     template_velc=velc_temp,
     template_flux=flux_temp,
     amplitude=model_final.amp_c1_1.value,
@@ -465,8 +465,8 @@ if quality_ok:
     print(f'  - Centered at dv=0')
     print('')
     print('Usage example:')
-    print('  from sagan.utils import line_wave_dict')
-    print('  nha = sagan.Line_template(')
+    print('  from galspec.utils import line_wave_dict')
+    print('  nha = galspec.Line_template(')
     print('      template_velc=velc_temp,')
     print('      template_flux=flux_temp,')
     print('      amplitude=50.0,  # Adjust for your line')

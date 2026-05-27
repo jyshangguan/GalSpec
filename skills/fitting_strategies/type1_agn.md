@@ -2,11 +2,11 @@
 
 ## Overview
 
-This guide provides a detailed strategy for fitting Type 1 AGN and BAL QSO spectra using SAGAN. The approach is based on the methodology from Shangguan et al. (2026), developed for studying low-redshift broad absorption line quasars.
+This guide provides a detailed strategy for fitting Type 1 AGN and BAL QSO spectra using GalSpec. The approach is based on the methodology from Shangguan et al. (2026), developed for studying low-redshift broad absorption line quasars.
 
 ### Scientific Context (Shangguan et al. 2026)
 
-SAGAN was developed for the study of low-redshift BAL QSOs with the following scientific goals:
+GalSpec was developed for the study of low-redshift BAL QSOs with the following scientific goals:
 
 1. **BAL Outflows**: Analysis of broad absorption lines to study quasar outflow kinematics
 2. **Black Hole Masses**: Measurement from broad line widths (Hα, Hβ)

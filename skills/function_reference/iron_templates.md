@@ -1,6 +1,6 @@
-# Iron Templates (`sagan.iron_template`)
+# Iron Templates (`galspec.iron_template`)
 
-Iron emission template models for AGN spectra in SAGAN.
+Iron emission template models for AGN spectra in GalSpec.
 
 ## Table of Contents
 
@@ -15,7 +15,7 @@ Iron emission template models for AGN spectra in SAGAN.
 Iron emission template from AGN.
 
 ```python
-sagan.IronTemplate(
+galspec.IronTemplate(
     amplitude=1.0,
     stddev=900/2.3548,      # Velocity dispersion (km/s)
     z=0,                    # Redshift
@@ -33,7 +33,7 @@ sagan.IronTemplate(
 
 **Example**:
 ```python
-iron = sagan.IronTemplate(
+iron = galspec.IronTemplate(
     amplitude=0.8,
     stddev=900/2.3548,
     z=0.003,
@@ -48,7 +48,7 @@ iron = sagan.IronTemplate(
 Enhanced iron template with velocity shift parameter.
 
 ```python
-sagan.IronTemplate_new(
+galspec.IronTemplate_new(
     amplitude=1.0,
     sigma=900/2.3548,       # Velocity dispersion (km/s)
     z=0,                    # Redshift [fixed parameter]
@@ -61,7 +61,7 @@ sagan.IronTemplate_new(
 
 **Example**:
 ```python
-iron_new = sagan.IronTemplate_new(
+iron_new = galspec.IronTemplate_new(
     amplitude=0.8,
     sigma=900/2.3548,
     z=0,
@@ -77,7 +77,7 @@ iron_new = sagan.IronTemplate_new(
 Iron template with tied convolution kernel.
 
 ```python
-sagan.IronTemplate_tied(
+galspec.IronTemplate_tied(
     amplitude=1.0,
     stddev=910/2.3548,
     z=0,
@@ -88,5 +88,5 @@ sagan.IronTemplate_tied(
 
 ---
 
-**Module**: `sagan.iron_template`
-**Source File**: `sagan/iron_template.py`
+**Module**: `galspec.iron_template`
+**Source File**: `galspec/iron_template.py`

@@ -1,6 +1,6 @@
-# Continuum Models (`sagan.continuum`)
+# Continuum Models (`galspec.continuum`)
 
-Continuum models for AGN and stellar emission in SAGAN.
+Continuum models for AGN and stellar emission in GalSpec.
 
 ## Table of Contents
 
@@ -16,7 +16,7 @@ Continuum models for AGN and stellar emission in SAGAN.
 Power law continuum active only within [x_min, x_max].
 
 ```python
-sagan.WindowedPowerLaw1D(
+galspec.WindowedPowerLaw1D(
     amplitude=1.0,
     x_0=5000,               # Reference wavelength (Å)
     alpha=-1.0,             # Power law index (F_ν ∝ ν^α)
@@ -39,7 +39,7 @@ sagan.WindowedPowerLaw1D(
 
 **Example**:
 ```python
-cont = sagan.WindowedPowerLaw1D(
+cont = galspec.WindowedPowerLaw1D(
     amplitude=10.0,
     x_0=5100,
     alpha=-1.2,
@@ -56,7 +56,7 @@ cont = sagan.WindowedPowerLaw1D(
 Black body radiation model.
 
 ```python
-sagan.BlackBody(
+galspec.BlackBody(
     temperature=5000,       # Temperature (K)
     scale=1.0,              # Amplitude scale
     name='blackbody'
@@ -76,7 +76,7 @@ sagan.BlackBody(
 Balmer jump and high-order Balmer lines (Kovačević et al. 2013).
 
 ```python
-sagan.BalmerPseudoContinuum(
+galspec.BalmerPseudoContinuum(
     i_ref=1.0,              # Hβ reference intensity
     sigma=1000,             # Doppler width (km/s)
     dv=0,                   # Velocity shift (km/s)
@@ -96,7 +96,7 @@ sagan.BalmerPseudoContinuum(
 Extinction model of Cardelli et al. (1989).
 
 ```python
-sagan.extinction_ccm89(
+galspec.extinction_ccm89(
     a_v=0,                  # A_V extinction in magnitudes
     r_v=3.1,                # R_V = A_V / E(B-V)
     name='extinction'
@@ -107,5 +107,5 @@ sagan.extinction_ccm89(
 
 ---
 
-**Module**: `sagan.continuum`
-**Source File**: `sagan/continuum.py`
+**Module**: `galspec.continuum`
+**Source File**: `galspec/continuum.py`

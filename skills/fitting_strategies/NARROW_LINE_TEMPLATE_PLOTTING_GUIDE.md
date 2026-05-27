@@ -1,11 +1,11 @@
 # Narrow Line Template Plotting Guide
 
-**Purpose**: Standardize diagnostic and validation plots for narrow line template generation in SAGAN.
+**Purpose**: Standardize diagnostic and validation plots for narrow line template generation in GalSpec.
 
 **Why standardize?** Consistent plotting ensures:
 - Clear visual validation of fit quality at each step
 - Easy comparison between different fitting approaches
-- Reusable code patterns for the SAGAN community
+- Reusable code patterns for the GalSpec community
 - Proper documentation of scientific results
 
 ---
@@ -508,7 +508,7 @@ import matplotlib.pyplot as plt
 from astropy.modeling import fitting
 from astropy.io import fits
 import sys
-sys.path.insert(0, '/Users/shangguan/Softwares/my_modules/SAGAN')
+sys.path.insert(0, '/Users/shangguan/Softwares/my_modules/GalSpec')
 
 import sagan
 from sagan.utils import line_wave_dict
@@ -915,7 +915,7 @@ For every narrow line template generation:
 
 ## References
 
-- Example template script: `/Users/shangguan/Softwares/my_modules/SAGAN/skills/fitting_strategies/example/narrow_line_template_template.py`
+- Example template script: `/Users/shangguan/Softwares/my_modules/GalSpec/skills/fitting_strategies/example/narrow_line_template_template.py`
 - Narrow line template guide: `narrow_line_template.md`
-- SAGAN plotting utilities: `sagan/plot.py`
-- SAGAN diagnostic plotting functions: `plot_narrow_line_diagnostic()`, `plot_narrow_line_template_validation()`
+- GalSpec plotting utilities: `sagan/plot.py`
+- GalSpec diagnostic plotting functions: `plot_narrow_line_diagnostic()`, `plot_narrow_line_template_validation()`

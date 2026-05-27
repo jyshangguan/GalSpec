@@ -1,7 +1,7 @@
 Quick Start Guide
 =================
 
-This guide will walk you through a realistic spectral fitting example using SAGAN.
+This guide will walk you through a realistic spectral fitting example using GalSpec.
 We'll analyze an SDSS spectrum of an AGN (SDSS J000605.59-092007.0) to fit both
 the continuum and emission lines, and extract physical parameters.
 
@@ -72,7 +72,7 @@ We'll use stellar templates to fit the host galaxy:
 .. code-block:: python
 
    import sys
-   sys.path.append('/path/to/SAGAN')
+   sys.path.append('/path/to/GalSpec')
    import sagan
    from astropy.modeling import models, fitting
 
@@ -478,7 +478,7 @@ In this quick start, we've:
 * **L_5100**: 1.23×10^43 erg/s
 * **Classification**: AGN (based on BPT diagram)
 
-This is just a basic example. SAGAN can handle much more complex cases:
+This is just a basic example. GalSpec can handle much more complex cases:
 
 * Multiple emission line components (broad + narrow)
 * Fe II template fitting

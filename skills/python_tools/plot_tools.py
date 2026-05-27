@@ -1,5 +1,5 @@
 """
-Plotting Tools for SAGAN Spectral Analysis
+Plotting Tools for GalSpec Spectral Analysis
 
 This module provides reusable plotting functions for visualizing continuum fitting
 and continuum-subtracted spectra in AGN spectral analysis.
@@ -39,7 +39,7 @@ def plot_continuum_fit_diagnostic(wave, flux, error, model, cont_mask,
                                    ylabel='Flux (1e-17 erg/cm²/s/Å)',
                                    figsize=(10, 8), dpi=150, **kwargs):
     """
-    Create a diagnostic plot for continuum fitting using SAGAN's plot_fit_new().
+    Create a diagnostic plot for continuum fitting using GalSpec's plot_fit_new().
 
     This function visualizes the fitted continuum model with all components,
     highlighting the continuum windows used for fitting. The plot includes:
@@ -109,19 +109,19 @@ def plot_continuum_fit_diagnostic(wave, flux, error, model, cont_mask,
     See Also
     --------
     plot_continuum_subtracted_spectrum : Plot continuum-subtracted spectrum
-    sagan.plot.plot_fit_new : Underlying SAGAN plotting function
+    sagan.plot.plot_fit_new : Underlying GalSpec plotting function
     """
-    # Import SAGAN plotting module
+    # Import GalSpec plotting module
     try:
         from sagan import plot as sagan_plot
     except ImportError:
-        raise ImportError("SAGAN package not found. Please install SAGAN first.")
+        raise ImportError("GalSpec package not found. Please install GalSpec first.")
 
     # Create weight array: 1 for continuum windows, 0 elsewhere
     weight = np.zeros_like(wave, dtype=float)
     weight[cont_mask] = 1.0
 
-    # Create plot using SAGAN's plot_fit_new()
+    # Create plot using GalSpec's plot_fit_new()
     ax, axr = sagan_plot.plot_fit_new(
         wave,
         flux,

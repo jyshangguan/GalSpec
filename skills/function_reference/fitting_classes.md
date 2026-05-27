@@ -1,6 +1,6 @@
-# Fitting Classes (`sagan.mcmc_fit`, `sagan.dynesty_fit`)
+# Fitting Classes (`galspec.mcmc_fit`, `galspec.dynesty_fit`)
 
-Bayesian fitting classes for spectral modeling in SAGAN.
+Bayesian fitting classes for spectral modeling in GalSpec.
 
 ## Table of Contents
 
@@ -14,7 +14,7 @@ Bayesian fitting classes for spectral modeling in SAGAN.
 Bayesian fitting using emcee MCMC sampler.
 
 ```python
-mcmc = sagan.MCMC_Fit(
+mcmc = galspec.MCMC_Fit(
     model,                  # CompoundModel
     wave_use,               # Wavelength array (Å)
     flux_use,               # Flux array (normalized)
@@ -41,7 +41,7 @@ mcmc = sagan.MCMC_Fit(
 **Example**:
 ```python
 # Initialize
-mcmc = sagan.MCMC_Fit(
+mcmc = galspec.MCMC_Fit(
     model,
     wave,
     flux,
@@ -73,7 +73,7 @@ plt.show()
 Nested sampling fitting using dynesty.
 
 ```python
-dynesty_fit = sagan.Dynesty_Fit(
+dynesty_fit = galspec.Dynesty_Fit(
     model,
     wave_use,
     flux_use,
@@ -101,7 +101,7 @@ bounds_dict = {
 }
 
 # Initialize
-dynesty_fit = sagan.Dynesty_Fit(
+dynesty_fit = galspec.Dynesty_Fit(
     model,
     wave,
     flux,
@@ -123,5 +123,5 @@ model_best, par_names, theta_best = dynesty_fit.get_best_fit()
 
 ---
 
-**Modules**: `sagan.mcmc_fit`, `sagan.dynesty_fit`
-**Source Files**: `sagan/mcmc_fit.py`, `sagan/dynesty_fit.py`
+**Modules**: `galspec.mcmc_fit`, `galspec.dynesty_fit`
+**Source Files**: `galspec/mcmc_fit.py`, `galspec/dynesty_fit.py`

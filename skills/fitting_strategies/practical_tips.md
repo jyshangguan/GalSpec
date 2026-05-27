@@ -69,7 +69,7 @@ BIC balances:
 - **Sample size** (ln n penalty)
 
 ```python
-from sagan.utils import calculate_bic
+from galspec.utils import calculate_bic
 
 # Fit 1-component model
 model_1comp = fitter(model_1, wave, flux, weights=1/error**2)
@@ -169,11 +169,11 @@ if bic_with_fe < bic_no_fe - 10:
 **Example**:
 ```python
 # CORRECT
-broad_conv = sagan.convolve_lsf(broad_line, wavec=..., resolving_power=...)
+broad_conv = galspec.convolve_lsf(broad_line, wavec=..., resolving_power=...)
 model = cont + broad_conv + narrow_template  # Template NOT convolved
 
 # WRONG
-narrow_conv = sagan.convolve_lsf(narrow_template, ...)  # Don't do this!
+narrow_conv = galspec.convolve_lsf(narrow_template, ...)  # Don't do this!
 model = cont + broad_conv + narrow_conv
 ```
 
@@ -189,7 +189,7 @@ model = cont + broad_conv + narrow_conv
 **Doublet example**:
 ```python
 # Use Line_MultiGauss_doublet for [S II]
-sii_doublet = sagan.Line_MultiGauss_doublet(
+sii_doublet = galspec.Line_MultiGauss_doublet(
     n_components=1,
     amp_c0=10.0,    # [S II] 6716 amplitude
     amp_c1=3.0,     # [S II] 6731 amplitude
@@ -217,7 +217,7 @@ flux_temp = np.exp(-0.5 * (velc_temp / lsf_sigma)**2)
 flux_temp = flux_temp / np.max(flux_temp)
 
 # Use this template for all narrow lines
-nha = sagan.Line_template(
+nha = galspec.Line_template(
     template_velc=velc_temp,
     template_flux=flux_temp,
     amplitude=...,
@@ -238,7 +238,7 @@ nha = sagan.Line_template(
 For AGN spectra, always try a power-law continuum first:
 
 ```python
-from sagan.continuum import WindowedPowerLaw1D
+from galspec.continuum import WindowedPowerLaw1D
 
 cont = WindowedPowerLaw1D(
     amplitude=cont_level,    # From data

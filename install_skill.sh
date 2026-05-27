@@ -9,7 +9,7 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_SKILLS_DIR="$SCRIPT_DIR/skills"
 TARGET_ROOT="$HOME/.claude/skills"
-SKILL_NAME="sagan"
+SKILL_NAME="galspec"
 TARGET_DIR="$TARGET_ROOT/$SKILL_NAME"
 
 echo "Installing Claude skill: $SKILL_NAME"
@@ -36,4 +36,4 @@ echo "Claude skill installed at: $TARGET_DIR"
 echo
 echo "You can test with:"
 echo "  /skills"
-echo "  Use SAGAN to fit the spectrum"
+echo "  Use GalSpec to fit the spectrum"

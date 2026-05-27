@@ -10,9 +10,9 @@ sys.path.insert(0, os.path.abspath('../..'))
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'SAGAN'
-copyright = '2025, SAGAN Developers'
-author = 'SAGAN Developers'
+project = 'GalSpec'
+copyright = '2025, GalSpec Developers'
+author = 'GalSpec Developers'
 release = '0.1.0'
 version = '0.1.0'
 
@@ -45,14 +45,14 @@ source_suffix = {
 
 html_theme = 'sphinx_book_theme'
 html_static_path = ['_static']
-html_title = 'SAGAN Documentation'
-html_logo = '_static/logo.png'  # Logo for sidebar/header
+html_title = 'GalSpec Documentation'
+html_logo = '_static/logo.jpg'  # Logo for sidebar/header
 # html_favicon = '_static/favicon.ico'  # Uncomment if you have a favicon
 
 # Theme options
 html_theme_options = {
     'show_prev_next': False,
-    'repository_url': 'https://github.com/jyshangguan/SAGAN',
+    'repository_url': 'https://github.com/jyshangguan/GalSpec',
     'repository_branch': 'main',
     'path_to_docs': 'docs',
     'use_edit_page_button': True,
@@ -122,7 +122,7 @@ master_doc = 'index'
 
 # -- Options for HTMLHelp output ---------------------------------------------
 
-htmlhelp_basename = 'SAGANdoc'
+htmlhelp_basename = 'galspecdoc'
 
 # -- Options for LaTeX output ------------------------------------------------
 
@@ -132,21 +132,21 @@ latex_elements = {
 }
 
 latex_documents = [
-    (master_doc, 'SAGAN.tex', 'SAGAN Documentation',
-     'SAGAN Developers', 'manual'),
+    (master_doc, 'GalSpec.tex', 'GalSpec Documentation',
+     'GalSpec Developers', 'manual'),
 ]
 
 # -- Options for manual page output ------------------------------------------
 
 man_pages = [
-    (master_doc, 'sagan', 'SAGAN Documentation',
+    (master_doc, 'galspec', 'GalSpec Documentation',
      [author], 1)
 ]
 
 # -- Options for Texinfo output ----------------------------------------------
 
 texinfo_documents = [
-    (master_doc, 'SAGAN', 'SAGAN Documentation',
-     author, 'SAGAN', 'Spectral Analysis of Galaxy and Active galactic Nuclei.',
+    (master_doc, 'GalSpec', 'GalSpec Documentation',
+     author, 'GalSpec', 'Spectral Analysis of Galaxy and Active galactic Nuclei.',
      'Miscellaneous'),
 ]

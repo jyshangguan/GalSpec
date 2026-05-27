@@ -1,6 +1,6 @@
-# Utility Functions (`sagan.utils`)
+# Utility Functions (`galspec.utils`)
 
-General utility functions for spectral analysis in SAGAN.
+General utility functions for spectral analysis in GalSpec.
 
 ## Table of Contents
 
@@ -17,7 +17,7 @@ General utility functions for spectral analysis in SAGAN.
 Get rest wavelengths and LaTeX labels for common emission lines.
 
 ```python
-from sagan.utils import line_wave_dict, line_label_dict
+from galspec.utils import line_wave_dict, line_label_dict
 
 # Get rest wavelength (Å)
 wave_ha = line_wave_dict['Halpha']      # 6562.819
@@ -80,7 +80,7 @@ label_hb = line_label_dict['Hbeta']     # r'H$\beta$'
 Convert between wavelength and velocity.
 
 ```python
-from sagan.utils import wave_to_velocity, velocity_to_wave
+from galspec.utils import wave_to_velocity, velocity_to_wave
 
 # Wavelength to velocity
 vel = wave_to_velocity(wave_obs, wave_rest)  # km/s
@@ -102,7 +102,7 @@ wave_obs = velocity_to_wave(vel, wave_rest)  # Å
 Calculate the Bayesian Information Criterion (BIC) for model comparison.
 
 ```python
-from sagan.utils import calculate_bic
+from galspec.utils import calculate_bic
 
 # After fitting a model
 bic, chi2, n_params = calculate_bic(model_fit, wave, flux, error)
@@ -178,7 +178,7 @@ else:
 Read and preprocess astronomical spectra.
 
 ```python
-readspec = sagan.ReadSpectrum(
+readspec = galspec.ReadSpectrum(
     is_sdss=True,        # For SDSS spectra
     hdu=hdulist,         # SDSS HDU object
     z=0.0,              # Redshift (optional, from SDSS header)
@@ -186,7 +186,7 @@ readspec = sagan.ReadSpectrum(
 )
 
 # For custom spectra
-readspec = sagan.ReadSpectrum(
+readspec = galspec.ReadSpectrum(
     is_sdss=False,
     lam=wave, flux=flux, ferr=ferr,
     z=0.1, ra=ra, dec=dec
@@ -203,7 +203,7 @@ lam_res, flux_res, err_res = readspec.unredden_res()  # Both corrections
 # Load SDSS spectrum
 from astropy.io import fits
 hdu = fits.open('spec.fits')
-readspec = sagan.ReadSpectrum(is_sdss=True, hdu=hdu)
+readspec = galspec.ReadSpectrum(is_sdss=True, hdu=hdu)
 
 # Get MW-corrected rest-frame spectrum
 wave, flux, ferr = readspec.unredden_res()
@@ -221,7 +221,7 @@ wave, flux, ferr = readspec.unredden_res()
 Degrade spectral resolution to match instruments.
 
 ```python
-from sagan.utils import down_spectres
+from galspec.utils import down_spectres
 
 flux_lowres = down_spectres(
     wave, flux,
@@ -242,5 +242,5 @@ flux_lowres = down_spectres(
 
 ---
 
-**Module**: `sagan.utils`
-**Source File**: `sagan/utils.py`
+**Module**: `galspec.utils`
+**Source File**: `galspec/utils.py`

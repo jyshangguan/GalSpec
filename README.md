@@ -1,11 +1,11 @@
-# SAGAN
+# GalSpec
 
-**S**pectral **A**nalysis of **Ga**laxy and **A**ctive galactic **N**uclei
+Galaxy Spectrum Fitting
 
-SAGAN is a Python package for fitting astronomical spectra, specifically designed for AGN and galaxy spectra with complex emission and absorption line features.
+GalSpec is a Python package for fitting astronomical spectra, specifically designed for AGN and galaxy spectra with complex emission and absorption line features.
 
 <p align="center">
-  <img src="logo.png" alt="SAGAN Logo" width="300"/>
+  <img src="docs/source/_static/logo.jpg" alt="GalSpec Logo" width="300"/>
 </p>
 
 ## Key Features
@@ -18,7 +18,7 @@ SAGAN is a Python package for fitting astronomical spectra, specifically designe
 
 ## Documentation
 
-Full documentation is available at: **https://jyshangguan.github.io/SAGAN/**
+Full documentation is available at: **https://jyshangguan.github.io/GalSpec/**
 
 The documentation includes:
 - Installation instructions
@@ -31,35 +31,35 @@ The documentation includes:
 Install from source:
 
 ```bash
-git clone https://github.com/jyshangguan/SAGAN.git
-cd SAGAN
+git clone https://github.com/jyshangguan/GalSpec.git
+cd GalSpec
 pip install -e .
 ```
 
 ## Claude Code Integration (Optional)
 
-SAGAN includes a Claude Code skill that allows you to use SAGAN directly within Claude Code for interactive spectral fitting assistance.
+GalSpec includes a Claude Code skill that allows you to use GalSpec directly within Claude Code for interactive spectral fitting assistance.
 
 To install the skill:
 
 ```bash
-# From the SAGAN repository root
+# From the GalSpec repository root
 ./install_skill.sh
 ```
 
 This will:
-- Create a symlink from `~/.claude/skills/sagan` to the `skills/` directory
-- Enable SAGAN commands in Claude Code
+- Create a symlink from `~/.claude/skills/galspec` to the `skills/` directory
+- Enable GalSpec commands in Claude Code
 
 To use the skill in Claude Code:
 ```
 /skills
-Use SAGAN to fit the spectrum
+Use GalSpec to fit the spectrum
 ```
 
 To uninstall:
 ```bash
-rm ~/.claude/skills/sagan
+rm ~/.claude/skills/galspec
 ```
 
 ## Quick Example
@@ -67,7 +67,7 @@ rm ~/.claude/skills/sagan
 ```python
 import numpy as np
 from astropy.modeling.models import Linear1D
-from sagan import Line_Gaussian
+from galspec import Line_Gaussian
 from astropy.modeling.fitting import LevMarLSQFitter
 
 # Load your spectrum
@@ -106,6 +106,6 @@ MIT License - see LICENSE file for details
 
 ## Links
 
-- **Documentation**: https://jyshangguan.github.io/SAGAN/
-- **GitHub Repository**: https://github.com/jyshangguan/SAGAN
-- **Issue Tracker**: https://github.com/jyshangguan/SAGAN/issues
+- **Documentation**: https://jyshangguan.github.io/GalSpec/
+- **GitHub Repository**: https://github.com/jyshangguan/GalSpec
+- **Issue Tracker**: https://github.com/jyshangguan/GalSpec/issues

@@ -225,8 +225,8 @@ ferr_s2 = ferr[s2_region]
 ### Step 2: Build the Model
 
 ```python
-from sagan.continuum import WindowedPowerLaw1D
-from sagan.utils import line_wave_dict
+from galspec.continuum import WindowedPowerLaw1D
+from galspec.utils import line_wave_dict
 
 # Power-law continuum
 cont_s2 = WindowedPowerLaw1D(
@@ -239,7 +239,7 @@ cont_s2 = WindowedPowerLaw1D(
 )
 
 # [S II] doublet - start with 1 component
-sii_doublet = sagan.Line_MultiGauss_doublet(
+sii_doublet = galspec.Line_MultiGauss_doublet(
     n_components=1,
     amp_c0=8.0,      # [S II] 6716 amplitude
     amp_c1=6.0,      # [S II] 6731 amplitude
@@ -264,7 +264,7 @@ model_fit = fitter(model_init, wave_s2, flux_s2,
                    weights=1/ferr_s2**2, maxiter=10000)
 
 # Calculate BIC
-from sagan.utils import calculate_bic
+from galspec.utils import calculate_bic
 bic, chi2, n_params = calculate_bic(model_fit, wave_s2, flux_s2, ferr_s2)
 ```
 
@@ -316,7 +316,7 @@ If you fit a single narrow line (not a doublet), you can directly generate the t
 
 ```python
 # Fit a single line, e.g., [O III] 4363
-from sagan.line_profile import Line_Gaussian
+from galspec.line_profile import Line_Gaussian
 
 line_model = Line_Gaussian(
     amplitude=5.0,
@@ -369,20 +369,20 @@ if len(crossings) >= 2:
 
 #### 6.3. Plot Fitting Result (REQUIRED)
 
-**Always use `sagan.plot.plot_fit()` or the specialized narrow line plotting functions:**
+**Always use `galspec.plot.plot_fit()` or the specialized narrow line plotting functions:**
 
 > **Standard Plotting**: For standardized narrow line template plotting, see `NARROW_LINE_TEMPLATE_PLOTTING_GUIDE.md` for the two standard plot types:
 > - **Type A (Diagnostic Plot)**: 3-panel plot for intermediate fitting steps
 > - **Type B (Validation Plot)**: 4-panel plot for final template validation
 >
-> **Reusable Functions**: `sagan/plot.py` provides two specialized functions:
+> **Reusable Functions**: `galspec/plot.py` provides two specialized functions:
 > - `plot_narrow_line_diagnostic()`: Creates Type A diagnostic plots
 > - `plot_narrow_line_template_validation()`: Creates Type B validation plots
 
 For simple fitting visualization:
 
 ```python
-from sagan import plot
+from galspec import plot
 
 # Plot the [S II] region fit
 ax = plot.plot_fit(wave_s2, flux_s2, model_fit, ferr_s2)
@@ -421,7 +421,7 @@ print("✓ Template profile plot saved to: narrow_template_profile.png")
 # Fit [S II] with template to verify it matches
 dv_measured = model_fit.dv_c_1.value
 
-sii_6716 = sagan.Line_template(
+sii_6716 = galspec.Line_template(
     template_velc=velc_temp,
     template_flux=flux_temp,
     amplitude=model_fit.amp_c0_1.value,
@@ -429,7 +429,7 @@ sii_6716 = sagan.Line_template(
     wavec=line_wave_dict['SII_6716']
 )
 
-sii_6731 = sagan.Line_template(
+sii_6731 = galspec.Line_template(
     template_velc=velc_temp,
     template_flux=flux_temp,
     amplitude=model_fit.amp_c1_1.value,
@@ -479,7 +479,7 @@ Before proceeding to Stage 2, verify:
 | **Peak not at 0** | peak_vel > 10 km/s | Check that `gen_template()` was used (not manual evaluation) |
 | **FWHM too large** | FWHM > 800 km/s | Check if broad line contamination present |
 | **χ² mismatch** | |Δχ²| > 15 | Check template was generated correctly |
-| **No plot created** | Missing visualization | Always use `sagan.plot.plot_fit()` to verify fit quality |
+| **No plot created** | Missing visualization | Always use `galspec.plot.plot_fit()` to verify fit quality |
 | **Template not used** | Doublet appears in template | Ensure using `gen_template()`, not evaluating doublet model |
 
 ---
@@ -497,7 +497,7 @@ velc_temp, flux_temp = np.loadtxt('narrow_template.txt', unpack=True)
 
 ```python
 # All narrow lines use the SAME template
-nha = sagan.Line_template(
+nha = galspec.Line_template(
     template_velc=velc_temp,    # ← Same for all
     template_flux=flux_temp,    # ← Same for all
     amplitude=50.0,             # ← Different for each
@@ -506,7 +506,7 @@ nha = sagan.Line_template(
     name='nHalpha'
 )
 
-no3 = sagan.Line_template(
+no3 = galspec.Line_template(
     template_velc=velc_temp,    # ← Same
     template_flux=flux_temp,    # ← Same
     amplitude=44.0,
@@ -515,7 +515,7 @@ no3 = sagan.Line_template(
     name='OIII_5007'
 )
 
-nn2 = sagan.Line_template(
+nn2 = galspec.Line_template(
     template_velc=velc_temp,    # ← Same
     template_flux=flux_temp,    # ← Same
     amplitude=9.0,
@@ -533,7 +533,7 @@ nn2 = sagan.Line_template(
 # Tie all to nHalpha (skip nHalpha itself!)
 narrow_lines = ['OIII_5007', 'NII_6583', 'NII_6548', 'SII_6716', 'SII_6731']
 for ln in narrow_lines:
-    model[ln].dv.tied = sagan.tie_template_dv('nHalpha')
+    model[ln].dv.tied = galspec.tie_template_dv('nHalpha')
 
 # Result: Only 1 free dv parameter for ALL narrow lines
 ```
@@ -544,12 +544,12 @@ for ln in narrow_lines:
 
 ```python
 # ✗ WRONG: Don't do this!
-narrow = sagan.Line_template(...)
-narrow_conv = sagan.convolve_lsf(narrow, ...)  # ← WRONG!
+narrow = galspec.Line_template(...)
+narrow_conv = galspec.convolve_lsf(narrow, ...)  # ← WRONG!
 
 # ✓ CORRECT: Only convolve broad lines
-broad = sagan.Line_MultiGauss(...)
-broad_conv = sagan.convolve_lsf(broad, ...)
+broad = galspec.Line_MultiGauss(...)
+broad_conv = galspec.convolve_lsf(broad, ...)
 model = cont + broad_conv + narrow  # ← OK
 ```
 
@@ -612,10 +612,10 @@ Target: J094248.75-000240.3 (z = 0.0978)
 import numpy as np
 import matplotlib.pyplot as plt
 from astropy.modeling import fitting
-import sagan
-from sagan import plot  # Import plot module
-from sagan.utils import line_wave_dict, calculate_bic
-from sagan.continuum import WindowedPowerLaw1D
+import galspec
+from galspec import plot  # Import plot module
+from galspec.utils import line_wave_dict, calculate_bic
+from galspec.continuum import WindowedPowerLaw1D
 
 # ========================================
 # Load data
@@ -640,7 +640,7 @@ cont_s2 = WindowedPowerLaw1D(
     x_min=6700, x_max=6745, name='Cont_SII'
 )
 
-sii_doublet = sagan.Line_MultiGauss_doublet(
+sii_doublet = galspec.Line_MultiGauss_doublet(
     n_components=2,
     amp_c0=11.1, amp_c1=9.6,
     dv_c=140.0, sigma_c=124.0,
@@ -749,7 +749,7 @@ print('='*60)
 - **Type 1 AGN Fitting Strategy**: `type1_agn.md`
 - **Function Reference**: `../function_reference/` (split by module)
 - **Key Points Summary**: `KEY_POINTS_TEMPLATE_GENERATION.md`
-- **SAGAN Source**: `sagan/line_profile.py:432` (`gen_template()` implementation)
+- **SAGAN Source**: `galspec/line_profile.py:432` (`gen_template()` implementation)
 - **Plotting Guide**: `NARROW_LINE_TEMPLATE_PLOTTING_GUIDE.md` (Standard plotting formats)
-- **Reusable Plotting Functions**: `sagan/plot.py` (`plot_narrow_line_diagnostic()`, `plot_narrow_line_template_validation()`)
+- **Reusable Plotting Functions**: `galspec/plot.py` (`plot_narrow_line_diagnostic()`, `plot_narrow_line_template_validation()`)
 - **Example Script**: `example/narrow_line_template_template.py` (Template script for users)

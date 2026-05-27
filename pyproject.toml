@@ -3,14 +3,14 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sagan"
+name = "galspec"
 version = "0.1.0"
-description = "Spectral Analysis of Galaxy and Active galactic Nuclei"
+description = "Galaxy Spectrum Fitting"
 readme = "README.md"
 license = {file = "LICENSE"}
 requires-python = ">=3.9"
 authors = [
-    {name = "SAGAN Developers"}
+    {name = "GalSpec Developers"}
 ]
 keywords = ["astronomy", "spectroscopy", "AGN", "galaxies", "spectral fitting"]
 classifiers = [
@@ -48,12 +48,12 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/sagan"
-Documentation = "https://github.com/yourusername/sagan"
-Repository = "https://github.com/yourusername/sagan"
+Homepage = "https://github.com/jyshangguan/GalSpec"
+Documentation = "https://github.com/jyshangguan/GalSpec"
+Repository = "https://github.com/jyshangguan/GalSpec"
 
 [tool.setuptools]
-packages = ["sagan"]
+packages = ["galspec"]
 
 [tool.setuptools.package-data]
-sagan = ["data/*"]
+galspec = ["data/*"]

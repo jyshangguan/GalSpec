@@ -4,12 +4,12 @@ Installation
 Requirements
 ------------
 
-SAGAN requires Python **3.9 or later**.
+GalSpec requires Python **3.9 or later**.
 
 Core Dependencies
 ~~~~~~~~~~~~~~~~~
 
-SAGAN depends on the following packages:
+GalSpec depends on the following packages:
 
 * **numpy** (≥ 1.20) - Numerical computations
 * **scipy** (≥ 1.7) - Scientific computing routines
@@ -38,14 +38,14 @@ Installation Methods
 From Source
 ~~~~~~~~~~~
 
-SAGAN is currently not available on PyPI. Install from source:
+GalSpec is currently not available on PyPI. Install from source:
 
 1. Clone the repository:
 
 .. code-block:: bash
 
-   git clone https://github.com/jyshangguan/SAGAN.git
-   cd SAGAN
+   git clone https://github.com/yourusername/galspec.git
+   cd galspec
 
 2. Install in editable mode:
 
@@ -53,7 +53,7 @@ SAGAN is currently not available on PyPI. Install from source:
 
    pip install -e .
 
-This installs SAGAN in "editable" mode, meaning changes to the source code
+This installs GalSpec in "editable" mode, meaning changes to the source code
 will be reflected without needing to reinstall.
 
 With Development Dependencies
@@ -74,8 +74,8 @@ To verify your installation, check the version:
 
 .. code-block:: python
 
-   import sagan
-   print(f"SAGAN version: {sagan.__version__}")
+   import galspec
+   print(f"GalSpec version: {galspec.__version__}")
 
 You should see the version number printed (e.g., ``0.1.0``).
 
@@ -84,7 +84,7 @@ Run a quick test:
 .. code-block:: python
 
    import numpy as np
-   from sagan import Line_Gaussian
+   from galspec import Line_Gaussian
 
    # Create an Hα emission line
    halpha = Line_Gaussian(
@@ -118,12 +118,12 @@ Make sure you have installed all dependencies. Try reinstalling:
 
 **Data Files Not Found**
 
-SAGAN includes template data files that should be installed automatically.
+GalSpec includes template data files that should be installed automatically.
 If you encounter errors about missing data files, try reinstalling:
 
 .. code-block:: bash
 
-   cd /path/to/SAGAN
+   cd /path/to/galspec
    pip install -e .
 
 **Permission Errors**
@@ -142,4 +142,4 @@ Next Steps
 ----------
 
 After installation, proceed to the :doc:`quickstart` guide to learn the basics
-of using SAGAN for spectral fitting.
+of using GalSpec for spectral fitting.

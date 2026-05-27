@@ -1,24 +1,24 @@
-# Python Tools for SAGAN Spectral Analysis
+# Python Tools for GalSpec Spectral Analysis
 
-Reusable plotting and utility functions for AGN spectral analysis using SAGAN.
+Reusable plotting and utility functions for AGN spectral analysis using GalSpec.
 
 ## Overview
 
-This module provides convenient wrapper functions for visualizing continuum fitting results and continuum-subtracted spectra. These tools are designed to work seamlessly with the SAGAN (Spectral Analysis for Galaxies and AGN) package.
+This module provides convenient wrapper functions for visualizing continuum fitting results and continuum-subtracted spectra. These tools are designed to work seamlessly with the GalSpec (Spectral Analysis for Galaxies and AGN) package.
 
 ## Installation
 
-The `python_tools` module is located in the SAGAN skills directory:
+The `python_tools` module is located in the GalSpec skills directory:
 
 ```
-/Users/shangguan/Softwares/my_modules/SAGAN/skills/python_tools/
+/Users/shangguan/Softwares/my_modules/GalSpec/skills/python_tools/
 ```
 
 ## Available Functions
 
 ### 1. `plot_continuum_fit_diagnostic()`
 
-Visualize the fitted continuum model with all components, using SAGAN's `plot_fit_new()` function.
+Visualize the fitted continuum model with all components, using GalSpec's `plot_fit_new()` function.
 
 **What it shows:**
 - Full spectrum (black step line)
@@ -44,7 +44,7 @@ plot_continuum_fit_diagnostic(
 
 **Parameters:**
 - `wave, flux, error`: Spectrum data (same length)
-- `model`: Fitted continuum model (CompoundModel from SAGAN)
+- `model`: Fitted continuum model (CompoundModel from GalSpec)
 - `cont_mask`: Boolean array (True = continuum window pixel)
 - `target_name`: Optional target name for title
 - `filename`: Output filename (if None, displays interactively)
@@ -150,13 +150,13 @@ from astropy.modeling import fitting
 from astropy.io import fits
 import sys
 
-# Add SAGAN to path
-sys.path.insert(0, '/path/to/SAGAN')
-sys.path.insert(0, '/path/to/SAGAN/skills')
+# Add GalSpec to path
+sys.path.insert(0, '/path/to/GalSpec')
+sys.path.insert(0, '/path/to/GalSpec/skills')
 
-import sagan
-from sagan.utils import ReadSpectrum
-from sagan.continuum import WindowedPowerLaw1D
+import galspec
+from galspec.utils import ReadSpectrum
+from galspec.continuum import WindowedPowerLaw1D
 from python_tools.plot_tools import (
     plot_continuum_fit_diagnostic,
     plot_continuum_subtracted_spectrum,
@@ -201,13 +201,13 @@ agn_cont = WindowedPowerLaw1D(
     name='AGN_powerlaw'
 )
 
-stellar = sagan.StarSpectrum(
+stellar = galspec.StarSpectrum(
     amplitude=0.2, Star_type='G',
     velscale=200, delta_z=0, sigma=150,
     name='stellar'
 )
 
-iron = sagan.IronTemplate(
+iron = galspec.IronTemplate(
     amplitude=0.5, stddev=800/2.3548, z=0,
     template_name='park2022',
     name='iron'
@@ -293,7 +293,7 @@ plot_continuum_fit_diagnostic(
 - ✓ Standardized visualization across all projects
 - ✓ Less code to maintain
 - ✓ Consistent formatting and styling
-- ✓ Built on SAGAN's `plot_fit_new()` function
+- ✓ Built on GalSpec's `plot_fit_new()` function
 - ✓ Easy to use with minimal parameters
 
 ---
@@ -315,18 +315,18 @@ These functions require:
 - `numpy` - Array operations
 - `matplotlib` - Plotting
 - `astropy` - Model handling
-- `sagan` - SAGAN package (for `plot_fit_new()`)
+- `galspec` - GalSpec package (for `plot_fit_new()`)
 
 ---
 
 ## Troubleshooting
 
-### Import Error: "No module named 'sagan'"
+### Import Error: "No module named 'galspec'"
 
-**Solution:** Add SAGAN to your Python path before importing:
+**Solution:** Add GalSpec to your Python path before importing:
 ```python
 import sys
-sys.path.insert(0, '/path/to/SAGAN')
+sys.path.insert(0, '/path/to/GalSpec')
 ```
 
 ### Plot windows not highlighting correctly
@@ -365,4 +365,4 @@ assert cont_mask.dtype == bool
 
 ## Contact
 
-For questions or issues with these tools, please refer to the main SAGAN documentation or contact the SAGAN development team.
+For questions or issues with these tools, please refer to the main GalSpec documentation or contact the GalSpec development team.

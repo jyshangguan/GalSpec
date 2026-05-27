@@ -822,9 +822,9 @@ print(f"  Iron template:   {flux_iron/flux_total*100:.1f}%")
 
 ## Visualization with plot_fit()
 
-### CRITICAL: Use SAGAN's plot_fit() Function
+### CRITICAL: Use GalSpec's plot_fit() Function
 
-**Always use `sagan.plot.plot_fit_new()` for continuum visualization** - this is the standard SAGAN plotting function.
+**Always use `sagan.plot.plot_fit_new()` for continuum visualization** - this is the standard GalSpec plotting function.
 
 ```python
 from sagan import plot as sagan_plot
@@ -833,7 +833,7 @@ from sagan import plot as sagan_plot
 weight = np.zeros_like(wave_rest, dtype=float)
 weight[cont_mask] = 1.0
 
-# Plot using SAGAN's plot_fit_new()
+# Plot using GalSpec's plot_fit_new()
 ax, axr = sagan_plot.plot_fit_new(
     wave_rest,
     flux_rest,
@@ -1156,7 +1156,7 @@ agn_cont = WindowedPowerLaw1D(
 )
 ```
 
-**Note**: As of SAGAN v1.0+, `Multi_StarSpectrum.evaluate()` uses `fill_value="extrapolate"` to handle wavelengths slightly outside the template range, but filtering is still recommended for best results.
+**Note**: As of GalSpec v1.0+, `Multi_StarSpectrum.evaluate()` uses `fill_value="extrapolate"` to handle wavelengths slightly outside the template range, but filtering is still recommended for best results.
 
 ### Problem: AttributeError - Parameter name not found
 
@@ -1269,7 +1269,7 @@ from astropy.io import fits
 from astropy.table import Table
 import sys
 
-sys.path.insert(0, '/path/to/SAGAN')
+sys.path.insert(0, '/path/to/GalSpec')
 import sagan
 from sagan.utils import ReadSpectrum
 from sagan.continuum import WindowedPowerLaw1D
@@ -1405,5 +1405,5 @@ print("✓ Continuum fitting complete!")
 
 - **Type 1 AGN Fitting Strategy**: `type1_agn.md`
 - **Function Reference**: `../function_reference/continuum_models.md`
-- **SAGAN Source**: `sagan/continuum.py`
+- **GalSpec Source**: `sagan/continuum.py`
 - **Plotting Functions**: `sagan/plot.py`

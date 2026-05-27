@@ -1,6 +1,6 @@
-# Convolution Functions (`sagan.convolution`, `sagan.convolution_var`)
+# Convolution Functions (`galspec.convolution`, `galspec.convolution_var`)
 
-Instrumental broadening convolution functions in SAGAN.
+Instrumental broadening convolution functions in GalSpec.
 
 ## Table of Contents
 
@@ -14,7 +14,7 @@ Instrumental broadening convolution functions in SAGAN.
 Convolve model with constant resolving power LSF.
 
 ```python
-model_convolved = sagan.convolve_lsf(
+model_convolved = galspec.convolve_lsf(
     model,                  # CompoundModel to convolve
     wavec=6563,             # Reference wavelength (Å)
     resolving_power=1800,   # Spectral resolving power (R = λ/Δλ)
@@ -32,7 +32,7 @@ model_convolved = sagan.convolve_lsf(
 model = (broad_ha + cont_ha) * abs_ha + narrow_ha
 
 # Apply LSF convolution
-model_convolved = sagan.convolve_lsf(
+model_convolved = galspec.convolve_lsf(
     model,
     wavec=line_wave_dict['Halpha'],
     resolving_power=1800
@@ -47,14 +47,14 @@ Convolve with wavelength-dependent resolving power (JWST NIRSpec).
 
 ```python
 # First create resolution curve
-res_curve = sagan.ResolutionCurve.from_file(
+res_curve = galspec.ResolutionCurve.from_file(
     'data/NIRSpec_prism_resolution.fits',
     wave_col='WAVELENGTH',
     res_col='RESOLUTION',
     interpolation='loglog'
 )
 
-model_convolved = sagan.convolve_lsf_var(
+model_convolved = galspec.convolve_lsf_var(
     model,
     wave_array,             # Wavelength array
     res_curve,              # ResolutionCurve object
@@ -67,5 +67,5 @@ model_convolved = sagan.convolve_lsf_var(
 
 ---
 
-**Modules**: `sagan.convolution`, `sagan.convolution_var`
-**Source Files**: `sagan/convolution.py`, `sagan/convolution_var.py`
+**Modules**: `galspec.convolution`, `galspec.convolution_var`
+**Source Files**: `galspec/convolution.py`, `galspec/convolution_var.py`

@@ -6,6 +6,8 @@ from .constants import ls_km
 from scipy.ndimage import gaussian_filter1d, median_filter
 from copy import deepcopy
 from astropy.modeling import CompoundModel
+from urllib.request import urlretrieve
+import warnings
 
 try: 
     from sfdmap2 import sfdmap
@@ -46,6 +48,39 @@ elif platform == "win32":  # Windows
 
 pathList = os.path.abspath(__file__).split(splitter)
 package_path = splitter.join(pathList[:-1])
+
+def _download_sfd_data():
+    """Download SFD dust extinction map data if missing."""
+    sfddata_dir = os.path.join(package_path, 'data', 'sfddata')
+    os.makedirs(sfddata_dir, exist_ok=True)
+
+    # Files to download from https://github.com/kbarbary/sfddata
+    base_url = "https://raw.githubusercontent.com/kbarbary/sfddata/master/"
+    files = [
+        'SFD_dust_4096_ngp.fits',
+        'SFD_dust_4096_sgp.fits',
+        'SFD_mask_4096_ngp.fits',
+        'SFD_mask_4096_sgp.fits'
+    ]
+
+    missing_files = []
+    for f in files:
+        file_path = os.path.join(sfddata_dir, f)
+        if not os.path.exists(file_path):
+            missing_files.append(f)
+
+    if not missing_files:
+        return
+
+    warnings.warn(f"Downloading missing SFD dust map data files: {missing_files}")
+    for f in missing_files:
+        url = base_url + f
+        dest = os.path.join(sfddata_dir, f)
+        try:
+            urlretrieve(url, dest)
+            print(f"Downloaded: {f}")
+        except Exception as e:
+            warnings.warn(f"Failed to download {f}: {e}")
 
 # Wavelengths of the typical emission lines
 # Based on http://astronomy.nmsu.edu/drewski/tableofemissionlines.html
@@ -494,9 +529,12 @@ class ReadSpectrum:
         """
         if sfdmap is None:
             raise ImportError("sfdmap2 package is not installed. Please install it to use ReadSpectrum class.")
-        
+
         if pyasl is None:
             raise ImportError("PyAstronomy package is not installed. Please install it to use ReadSpectrum class.")
+
+        # Download dust map data if missing
+        _download_sfd_data()
 
         self.dustmap_path = '{0}{1}data{1}sfddata/'.format(package_path, splitter)
         self.sfd_map = sfdmap.SFDMap(self.dustmap_path)

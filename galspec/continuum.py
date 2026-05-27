@@ -25,6 +25,21 @@ class WindowedPowerLaw1D(Fittable1DModel):
         y = amplitude * (x / x_0)**-alpha
         mask = (x >= x_min) & (x < x_max)
         return np.where(mask, y, 0.0)
+
+class WindowedLinear(Fittable1DModel):
+    degree=1
+    """Linear model that is zero outside [x_min, x_max]."""
+    c0= Parameter(default=1.0)
+    c1= Parameter(default=0.0)
+    x_min = Parameter(default=4000.0, fixed=True)
+    x_max = Parameter(default=5000.0, fixed=True)
+
+    def evaluate(self, x, c0, c1, x_min, x_max):
+        """Linear model that is zero outside [x_min, x_max]."""
+        #y = c0 + c1 * x
+        y = models.Polynomial1D(degree=1, c0=c0, c1=c1)(x)
+        mask = (x >= x_min) & (x <= x_max)
+        return np.where(mask, y, 0.0)
     
 
 class BlackBody(Fittable1DModel):

@@ -100,6 +100,8 @@ The `example/` directory contains detailed notebooks demonstrating:
 - numpy, scipy, matplotlib, astropy, pandas
 - emcee, dynesty (for Bayesian fitting)
 
+**Note**: When using `ReadSpectrum` class for extinction correction, SFD dust map data (4 FITS files, ~167MB total) will be automatically downloaded from [kbarbary/sfddata](https://github.com/kbarbary/sfddata) on first use.
+
 ## License
 
 MIT License - see LICENSE file for details

@@ -1,6 +1,7 @@
 import numpy as np
 from astropy.modeling.core import Fittable1DModel
 from astropy.modeling.parameters import Parameter
+from astropy.modeling import models
 import astropy.units as u
 from .constants import ls_km
 
@@ -9,7 +10,7 @@ try:
 except ImportError:
     extinction = None
 
-__all__ = ['WindowedPowerLaw1D', 'BlackBody', 'BalmerPseudoContinuum', 'extinction_ccm89']
+__all__ = ['WindowedPowerLaw1D', 'WindowedLinear', 'BlackBody', 'BalmerPseudoContinuum', 'extinction_ccm89']
 
 
 class WindowedPowerLaw1D(Fittable1DModel):

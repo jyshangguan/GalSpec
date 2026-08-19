@@ -240,6 +240,7 @@ def calculate_bic(model, wave, flux, error=None):
     else:
         chi2 = np.sum((flux - model_flux)**2)
 
+    '''
     # Count free parameters (not fixed and not tied)
     n_params = 0
     seen = set()
@@ -254,6 +255,14 @@ def calculate_bic(model, wave, flux, error=None):
                 p = getattr(item, param_name)
                 if not (p.fixed or p.tied):
                     n_params += 1
+    '''
+
+    # Count free parameters (not fixed and not tied)
+    n_params = 0
+    for param_name in model.param_names:
+        p = getattr(model, param_name)
+        if not (p.fixed or p.tied):
+            n_params += 1
 
     # Number of data points
     n_data = len(wave)

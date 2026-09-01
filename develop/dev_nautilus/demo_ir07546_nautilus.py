@@ -6,9 +6,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 
 os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 import matplotlib
 matplotlib.use("Agg")
@@ -19,8 +25,6 @@ from astropy.modeling import fitting
 import galspec
 from develop.dev_dynesty.demo_ir07546_full_spectrum import (
     build_model, load_spectrum, local_bounds)
-
-HERE = Path(__file__).resolve().parent
 
 
 def install_serializable_ties(model):

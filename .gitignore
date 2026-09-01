@@ -163,6 +163,10 @@ cython_debug/
 .DS_Store
 */.DS_Store
 develop/*
+!develop/dev_nautilus/
+develop/dev_nautilus/*
+!develop/dev_nautilus/README.md
+!develop/dev_nautilus/*.py
 .vscode/*
 
 # Large data files - downloaded automatically

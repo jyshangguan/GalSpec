@@ -1,0 +1,45 @@
+{
+  "data_file": "/Users/shangguan/Softwares/my_modules/GalSpec/example/data/ir07546sed.fits",
+  "data_points": 35056,
+  "nlive": 50,
+  "dlogz": 2.0,
+  "oversample": 8,
+  "serial": {
+    "workers": 1,
+    "runtime_seconds": 33.534219624940306,
+    "likelihood_calls": 47048,
+    "log_evidence": 41699.66058938123,
+    "log_evidence_error": 1.9016248825171083,
+    "chi2": 3411.6244081283085,
+    "parameters": {
+      "amplitude_0": 0.6925653060966455,
+      "alpha_0": 3.998900193915894,
+      "amp_c0_1": 1.887516529429535,
+      "dv_c_1": 68.19583145409251,
+      "sigma_c_1": 237.74495528934847,
+      "amp_w0_1": 0.17590028148444442,
+      "dv_w0_1": -5.659816548518847,
+      "sigma_w0_1": 586.5234266582804
+    }
+  },
+  "parallel": {
+    "workers": 4,
+    "runtime_seconds": 32.87292124982923,
+    "likelihood_calls": 47048,
+    "log_evidence": 41699.66058938123,
+    "log_evidence_error": 1.9016248825171083,
+    "chi2": 3411.6244081283085,
+    "parameters": {
+      "amplitude_0": 0.6925653060966455,
+      "alpha_0": 3.998900193915894,
+      "amp_c0_1": 1.887516529429535,
+      "dv_c_1": 68.19583145409251,
+      "sigma_c_1": 237.74495528934847,
+      "amp_w0_1": 0.17590028148444442,
+      "dv_w0_1": -5.659816548518847,
+      "sigma_w0_1": 586.5234266582804
+    }
+  },
+  "speedup": 1.020116811952467,
+  "parallel_faster": true
+}

@@ -17,6 +17,11 @@ except ImportError:  # pragma: no cover
     dyfunc = None
 
 try:
+    from dynesty.pool import Pool as DynestyPool
+except ImportError:  # pragma: no cover - dynesty before its native pool
+    DynestyPool = None
+
+try:
     import corner
 except ImportError:  # pragma: no cover
     corner = None
@@ -37,7 +42,7 @@ def _worker_log_likelihood(theta):
 
 
 class _LikelihoodPool:
-    """Expose a map API while replacing dynesty's large callable payload."""
+    """Legacy dynesty 2.x adapter for a multiprocess pool."""
 
     def __init__(self, pool):
         self._pool = pool
@@ -261,21 +266,35 @@ class Dynesty_Fit:
         """Run nested sampling; keywords are forwarded to ``run_nested``."""
         owned_pool = None
         active_pool = self.pool
+        loglikelihood = self.log_likelihood
+        prior_transform = self.prior_transform
+        dynesty_major = int(getattr(dynesty, "__version__", "2").split(".", 1)[0])
         if active_pool is None and self.n_processes > 1:
-            try:
-                from multiprocess import Pool
-            except ImportError as exc:  # pragma: no cover
-                raise ImportError("multiprocess is required for n_processes > 1") from exc
-            owned_pool = Pool(processes=self.n_processes,
-                              initializer=_initialize_likelihood_worker,
-                              initargs=(self,))
-            active_pool = _LikelihoodPool(owned_pool)
+            if dynesty_major >= 3:
+                if DynestyPool is None:  # pragma: no cover
+                    raise ImportError("dynesty 3.x pool support is unavailable")
+                owned_pool = DynestyPool(
+                    self.n_processes, self.log_likelihood, self.prior_transform)
+                active_pool = owned_pool.__enter__()
+                loglikelihood = active_pool.loglike
+                prior_transform = active_pool.prior_transform
+            else:  # pragma: no cover - retained for dynesty 2.x
+                try:
+                    from multiprocess import Pool
+                except ImportError as exc:
+                    raise ImportError(
+                        "multiprocess is required for dynesty 2.x parallel fits") from exc
+                raw_pool = Pool(processes=self.n_processes,
+                                initializer=_initialize_likelihood_worker,
+                                initargs=(self,))
+                owned_pool = raw_pool
+                active_pool = _LikelihoodPool(raw_pool)
 
         queue_size = self.queue_size
         if queue_size is None and active_pool is not None:
             queue_size = self.n_processes if owned_pool is not None else 1
-        sampler_kwargs = dict(loglikelihood=self.log_likelihood,
-                              prior_transform=self.prior_transform,
+        sampler_kwargs = dict(loglikelihood=loglikelihood,
+                              prior_transform=prior_transform,
                               ndim=self.ndim, nlive=self.nlive,
                               bound=self.bound, sample=self.sample_method,
                               rstate=self.rstate)
@@ -296,8 +315,13 @@ class Dynesty_Fit:
             self.results = sampler.results
         finally:
             if owned_pool is not None:
-                owned_pool.close()
-                owned_pool.join()
+                if dynesty_major >= 3:
+                    active_pool.close()
+                    active_pool.join()
+                    owned_pool.__exit__(None, None, None)
+                else:  # pragma: no cover - dynesty 2.x cleanup
+                    owned_pool.close()
+                    owned_pool.join()
         self.runtime_seconds = time.perf_counter() - started
         self.ncall = int(np.sum(self.results.ncall))
         weights = np.exp(self.results.logwt - self.results.logz[-1])

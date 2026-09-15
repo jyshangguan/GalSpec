@@ -62,13 +62,12 @@ def build_model():
     no3 = galspec.Line_Gaussian(amplitude=.05, wavec=w["OIII_4363"], name="[O III] 4363")
     model = pl + iron + bha + nha + bhb + nhb + bhg + nhg + bhe2 + nhe2 + o3 + s2 + no3
 
-    def tie_o3(m): return m["[O III]"].amp_c0 / 2.98
-    def tie_sigma(m): return m["[O III]"].sigma_c
-    def tie_dv(m): return m["[O III]"].dv_c
-    o3.amp_c1.tied = tie_o3
-    s2.sigma_c.tied, s2.dv_c.tied = tie_sigma, tie_dv
+    o3.amp_c1.tied = galspec.tie_MultiGauss_doublet_ratio("[O III]", 2.98)
+    s2.sigma_c.tied = galspec.tie_MultiGauss_sigma_c("[O III]")
+    s2.dv_c.tied = galspec.tie_MultiGauss_dv_c("[O III]")
     for line in (nha, nhb, nhg, nhe2, no3):
-        line.sigma.tied, line.dv.tied = tie_sigma, tie_dv
+        line.sigma.tied = galspec.tie_MultiGauss_sigma_c("[O III]")
+        line.dv.tied = galspec.tie_MultiGauss_dv_c("[O III]")
     return model
 
 

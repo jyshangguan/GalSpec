@@ -58,10 +58,7 @@ def build_model():
         wavec1=line_wave_dict["OIII_4959"], name="OIII",
         par_w={"amp_w0": 0.35, "dv_w0": -280.0, "sigma_w0": 340.0})
 
-    def tie_ratio(model):
-        return model["OIII"].amp_c0 / 2.98
-
-    line.amp_c1.tied = tie_ratio
+    line.amp_c1.tied = galspec.tie_MultiGauss_doublet_ratio("OIII", 2.98)
     return continuum + line
 
 

@@ -54,7 +54,7 @@ try:  # pragma: no cover
 except ImportError:  # pragma: no cover
     corner = None
 
-from .dynesty_fit import Dynesty_Fit
+from .dynesty_fit import Dynesty_Fit, _resolve_named_priors
 
 __all__ = ["JNesty_Fit", "jax_devices_summary", "select_device"]
 
@@ -153,8 +153,6 @@ class JNesty_Fit:
         self.bounds_dict = dict(bounds_dict or {})
         self.default_bounds = dict(self.DEFAULT_BOUNDS)
         self.default_bounds.update(default_bounds or {})
-        self.custom_priors = dict(custom_priors or {})
-
         # -- parameter bookkeeping ------------------------------------------------
         self.param_names = list(model.free_param_names)
         self.ndim = len(self.param_names)
@@ -169,6 +167,8 @@ class JNesty_Fit:
                                  if flat in set(self.param_names)]
         self._initial = dict(zip(self.param_names,
                                  np.asarray(model.get_free_params(), dtype=float)))
+        self.custom_priors = _resolve_named_priors(
+            dict(custom_priors or {}), self.param_names, self.full_param_names)
         self._log_scale_params = set()
         self.param_bounds = self.get_param_bounds()
         self.model.set_prior_limits(_limits_by_base_name(self.param_bounds, self.param_names))
@@ -359,6 +359,30 @@ class JNesty_Fit:
         self.ncall = int(self.n_iterations * rwalk_k + self.nlive) if rwalk_k else None
         self.samples_equal_weight = self._resample_equal(self.results)
         return self.samples_equal_weight, self.model, self.param_names
+
+    def release_device_buffers(self) -> None:
+        """Drop the sampler and the device copies of the run.
+
+        JNesty keeps the live points, the frozen smoothing kernels and slices of
+        the dead-point history on the GPU while the sampler object is alive, and
+        an XLA/CUDA context never returns its high-water mark to the driver.  On a
+        card shared with other jobs it is therefore worth releasing explicitly:
+
+        * ``self.sampler`` is set to ``None``, which frees the buffers sized by
+          ``max_iterations`` (``ndim * max_iterations * 8`` bytes for the history,
+          plus the live set and the queue);
+        * ``self.results``, ``samples_equal_weight`` and the model stay in host
+          memory, so every summary, plot and ``get_quantiles`` call still works.
+
+        Nothing is lost: run :func:`galspec.jnesty_fit_io.save_jnesty_fit_to_fits`
+        first if you want to be able to reload the run.
+        """
+        self.sampler = None
+        try:                                    # give the allocator a chance to reuse
+            import jax
+            jax.clear_caches()
+        except Exception:                       # pragma: no cover - jax is a hard dep
+            pass
 
     @staticmethod
     def _resample_equal(results, seed: int = 1234) -> np.ndarray:

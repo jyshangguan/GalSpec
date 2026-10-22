@@ -310,6 +310,64 @@ Float32 is worth knowing about: on this GeForce the 64-bit pipeline runs at a
 small fraction of the 32-bit rate, so float32 is ~3-10x faster per evaluation
 and ~2-4x faster end-to-end, at ~4e-5 relative accuracy instead of ~1e-16.
 
+Saving a fit, and what lives on the GPU
+---------------------------------------
+
+``galspec.jnesty_fit_io`` writes a completed fit to FITS and reads it back::
+
+    from galspec.jnesty_fit_io import save_jnesty_fit_to_fits, load_jnesty_fit_from_fits
+
+    save_jnesty_fit_to_fits(fit, "iras07546_jnsty.fits")     # thin=2 to shrink it
+    loaded = load_jnesty_fit_from_fits("iras07546_jnsty.fits")
+    loaded.get_quantiles((0.16, 0.5, 0.84))
+
+The layout is the same one ``galspec.dynesty_fit_io`` uses -- ``WAVE_USE``,
+``FLUX_USE``/``FERR``, ``SAMPLES``, ``LOGWT``, ``LOGL``, ``LOGVOL``,
+``SAMPLES_EQ``, ``PARAM_NAMES``, ``PARAM_BOUNDS``, ``MODEL_PARAM`` and
+``MODEL_STR`` -- so a JNesty file can be read with the same habits and the same
+scripts. Three extensions exist only here: ``SAMPLES_U`` (the unit-cube
+coordinates), ``DLZ_TRAJ``/``SCALE_TR`` (the remaining-evidence estimate and the
+random-walk step scale against iteration), and the ``X64``/``JAXVER``/``JNESTYV``/
+``DEVICE``/``NITER``/``RUNTIME`` keywords needed to describe a run. The model is
+serialised by :mod:`galspec.jax_models.serialization`, which knows about the
+constructor arguments the astropy walker never sees (``n_components``,
+``degree``, ``template_name``, a stellar type) and about convolution wrappers.
+
+A loaded fit evaluates the model, the best fit, the quantiles and the evidence
+exactly as the original did -- the reloaded model reproduces the flux to 0.0
+difference in double precision, ties included. What it cannot reproduce is the
+*prior transform*: ``custom_priors`` are Python callables, and a closure defined
+in ``__main__`` cannot be written to a file. The file stores the resolved bounds
+and the names of the parameters that had a custom prior; loading such a file warns
+about it. That restriction is shared with the dynesty, nautilus and MCMC loaders.
+
+**Memory.** JNesty's GPU footprint for a fit like this is ~1 GB and does *not*
+grow with the number of iterations: the dead-point history is one buffer allocated
+once at ``max_iterations`` size (``ndim * max_iterations * 8`` bytes -- 61 MB for
+38 parameters and 200 000 iterations, 2.4 GB for 8 million), and the sampler runs
+inside a single ``lax.while_loop`` with a fixed-shape state. ``memory_frac`` only
+caps the proposal batch, so raising it does not reserve memory, and with
+``XLA_PYTHON_CLIENT_PREALLOCATE=false`` (the default in the example environment)
+the driver keeps the high-water mark for the life of the process without ever
+shrinking it -- ``nvidia-smi`` therefore shows the peak, which can look like slow
+growth if another job is sharing the card. Two things are worth knowing when the
+card is shared:
+
+* set ``max_iterations`` to a realistic budget (a value ten times larger than
+  needed reserves a buffer ten times larger);
+* call :meth:`galspec.jnesty_fit.JNesty_Fit.release_device_buffers` when a run is
+  over. It drops the sampler (and JAX's compiled kernels) while keeping the
+  results, so plots and summaries still work. Saving to FITS first makes that
+  lossless.
+
+Streaming the dead points to disk *during* a run is possible -- ``run_nested``
+accepts ``init_live_x``/``init_live_logL``/``init_logZ_val``/``init_logX``/
+``init_iter_offset``, which is how JNesty continues a run -- but it does not lower
+the peak footprint, because the peak is the fixed history buffer. Its real value
+is checkpoint/resume after an interruption, and it needs a joint-evidence
+recombination on the host (``jnesty.dynamic.compute_integrals``) because each
+segment's ``logZ`` is computed from that segment alone.
+
 Caveats
 -------
 
@@ -362,10 +420,19 @@ while chi2/dof is unchanged).
 
 Twenty-one free parameters is what remains after the standard ties (all narrow
 lines share the kinematics of [O III]; all broad Balmer lines share the kinematics
-of H-alpha) and the fixed doublet ratios. The whole model is then convolved with
+of H-alpha) and the fixed doublet ratios.  For the timing comparison the
+[S II] 6716/6731 ratio is tied too; physically it should not be (it is an
+electron-density diagnostic, not a fixed number), and the worked example in
+``example/fit_iras07546_jax.py`` leaves it free, adds a second broad Gaussian
+per Balmer line and four high-order Balmer lines (H-epsilon and H8-H11), which is
+why that fit has 38 free parameters over twenty components. The benchmark model
+is also convolved with
 the SDSS line-spread function (Gaussian, R = 2000 at 5500 A): at 0.046 A sampling
-the instrument, not the gas, sets the width of the narrow cores, and a fit
-without the LSF runs into the prior edges.
+the instrument, not the gas, sets the width of the narrow cores, so convolving
+makes the comparison the harder, more realistic one.  (The worked example does
+*not* convolve: for that spectrum the instrument contributes ~150 km/s next to
+~700 km/s of gas, and its own reference fit in
+``example/wrk_sagan_iras07546.ipynb`` likewise ignores the LSF.)
 
 The two implementations agree to 1.5e-15 of the peak flux at the best fit, and
 the log-likelihoods agree to 3e-5 out of ~1e5 (relative 3e-10) over 25 random

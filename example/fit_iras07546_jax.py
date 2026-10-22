@@ -53,7 +53,7 @@ appear in one figure.
 
 Run it
 ------
-    python example/fit_iras07546_jax.py                 # ~40 min on one GPU
+    python example/fit_iras07546_jax.py                 # ~30-45 min on one GPU
     python example/fit_iras07546_jax.py --quick         # ~4 min, rough answer
 
 Results are written to ``example/output/``: figures, an ``.npz`` with the

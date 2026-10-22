@@ -53,12 +53,41 @@ class _LikelihoodPool:
         return self._pool.map(_worker_log_likelihood, values)
 
 
+def _resolve_named_priors(priors, param_names, full_param_names):
+    """Map prior callables onto flattened parameter names.
+
+    ``custom_priors`` is stored per *flattened* name (``amp_c_0``) because that is
+    what the prior transform walks over, but nobody wants to write that: the
+    dictionary may therefore key on the flattened name, on the qualified name
+    (``"Halpha.amp_c"``, the same convention as ``bounds_dict``) or on the bare
+    parameter name (``"amp_c"``, which then applies to every line that has one).
+    """
+    if not priors:
+        return {}
+    resolved = {}
+    known = set(param_names) | set(full_param_names)
+    for index, flat in enumerate(param_names):
+        full = full_param_names[index] if index < len(full_param_names) else None
+        base = Dynesty_Fit._base_name(flat)
+        known.add(base)
+        for key in (flat, full, base):
+            if key is not None and key in priors:
+                resolved[flat] = priors[key]
+                break
+    unmatched = [key for key in priors if key not in known]
+    if unmatched:
+        warnings.warn(f"custom_priors ignored, no matching free parameter: {unmatched}")
+    return resolved
+
+
 class Dynesty_Fit:
     """Fit an Astropy compound model with :mod:`dynesty`.
 
     Model bounds are used whenever both ends are finite. Otherwise a conservative
     parameter-type default is used. Default amplitude priors are log-uniform;
-    explicitly supplied bounds are always linear-uniform.
+    explicitly supplied bounds are always linear-uniform, so pass a callable in
+    ``custom_priors`` (keyed by qualified, flattened or bare parameter name) when
+    you want a log-uniform prior over an explicitly given range.
 
     ``n_processes > 1`` parallelizes likelihood calls. Alternatively, ``pool``
     accepts a user-managed object with a ``map`` method; user pools are not closed.
@@ -84,7 +113,7 @@ class Dynesty_Fit:
     def __init__(self, model, wave_use, flux_use, ferr, bounds_dict=None,
                  default_bounds=None, sample_method="rwalk", nlive=500,
                  bound="multi", rstate=None, n_processes=1, pool=None,
-                 queue_size=None):
+                 queue_size=None, custom_priors=None):
         if dynesty is None:
             raise ImportError("dynesty is required; install GalSpec's dependencies")
         if not isinstance(model, CompoundModel):
@@ -118,14 +147,14 @@ class Dynesty_Fit:
         self.queue_size = queue_size
         self.bounds_dict = dict(bounds_dict or {})
         self.default_bounds = self.DEFAULT_BOUNDS | dict(default_bounds or {})
-        self.custom_priors = {}
-
         self._name_submodels()
         self.param_names = [name for name in self.model.param_names
                             if not getattr(self.model, name).fixed
                             and not getattr(self.model, name).tied]
         self.full_param_names = self._full_parameter_names()
         self.param_map = dict(zip(self.full_param_names, enumerate(self.param_names)))
+        self.custom_priors = _resolve_named_priors(
+            dict(custom_priors or {}), self.param_names, self.full_param_names)
         self._log_scale_params = set()
         self.param_bounds = self.get_param_bounds()
         self.theta_initial = np.asarray(

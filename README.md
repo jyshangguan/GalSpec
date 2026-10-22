@@ -128,6 +128,23 @@ The JAX models are verified against the CPU models by
 `tests/test_jax_parity.py`; fluxes agree to ~1e-16 relative (float64), so the
 GPU and CPU fits are guaranteed to be solving the same problem.
 
+A complete worked example lives in `example/fit_iras07546_jax.py` (script,
+40-60 min on one GPU) and `example/fit_iras07546_jax.ipynb` (the same fit broken
+into annotated cells). It fits the **whole optical spectrum** of IRAS 07546+3928
+(3680-7500 A rest frame, 83 681 pixels) in one go: a power-law continuum plus an
+Fe II template, H-alpha/H-beta/H-gamma/H-delta each as one narrow Gaussian plus
+**two** broad Gaussians, [O III] with a broad wing, and [N II], [S II], [O I],
+He II, [O III] 4363, [Ne III], [O II], [Ar III], plus the higher Balmer lines
+H-epsilon, H8, H9 and H11 -- 38 free parameters describing twenty components, with
+every narrow line tied to the [O III] kinematics, the two broad components tied
+across the four Balmer lines, and no least-squares step anywhere. The doublet
+ratios are tied at their atomic values except [S II], whose 6716/6731 ratio is a
+density diagnostic and is therefore measured. The model is not convolved with the
+LSF (this spectrum grossly oversamples the instrument); the fit is drawn with
+`galspec.plot.plot_fit`, so every component and the residuals appear in one
+figure, and the whole run is written to a FITS file that
+`galspec.jnesty_fit_io.load_jnesty_fit_from_fits` turns back into a working fit.
+
 ## Example Notebooks
 
 The `example/` directory contains detailed notebooks demonstrating:

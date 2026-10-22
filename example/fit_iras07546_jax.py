@@ -628,7 +628,7 @@ def check_parity(fit, wave, predicted):
     return model_cpu
 
 
-def plot_result(wave, flux, model_cpu, outfile, zoom_windows, mask_list):
+def plot_result(wave, flux, model_cpu, outfile, zoom_windows, mask_list, error=None):
     """Plot the fit with :func:`galspec.plot.plot_fit`: all components + residuals."""
     import matplotlib
     matplotlib.use("Agg")
@@ -638,12 +638,16 @@ def plot_result(wave, flux, model_cpu, outfile, zoom_windows, mask_list):
                   r" $\AA^{-1}$]")
 
     # -- the whole spectrum ----------------------------------------------------
-    fig = plt.figure(figsize=(16.0, 8.0))
-    ax = fig.add_axes([0.055, 0.20, 0.885, 0.72])
-    axr = fig.add_axes([0.055, 0.07, 0.885, 0.13])
+    fig = plt.figure(figsize=(17.0, 8.0))
+    ax = fig.add_axes([0.055, 0.20, 0.82, 0.72])
+    axr = fig.add_axes([0.055, 0.07, 0.82, 0.13])
     galspec.plot.plot_fit(wave, flux, model_cpu, ax=ax, axr=axr, mask_list=mask_list,
                           xlabel="Rest wavelength  [A]", ylabel=flux_label,
-                          legend_kwargs={"fontsize": 10.5, "ncol": 3})
+                          error=error, residual_in_sigma=True,
+                          legend_kwargs={"fontsize": 10.5, "ncol": 2,
+                                         "loc": "center left",
+                                         "bbox_to_anchor": (1.005, 0.5),
+                                         "frameon": False})
     ax.set_title("IRAS 07546+3928: whole optical spectrum, "
                  "two broad Gaussians per Balmer line", fontsize=13)
     fig.savefig(outfile, dpi=150, bbox_inches="tight")
@@ -651,19 +655,43 @@ def plot_result(wave, flux, model_cpu, outfile, zoom_windows, mask_list):
     print(f"  wrote {outfile}")
 
     # -- zooms around the interesting regions ---------------------------------
+    # The legend lives outside the axes: inside, an opaque frame sat exactly on top
+    # of the [O II] 3727 peak in the blue-end panel.
     for tag, xlim, ylim in zoom_windows:
-        fig = plt.figure(figsize=(13.0, 7.0))
-        ax = fig.add_axes([0.07, 0.20, 0.87, 0.72])
-        axr = fig.add_axes([0.07, 0.07, 0.87, 0.13])
+        fig = plt.figure(figsize=(15.5, 7.0))
+        ax = fig.add_axes([0.06, 0.20, 0.70, 0.72])
+        axr = fig.add_axes([0.06, 0.07, 0.70, 0.13])
         galspec.plot.plot_fit(wave, flux, model_cpu, ax=ax, axr=axr, xlim=xlim,
-                              ylim0=ylim, mask_list=mask_list,
+                              ylim0=ylim, ylim1=_residual_limits(wave, flux, error,
+                                                                 model_cpu, xlim),
+                              mask_list=mask_list, error=error,
+                              residual_in_sigma=True,
                               xlabel="Rest wavelength  [A]", ylabel=flux_label,
-                              legend_kwargs={"fontsize": 9.5, "ncol": 2})
+                              legend_kwargs={"fontsize": 9.0, "ncol": 1,
+                                             "loc": "center left",
+                                             "bbox_to_anchor": (1.005, 0.5),
+                                             "frameon": False})
         ax.set_title(f"{tag}: {xlim[0]:.0f}-{xlim[1]:.0f} A", fontsize=12)
         out = Path(outfile).with_name(Path(outfile).stem + f"_{tag}.png")
         fig.savefig(out, dpi=150, bbox_inches="tight")
         plt.close(fig)
         print(f"  wrote {out}")
+
+
+def _residual_limits(wave, flux, error, model_cpu, xlim, margin=0.6):
+    """Symmetric residual limits for one panel, in sigma.
+
+    Without this every panel shares one scale set by the single worst pixel in the
+    spectrum, so a zoom on a well-fitted region shows a flat line.
+    """
+    inside = (wave >= xlim[0]) & (wave <= xlim[1])
+    residual = (flux - np.asarray(model_cpu(wave)))[inside]
+    if error is not None:
+        residual = residual / np.asarray(error, dtype=float)[inside]
+    if residual.size == 0:
+        return None
+    scale = float(np.nanpercentile(np.abs(residual), 99.5))
+    return (-1.25 * scale - margin * 0.1, 1.25 * scale + margin * 0.1)
 
 
 def plot_corner(fit, outfile, max_params=14):
@@ -684,7 +712,7 @@ def plot_corner(fit, outfile, max_params=14):
     keep = [i for i, name in enumerate(fit.full_param_names) if name in wanted][:max_params]
     fig = corner.corner(fit.samples_equal_weight[:, keep],
                         labels=[fit.full_param_names[i] for i in keep],
-                        quantiles=(0.16, 0.5, 0.84), show_titles=True, title_fmt=".2f",
+                        quantiles=(0.16, 0.5, 0.84), show_titles=True, title_fmt=".3g",
                         title_kwargs={"fontsize": 8}, label_kwargs={"fontsize": 9})
     fig.savefig(outfile, dpi=110, bbox_inches="tight")
     plt.close(fig)
@@ -785,7 +813,7 @@ def main(argv=None) -> int:
                  ("Halpha_NII_SII", (6420, 6800), (0.0, 5.0)),
                  ("blue_end", (3700, 4250), (0.6, 1.7))]
         plot_result(wave, flux, model_cpu, outdir / "iras07546_jax_fit.png",
-                    zooms, mask_list=list(MASK_WINDOWS))
+                    zooms, mask_list=list(MASK_WINDOWS), error=error)
         plot_corner(fit, outdir / "iras07546_jax_corner.png")
 
     # The sampler's GPU buffers (sized by max_iterations) are no longer needed:

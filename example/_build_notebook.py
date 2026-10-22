@@ -526,14 +526,18 @@ assert difference < 1e-6, "the astropy twin does not reproduce the JAX model"
 '''
 
 plot_full = '''\
-fig = plt.figure(figsize=(16.0, 8.0))
-ax = fig.add_axes([0.055, 0.20, 0.885, 0.72])
-axr = fig.add_axes([0.055, 0.07, 0.885, 0.13])
+# residual_in_sigma divides by the error, so the panel shows "how many sigma" and
+# a single bright pixel can no longer set the scale of the whole panel.
+fig = plt.figure(figsize=(17.0, 8.0))
+ax = fig.add_axes([0.055, 0.20, 0.82, 0.72])
+axr = fig.add_axes([0.055, 0.07, 0.82, 0.13])
 galspec.plot.plot_fit(
     wave, flux, model_cpu, ax=ax, axr=axr, mask_list=MASK_WINDOWS,
+    error=error, residual_in_sigma=True,
     xlabel="Rest wavelength  [A]",
     ylabel=r"$F_\\lambda$  [$10^{-14}$ erg s$^{-1}$ cm$^{-2}$ $\\AA^{-1}$]",
-    legend_kwargs={"fontsize": 10.5, "ncol": 3})
+    legend_kwargs={"fontsize": 10.5, "ncol": 2, "loc": "center left",
+                   "bbox_to_anchor": (1.005, 0.5), "frameon": False})
 ax.set_title("IRAS 07546+3928: whole optical spectrum, "
              "two broad Gaussians per Balmer line", fontsize=13)
 '''
@@ -543,16 +547,30 @@ zooms = [("H$\\\\gamma$ + H$\\\\beta$", (4230, 5100), (0.0, 2.4)),
          ("H$\\\\alpha$ + [N II] + [S II]", (6420, 6800), (0.0, 5.0)),
          ("blue end", (3700, 4250), (0.6, 1.7))]
 
+
+def residual_limits(wave, flux, error, model, xlim):
+    """Residual limits for one panel, in sigma, from that panel's own scatter."""
+    inside = (wave >= xlim[0]) & (wave <= xlim[1])
+    residual = ((flux - np.asarray(model(wave))) / error)[inside]
+    scale = float(np.nanpercentile(np.abs(residual), 99.5))
+    return (-1.25 * scale - 0.06, 1.25 * scale + 0.06)
+
+
 for title, xlim, ylim in zooms:
-    fig = plt.figure(figsize=(13.0, 7.0))
-    ax = fig.add_axes([0.07, 0.20, 0.87, 0.72])
-    axr = fig.add_axes([0.07, 0.07, 0.87, 0.13])
+    fig = plt.figure(figsize=(15.5, 7.0))
+    ax = fig.add_axes([0.06, 0.20, 0.70, 0.72])
+    axr = fig.add_axes([0.06, 0.07, 0.70, 0.13])
+    # The legend sits outside the axes: drawn inside, an opaque frame covered the
+    # [O II] 3727 peak in the blue-end panel -- the one feature that panel exists
+    # to show.
     galspec.plot.plot_fit(
         wave, flux, model_cpu, ax=ax, axr=axr, xlim=xlim, ylim0=ylim,
-        mask_list=MASK_WINDOWS,
+        ylim1=residual_limits(wave, flux, error, model_cpu, xlim),
+        mask_list=MASK_WINDOWS, error=error, residual_in_sigma=True,
         xlabel="Rest wavelength  [A]",
         ylabel=r"$F_\\lambda$  [$10^{-14}$ erg s$^{-1}$ cm$^{-2}$ $\\AA^{-1}$]",
-        legend_kwargs={"fontsize": 9.5, "ncol": 2})
+        legend_kwargs={"fontsize": 9.0, "ncol": 1, "loc": "center left",
+                       "bbox_to_anchor": (1.005, 0.5), "frameon": False})
     ax.set_title(f"{title}: {xlim[0]:.0f}-{xlim[1]:.0f} A", fontsize=12)
     plt.show()
 '''
@@ -567,7 +585,7 @@ keep = [fit.full_param_names.index(name) for name in wanted
         if name in fit.full_param_names]
 fig = corner.corner(fit.samples_equal_weight[:, keep],
                     labels=[fit.full_param_names[i] for i in keep],
-                    quantiles=(0.16, 0.5, 0.84), show_titles=True, title_fmt=".2f",
+                    quantiles=(0.16, 0.5, 0.84), show_titles=True, title_fmt=".3g",
                     title_kwargs={"fontsize": 8}, label_kwargs={"fontsize": 9})
 '''
 
@@ -839,7 +857,18 @@ at exactly 1.0 sigma rms), so the model is a good description of the lines even
 where it is not a perfect description of the whole spectrum.
 
 If you need chi2/dof ~ 1 for its own sake, raise `SYSTEMATIC_FRACTION` -- but that
-would be fitting the error bar, not the spectrum."""),
+would be fitting the error bar, not the spectrum.
+
+**The residuals are not white noise**, and a chi-square alone hides that: binned
+over 1000 pixels the mean residual wanders by 0.79 sigma where pure noise would
+give 0.03 (25x more), neighbouring pixels are correlated (lag-50 autocorrelation
+0.83), and 81 pixels sit beyond 5 sigma where a Gaussian predicts none. So the
+"1.12 sigma rms" describes the pixel-to-pixel scatter, not the accuracy of the
+model: the 3% flux-calibration floor absorbs coherent structure that a per-pixel
+chi-square cannot see. Treat the error bars on individual parameters as
+statistical, and add in quadrature a systematic of the order of the worst binned
+residual (+3 sigma at 3680-3726 A, -1.8 sigma at 5734-5780 A) when comparing with
+measurements from other instruments."""),
 
     ("code", quality_cell),
 
@@ -852,7 +881,15 @@ apart) and the residual panel.
 
 It needs an *astropy* compound model, so the fitted JAX model is mirrored into its
 astropy equivalent first. The two are then compared: if they did not agree, the
-plot would be a lie."""),
+plot would be a lie.
+
+Two details of the figure are deliberate. The residual panel is drawn in **units
+of sigma** (`residual_in_sigma=True`), so a residual of 3 means three error bars and
+the stated rms can be checked by eye -- in raw flux units a single bright pixel
+sets the scale of the whole panel. And the legend is placed **outside the axes**:
+twenty components do not fit inside a panel without covering the data, and while
+the frame was inside it sat exactly on top of the [O II] 3727 peak in the
+blue-end zoom."""),
 
     ("code", twin_cell),
     ("code", plot_full),

@@ -14,6 +14,20 @@ mpl.rc("ytick.minor", width=1., size=5)
 __all__ = ['plot_fit', 'plot_fit_new', 'reorder_legend',
            'plot_narrow_line_diagnostic', 'plot_narrow_line_template_validation']
 
+#: Colours cycled through for the individual model components by :func:`plot_fit`.
+#:
+#: matplotlib's own cycle has ten entries, which is not enough for a model with
+#: twenty components: unrelated lines then share a colour, and the worst case is a
+#: line taking the same red as the total model.  The first entries keep the usual
+#: matplotlib order (blue, orange, green, ...) minus ``C3``, which stays reserved
+#: for the total model, and the palette continues to 24 colours.
+_COMPONENT_COLORS = (
+    "#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd", "#8c564b", "#e377c2",
+    "#7f7f7f", "#bcbd22", "#17becf", "#8c8c00", "#1b9e77", "#d95f02",
+    "#7570b3", "#e7298a", "#66a61e", "#e6ab02", "#a6761d", "#666666",
+    "#393b79", "#637939", "#8c6d31", "#843c39", "#7b4173", "#5254a3",
+)
+
 
 def plot_fit_new(wave, flux, model, weight=None, error=None, ax=None, axr=None, xlim=None, ylim0=None, 
              ylim1=None, xlabel=None, ylabel=None, legend_kwargs=None):
@@ -125,7 +139,7 @@ def plot_fit_new(wave, flux, model, weight=None, error=None, ax=None, axr=None, 
 
     if ylabel is not None:
         ax.set_ylabel(ylabel, fontsize=24)
-    axr.set_ylabel(r'Res.', fontsize=24)
+    axr.set_ylabel(r'Res./$\sigma$' if residual_in_sigma else r'Res.', fontsize=24)
 
     ax.minorticks_on()
     axr.minorticks_on()
@@ -149,7 +163,8 @@ def plot_fit_new(wave, flux, model, weight=None, error=None, ax=None, axr=None, 
 
 def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0=None, 
              ylim1=None, xlabel=None, ylabel=None, legend_kwargs=None, plot_weight=True, 
-             ignore_list=None, legend_map=None, mask_list=None):
+             ignore_list=None, legend_map=None, mask_list=None, error=None,
+             residual_in_sigma=False):
     '''
     Plot the fitting result.
 
@@ -179,6 +194,13 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
         Y-axis label.
     mask_list : list, optional
         A list of tuples specifying the wavelength ranges to be masked in the plot.
+    error : array like, optional
+        Uncertainty of ``flux``.  Only used when ``residual_in_sigma`` is True.
+    residual_in_sigma : bool, optional
+        Draw ``(data - model) / error`` instead of the raw residual, with dashed
+        guides at +/-1 sigma.  A raw residual in flux units hides how large it is
+        compared with the noise, and one bright pixel can set the scale of the
+        whole residual panel; in units of sigma both problems disappear.
     
     Returns
     -------
@@ -264,8 +286,17 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
                         y = msub(wave)
                     ax.plot(wave, y, lw=0.5, ls='--', color=color)
     
-    axr.step(wave, flux_res, lw=1, color='k')
-    axr.axhline(0, color='k', ls='--', lw=1.0)
+    if residual_in_sigma:
+        if error is None:
+            raise ValueError("residual_in_sigma=True needs the `error` array")
+        flux_res = flux_res / np.asarray(error, dtype=float)
+        axr.step(wave, flux_res, lw=1, color='k')
+        axr.axhline(0, color='k', ls='--', lw=1.0)
+        for level in (-1, 1):
+            axr.axhline(level, color='gray', ls=':', lw=1.0)
+    else:
+        axr.step(wave, flux_res, lw=1, color='k')
+        axr.axhline(0, color='k', ls='--', lw=1.0)
     
     ax.tick_params(labelbottom=False)
     if xlim is not None:
@@ -282,7 +313,7 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
 
     if ylabel is not None:
         ax.set_ylabel(ylabel, fontsize=24)
-    axr.set_ylabel(r'Res.', fontsize=24)
+    axr.set_ylabel(r'Res./$\sigma$' if residual_in_sigma else r'Res.', fontsize=24)
 
     ax.minorticks_on()
     axr.minorticks_on()
@@ -332,7 +363,8 @@ def _map_legend(model, legend_map, ignore_list=None):
                     label_list.append(l)
         
         if m.name not in legend_dict:
-            legend_dict[m.name] = (f'C{count_colors%10}', m.name)
+            color = _COMPONENT_COLORS[count_colors % len(_COMPONENT_COLORS)]
+            legend_dict[m.name] = (color, m.name)
             label_list.append(m.name)
             count_colors += 1
 

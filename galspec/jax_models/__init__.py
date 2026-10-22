@@ -77,7 +77,7 @@ from .line_profile import (  # noqa: E402
     Line_MultiGauss_doublet,
     Line_template,
 )
-from .iron_template import IronTemplate  # noqa: E402
+from .iron_template import IronTemplate, IronTemplate_new, IronTemplate_tied  # noqa: E402
 from .stellar import Multi_StarSpectrum, StarSpectrum  # noqa: E402
 from .convolution import (  # noqa: E402
     JaxConvolvedModel,
@@ -104,7 +104,7 @@ MODELS = {
         Line_Gaussian, Line_GaussHermite, Line_GaussHermite_doublet,
         Line_MultiGauss, Line_MultiGauss_doublet, Line_Absorption,
         Line_Absorption_doublet, Line_template, Line_Exponential,
-        IronTemplate, StarSpectrum, Multi_StarSpectrum,
+        IronTemplate, IronTemplate_tied, StarSpectrum, Multi_StarSpectrum,
     )
 }
 
@@ -120,7 +120,8 @@ __all__ = [
     "Line_MultiGauss", "Line_MultiGauss_doublet", "Line_Absorption",
     "Line_Absorption_doublet", "Line_template", "Line_Exponential",
     # templates / stellar
-    "IronTemplate", "StarSpectrum", "Multi_StarSpectrum",
+    "IronTemplate", "IronTemplate_new", "IronTemplate_tied",
+    "StarSpectrum", "Multi_StarSpectrum",
     # convolution
     "convolve_lsf", "convolve_lsf_var",
     "JaxConvolvedModel", "JaxVariableConvolvedModel",

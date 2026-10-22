@@ -36,6 +36,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.ndimage import median_filter
 
+import jax
+import jax.numpy as jnp
+
 import galspec
 from galspec import jax_models as jxm
 from galspec.jnesty_fit import JNesty_Fit, jax_devices_summary
@@ -211,9 +214,12 @@ def build_model(backend=jxm):
     # -- continuum: a power law anchored at 5500 A, plus the iron pseudo-continuum --
     continuum = _power_law(backend)(amplitude=0.55, x_0=5500.0, alpha=1.0,
                                     fixed={"x_0": True}, name="Continuum")
-    iron = backend.IronTemplate(amplitude=0.2, stddev=3000.0, z=0.0, name="FeII")
+    # IronTemplate_new parameterises the template by velocity dispersion and shift,
+    # like the broad lines, with the redshift fixed.  The width is fitted: the Fe II
+    # optical multiplet comes from the same gas as the broad Balmer lines, so its
+    # width is a measurement.
+    iron = backend.IronTemplate_new(amplitude=0.2, sigma=2500.0, z=0.0, dv=0.0, name="FeII")
     iron.z.fixed = True
-    iron.stddev.fixed = True      # degenerate with the continuum slope
 
     # -- Balmer lines: narrow core + two broad Gaussians each -------------------
     def balmer(name, wavec, amp_c, amp_w0):
@@ -293,6 +299,22 @@ def build_model(backend=jxm):
 
 
 model = build_model(jxm)
+
+# Display names for plots: a line's `name` stays "Halpha" (it is the key you index
+# with), but `label` may contain maths, and param_labels combines it with the
+# parameter symbol -- "BH$\\alpha$:$\\sigma_{w0}$" for the broad-width parameter.
+MODEL_LABELS = {
+    "Continuum": "Continuum", "FeII": "Fe II",
+    "Halpha": r"BH$\\alpha$", "Hbeta": r"BH$\\beta$", "Hgamma": r"BH$\\gamma$",
+    "Hdelta": r"BH$\\delta$", "Hepsilon": r"BH$\\epsilon$",
+    "OIII": r"[O III]", "NII": r"[N II]", "SII": r"[S II]", "OI": r"[O I]",
+    "OIII4363": r"[O III] 4363", "NeIII": r"[Ne III]", "OII3727": r"[O II]",
+    "ArIII": r"[Ar III]", "OII7325": r"[O II] 7325", "HeII": r"He II",
+    "H8": "H8", "H9": "H9", "H11": "H11",
+}
+for _name in model.submodel_names:
+    if _name in MODEL_LABELS:
+        model[_name].label = MODEL_LABELS[_name]
 '''
 
 show_params = '''\
@@ -324,6 +346,8 @@ def make_priors(flux):
         "Continuum.amplitude": (0.2 * continuum, 4.0 * continuum),
         "Continuum.alpha": (-5.0, 5.0),
         "FeII.amplitude": (1e-3, 3.0 * continuum),
+        "FeII.sigma": (400.0, 8000.0),
+        "FeII.dv": (-1500.0, 1500.0),
         "OIII.dv_c": (-1000.0, 1000.0),
         "OIII.sigma_c": (30.0, 800.0),
         "OIII.amp_c0": amp,
@@ -407,6 +431,7 @@ PARAM_NOTES = {
     "Continuum.amplitude": "continuum flux density at 5500 A",
     "Continuum.alpha": "continuum slope (F_nu ~ nu^-alpha)",
     "FeII.amplitude": "iron pseudo-continuum strength",
+    "FeII.sigma": "iron velocity width", "FeII.dv": "iron velocity shift",
     "OIII.amp_c0": "[O III] 5007 narrow peak", "OIII.amp_w0": "[O III] wing / core",
     "OIII.dv_c": "shift of all narrow lines", "OIII.sigma_c": "width of all narrow lines",
     "OIII.sigma_w0": "width of the [O III] wing",
@@ -575,6 +600,106 @@ for title, xlim, ylim in zooms:
     plt.show()
 '''
 
+tied_iron_cell = '''\
+# An alternative description of the iron: instead of one Gaussian width, broaden the
+# template with the *same* multi-Gaussian profile as the broad Balmer lines, tied
+# component by component.  This cell builds it, resolves the ties, and compares the
+# resulting iron profile with the single-Gaussian one.
+fe_tied = jxm.IronTemplate_tied(n_components=2, amplitude=0.2, sigma_0=2400.0,
+                                sigma_1=6000.0, w_0=0.28, w_1=0.05,
+                                template_name="park2022", name="FeII_tied")
+# a standalone copy of the broad H-alpha line, so this demonstration cannot touch
+# the model that the fit uses
+halpha = jxm.Line_MultiGauss(n_components=3, amp_c=2.2, sigma_c=700.0,
+                             wavec=LINE_WAVE["Halpha"], name="Halpha",
+                             amp_w0=0.28, sigma_w0=2400.0,
+                             amp_w1=0.05, sigma_w1=6000.0)
+# compose first: a tie is resolved through the compound that holds both models
+demo = halpha + fe_tied
+fe_tied.dv_0.tied = jxm.tie.tie_MultiGauss_dv_w0("Halpha")
+fe_tied.sigma_0.tied = jxm.tie.tie_MultiGauss_sigma_w0("Halpha")
+fe_tied.w_0.tied = jxm.tie.tie_MultiGauss_amp_w0("Halpha")
+fe_tied.dv_1.tied = jxm.tie.tie_MultiGauss_dv_w1("Halpha")
+fe_tied.sigma_1.tied = jxm.tie.tie_MultiGauss_sigma_w1("Halpha")
+fe_tied.w_1.tied = jxm.tie.tie_MultiGauss_amp_w1("Halpha")
+
+print("tied iron parameters:", fe_tied.param_names)
+print("free after tying   :", fe_tied.free_param_names)
+print("(dv_*, sigma_*, w_* are all tied to the broad components of H-alpha)")
+
+# iron profile: tied to the line profile versus one Gaussian of the same width
+theta_demo = jnp.asarray(demo.get_free_params())       # ties resolved by the compound
+theta_halpha = jnp.asarray(halpha.get_free_params())   # the line on its own
+iron_tied = (np.asarray(demo.flux(wave, theta_demo))
+             - np.asarray(halpha.flux(wave, theta_halpha)))
+iron_plain = np.asarray(model["FeII"].flux(wave, jnp.asarray([0.2, 2500.0, 0.0])))
+print(f"tied kernel changes the iron profile by at most "
+      f"{np.max(np.abs(iron_tied - iron_plain)) / np.max(iron_plain) * 100:.0f}% of its peak")
+
+sel = (wave > 4200) & (wave < 5600)
+fig, ax = plt.subplots(figsize=(11.0, 4.5))
+ax.plot(wave[sel], iron_plain[sel], color="C0", lw=1.8,
+        label="one Gaussian, sigma = 2500 km/s")
+ax.plot(wave[sel], iron_tied[sel], color="C1", lw=1.8, ls="--",
+        label="tied to the H-alpha broad profile")
+ax.set_xlabel("Rest wavelength  [A]", fontsize=16)
+ax.set_ylabel("Fe II flux", fontsize=16)
+ax.legend(fontsize=10, frameon=False)
+ax.set_title("Same template, two descriptions of its broadening", fontsize=12)
+plt.show()
+
+# What it costs.  Both compounds carry the same H-alpha line, so the difference is
+# the iron cost.  Both are compiled and run once *before* timing: a GPU idles at low
+# clock speed and ramps up under load, so timing the first model cold would credit
+# the second one with a speed-up it does not have.
+x = jnp.asarray(wave)
+demo_plain = halpha.copy() + jxm.IronTemplate_new(amplitude=0.2, sigma=2500.0,
+                                                  dv=0.0, name="FeII_plain")
+evaluate_plain = jax.jit(lambda t: demo_plain.flux(x, t))
+evaluate_tied = jax.jit(lambda t: demo.flux(x, t))
+theta_plain = jnp.asarray(demo_plain.get_free_params())
+for _ in range(3):                       # compile, then warm the clocks
+    evaluate_plain(theta_plain).block_until_ready()
+    evaluate_tied(theta_demo).block_until_ready()
+
+
+def best_ms(evaluate, theta, reps=20, blocks=5):
+    """Fastest of several blocks: the median is inflated by any stray GPU contention."""
+    times = []
+    for _ in range(blocks):
+        start = time.perf_counter()
+        for _ in range(reps):
+            evaluate(theta).block_until_ready()
+        times.append((time.perf_counter() - start) / reps * 1e3)
+    return min(times)
+
+
+# each model is measured twice, in alternating order: if the clock is still
+# ramping, the two runs disagree and the faster one is the honest number
+plain_first = best_ms(evaluate_plain, theta_plain)
+tied_first = best_ms(evaluate_tied, theta_demo)
+tied_second = best_ms(evaluate_tied, theta_demo)
+plain_second = best_ms(evaluate_plain, theta_plain)
+plain_ms = min(plain_first, plain_second)
+tied_ms = min(tied_first, tied_second)
+extra_min = (tied_ms - plain_ms) * 1e5 / 6e4        # per 1e5 evaluations
+print(f"single-Gaussian iron: {plain_ms:.2f} ms per evaluation")
+print(f"tied (2 components) : {tied_ms:.2f} ms per evaluation")
+print(f"cost of the tied kernel: {tied_ms - plain_ms:+.2f} ms "
+      f"({100 * (tied_ms - plain_ms) / plain_ms:+.0f}%), i.e. {extra_min:.1f} min "
+      f"over 1e5 evaluations")
+'''
+histogram_cell = '''\
+# Most of the time the marginals are all that is wanted, and a corner plot of forty
+# parameters is unreadable.  Each panel shows the histogram, the median and the
+# 16-84 percentile band, with the value printed on top.
+quoted = ["Halpha.amp_c", "Halpha.amp_w0", "Halpha.dv_w0", "Halpha.sigma_w0",
+          "Halpha.sigma_w1", "Hbeta.amp_c", "OIII.sigma_c", "OIII.dv_c",
+          "FeII.sigma", "FeII.dv", "SII.amp_c0", "SII.amp_c1"]
+fig, axes = galspec.plot.plot_posterior_hist(
+    fit, params=[q for q in quoted if q in fit.full_param_names], ncols=4, bins=40)
+plt.show()
+'''
 corner_cell = '''\
 import corner
 
@@ -583,8 +708,9 @@ wanted = ["OIII.dv_c", "OIII.sigma_c", "Halpha.dv_w0", "Halpha.sigma_w0",
           "FeII.amplitude", "Halpha.amp_c", "Halpha.amp_w0", "Halpha.amp_w1"]
 keep = [fit.full_param_names.index(name) for name in wanted
         if name in fit.full_param_names]
+# param_labels turns "Halpha.sigma_w0" into "BH$\\alpha$:$\\sigma_{w0}$"
 fig = corner.corner(fit.samples_equal_weight[:, keep],
-                    labels=[fit.full_param_names[i] for i in keep],
+                    labels=[fit.param_labels[i] for i in keep],
                     quantiles=(0.16, 0.5, 0.84), show_titles=True, title_fmt=".3g",
                     title_kwargs={"fontsize": 8}, label_kwargs={"fontsize": 9})
 '''
@@ -681,7 +807,7 @@ the continuum and the lines are constrained by the same posterior:
   Section 4 shows the prior spread against the data.
 * **Physical ties.** Every narrow line shares one velocity shift and one width
   (measured from [O III]); the two broad components are each shared across all
-  four Balmer lines. 38 free numbers therefore describe twenty components.
+  four Balmer lines. 40 free numbers therefore describe twenty components.
 
 Runtime: 30-45 minutes on one GPU with `nlive=400, dlogz=0.01` (this run:
 33 min, 84 994 iterations). For a quick look
@@ -729,7 +855,11 @@ Twenty components, added together:
 1. a **power-law continuum** anchored at 5500 A -- this is what fixes the
    continuum level and slope from the line-free regions of the whole spectrum;
 2. an **Fe II template** -- the forest of iron lines that fakes a broad bump
-   blueward of H-beta and is routinely mistaken for continuum;
+   blueward of H-beta and is routinely mistaken for continuum. It uses
+   `IronTemplate_new`: the template is described by a velocity dispersion
+   (`sigma`) and a velocity shift (`dv`), the same language as the broad lines,
+   with the redshift fixed. **Its width is free**, because the iron and the broad
+   Balmer lines come from the same gas;
 3. **H-alpha, H-beta, H-gamma, H-delta**, each a `Line_MultiGauss` with three
    Gaussians: a narrow core (`amp_c`, `dv_c`, `sigma_c`), a broad component
    (`amp_w0`, `dv_w0`, `sigma_w0`) and a second, broader one (`amp_w1`, `dv_w1`,
@@ -763,6 +893,31 @@ degenerate with both."""),
     ("code", helpers),
     ("code", build),
     ("code", show_params),
+
+    ("md", """### A variant: iron broadened by the line profile itself
+
+The single Gaussian above asks "how wide is the iron?", a number comparable to
+the broad H-beta width. A stricter model asks the iron to be broadened by the
+*same* profile as the lines, component by component -- `IronTemplate_tied`. The
+kernel is a multi-Gaussian, its shifts, widths and weights are tied to the
+broad Balmer components, and the normalisation keeps the iron scale separate
+from the line amplitudes.
+
+The arithmetic is simple: subtract the template's own width in quadrature for
+each component, then average the shifted profiles. It is **not free**: a
+two-component kernel adds 0.1-0.45 ms per evaluation depending on how busy the
+card is -- a bigger share of a small model than of a full spectrum, so the
+percentage below depends on what else is in the model -- and that is up to a few
+extra minutes over a whole fit. The
+price is one smoothing and one interpolation per component, done on the 801-point
+template rather than on the spectrum. Run the cell below and it measures the
+number where you are.
+
+What it *does* change is the physics: the iron gets the same velocity structure as
+the Balmer lines, including any asymmetry, so it is the right model when the two
+are known to share a broad-line region and the wrong one when they are not."""),
+
+    ("code", tied_iron_cell),
 
     ("md", """## 4. The priors -- broad, and justified by the data
 
@@ -907,6 +1062,16 @@ Nested sampling gives the full posterior, not just error bars. An elongated blob
 means two parameters trade off against each other -- a broader component with a
 smaller peak, say -- and quoting them independently would be misleading."""),
 
+    ("md", """### Marginal posteriors
+
+The corner plot shows every pair; for the numbers people actually quote, one
+histogram each is easier to read. `plot_posterior_hist` draws the marginal
+posterior, marks the median and the 16-84 band, prints the value on top, and -- as
+dotted lines -- the prior bounds, so a parameter that has filled its prior is
+obvious at a glance."""),
+
+    ("code", histogram_cell),
+
     ("code", corner_cell),
 
     ("md", """## 9. What this does and does not show
@@ -928,8 +1093,10 @@ smaller peak, say -- and quoting them independently would be misleading."""),
   I(6716)/I(6731) near 1.3 means low-density gas, near 0.5 high-density. Turning
   it into an electron density needs a temperature and the atomic data, which is
   beyond a line-profile fit.
-* The Fe II template width is fixed (degenerate with the continuum slope), and
-  the Ca II H+K and Na D windows are down-weighted rather than modelled.
+* The Fe II width is fitted, but it is the width of a *template*, not of a
+  resolved profile: it says how much extra broadening the iron needs on top of
+  the reference object's, and it is partly degenerate with the continuum slope.
+  The Ca II H+K and Na D windows are down-weighted rather than modelled.
 * The evidence (`log Z`) is only comparable between runs made with the same
   sampler.
 

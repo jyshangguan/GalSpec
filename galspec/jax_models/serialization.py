@@ -142,6 +142,9 @@ def _serialize_tie(tied, root) -> Optional[Dict[str, Any]]:
 
 def _serialize_node(model, root, node_id, nodes, arrays) -> Dict[str, Any]:
     """Recursively serialise ``model``; array payloads land in ``arrays``."""
+    #: display name for plots (``BH$\\alpha$``); the machine ``name`` stays as it is
+    label = getattr(model, "label", None)
+
     if isinstance(model, (JaxConvolvedModel, JaxVariableConvolvedModel)):
         inner = _serialize_node(model.inner, root, node_id, nodes, arrays)
         node = {"type": "convolution", "name": model.name, "inner": inner}
@@ -159,16 +162,21 @@ def _serialize_node(model, root, node_id, nodes, arrays) -> Dict[str, Any]:
             key = f"n{node_id}.weights"
             arrays[key] = np.asarray(model._weights)
             node["weights"] = key
+        if label:
+            node["label"] = label
         return node
 
     if isinstance(model, JaxCompoundModel):
-        return {
+        node = {
             "type": "compound",
             "op": str(model.op),
             "name": model.name,
             "left": _serialize_node(model.left, root, 2 * node_id + 1, nodes, arrays),
             "right": _serialize_node(model.right, root, 2 * node_id + 2, nodes, arrays),
         }
+        if label:
+            node["label"] = label
+        return node
 
     ctor, ctor_arrays = _ctor_arguments(model)
     node = {
@@ -180,6 +188,8 @@ def _serialize_node(model, root, node_id, nodes, arrays) -> Dict[str, Any]:
         "ctor_arrays": {},
         "params": {},
     }
+    if label:
+        node["label"] = label
     for key, value in ctor_arrays.items():
         array_key = f"n{node_id}.{key}"
         arrays[array_key] = value
@@ -218,6 +228,18 @@ def serialize_jax_model_tree(model) -> Tuple[Dict[str, Any], Dict[str, np.ndarra
 # --------------------------------------------------------------------------------------
 # Deserialisation
 # --------------------------------------------------------------------------------------
+#: Parameter names that were renamed in the model library, ``old -> new``.  Files
+#: written before the rename are still readable; the numbers mean the same thing.
+PARAM_ALIASES = {
+    "stddev": "sigma",       # IronTemplate adopted the IronTemplate_new spelling
+}
+
+
+def translate_parameter_name(name: str) -> str:
+    """Map a stored parameter name onto the current one (``stddev`` -> ``sigma``)."""
+    return PARAM_ALIASES.get(name, name)
+
+
 def _restore_parameter(model: JaxModel, name: str, info: Mapping[str, Any]) -> None:
     bounds = info.get("bounds") or [None, None]
     model.set_bounds(name, (bounds[0], bounds[1]))
@@ -267,13 +289,18 @@ def deserialize_jax_model_tree(tree: Mapping[str, Any],
             model = JaxCompoundModel(left, node.get("op", "+"), right)
             if node.get("name"):
                 model.name = node["name"]
+            if node.get("label"):
+                model.label = node["label"]
             return model
 
         if kind == "convolution":
             inner = build(node["inner"])
             if node.get("kind") == "fixed":
-                return JaxConvolvedModel(inner, sigma_x=float(node["sigma_x"]),
-                                         name=node.get("name"))
+                wrapper = JaxConvolvedModel(inner, sigma_x=float(node["sigma_x"]),
+                                            name=node.get("name"))
+                if node.get("label"):
+                    wrapper.label = node["label"]
+                return wrapper
             wrapper = JaxVariableConvolvedModel.__new__(JaxVariableConvolvedModel)
             wrapper._init_wrapper(inner, node.get("name"))
             wrapper._wavec = np.asarray(arrays[node["wavec"]], dtype=float)
@@ -281,6 +308,8 @@ def deserialize_jax_model_tree(tree: Mapping[str, Any],
             wrapper._indices = jnp.asarray(arrays[node["indices"]])
             wrapper._weights = jnp.asarray(arrays[node["weights"]])
             wrapper._needs_interp = False
+            if node.get("label"):
+                wrapper.label = node["label"]
             return wrapper
 
         module = importlib.import_module(node["module"])
@@ -288,11 +317,13 @@ def deserialize_jax_model_tree(tree: Mapping[str, Any],
         ctor: Dict[str, Any] = dict(node.get("ctor") or {})
         for key, array_key in (node.get("ctor_arrays") or {}).items():
             ctor[key] = np.asarray(arrays[array_key])
-        kwargs = {}
-        for name, info in (node.get("params") or {}).items():
-            kwargs[name] = float(info["value"])
+        params = {translate_parameter_name(name): info
+                  for name, info in (node.get("params") or {}).items()}
+        kwargs = {name: float(info["value"]) for name, info in params.items()}
         model = cls(name=node.get("name"), **ctor, **kwargs)
-        for name, info in (node.get("params") or {}).items():
+        if node.get("label"):
+            model.label = node["label"]
+        for name, info in params.items():
             _restore_parameter(model, name, info)
             if info.get("tied"):
                 tie_records.append((model, name, info["tied"]))

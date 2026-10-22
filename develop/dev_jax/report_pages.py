@@ -363,7 +363,7 @@ def model_html(runs, figs, wrap: bool = True) -> str:
             "Continuum.amplitude": "Scales with the observed flux level.",
             "Continuum.alpha": "Any slope from rising to falling fast.",
             "FeII.amplitude": "Cannot outshine the real continuum.",
-            "FeII.stddev": "Iron lines are broad: hundreds to thousands of km/s.",
+            "FeII.sigma": "Iron lines are broad: hundreds to thousands of km/s.",
             "Halpha.sigma_w0": "From as narrow as a narrow line to the broadest known.",
             "OIII.sigma_c": "A line narrower than the instrument is unphysical; the upper end allows a very broad narrow-line region.",
             "Halpha.dv_w0": "Comoving with the galaxy, or moving at a few thousand km/s.",

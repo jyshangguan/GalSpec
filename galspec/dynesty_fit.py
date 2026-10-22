@@ -80,6 +80,12 @@ def _resolve_named_priors(priors, param_names, full_param_names):
     return resolved
 
 
+def _astropy_parameter_labels(model, names):
+    """LaTeX labels for astropy compound models (see :mod:`galspec.param_labels`)."""
+    from .param_labels import qualified_parameter_labels
+    return qualified_parameter_labels(model, names)
+
+
 class Dynesty_Fit:
     """Fit an Astropy compound model with :mod:`dynesty`.
 
@@ -152,6 +158,9 @@ class Dynesty_Fit:
                             if not getattr(self.model, name).fixed
                             and not getattr(self.model, name).tied]
         self.full_param_names = self._full_parameter_names()
+        # LaTeX labels for plots, same convention as JNesty_Fit.
+        self.param_labels = _astropy_parameter_labels(self.model, self.full_param_names)
+        self.full_param_labels = list(self.param_labels)
         self.param_map = dict(zip(self.full_param_names, enumerate(self.param_names)))
         self.custom_priors = _resolve_named_priors(
             dict(custom_priors or {}), self.param_names, self.full_param_names)

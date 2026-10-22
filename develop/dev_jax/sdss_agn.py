@@ -140,7 +140,7 @@ BOUNDS = make_bounds(load_sdss_spectrum()[1])
 FIXED_PARAMS = {
     "line wavelengths": "laboratory values, known to far better than 1 km/s",
     "FeII.z": "the iron lines are at the galaxy redshift",
-    "FeII.stddev": "3000 km/s, a typical broad-line-region value; degenerate with the continuum",
+    "FeII.sigma": "3000 km/s, a typical broad-line-region value; degenerate with the continuum",
 }
 
 
@@ -175,12 +175,12 @@ def _build(module, tie):
     continuum = module.PowerLaw1D(amplitude=0.52, x_0=5500.0, alpha=1.0,
                                   fixed={"x_0": True}, name="Continuum")
 
-    iron = module.IronTemplate(amplitude=0.10, stddev=3000.0, z=0.0, name="FeII")
+    iron = module.IronTemplate_new(amplitude=0.10, sigma=3000.0, z=0.0, dv=0.0, name="FeII")
     iron.z.fixed = True
     # The template's broadening is degenerate with the continuum: freed, it runs to
     # whatever upper limit it is given while chi2/dof stays the same, so we fix it at
     # a representative broad-line-region value instead of fitting noise.
-    iron.stddev.fixed = True
+    iron.sigma.fixed = True
 
     halpha = module.Line_MultiGauss(
         n_components=2, amp_c=1.60, dv_c=20.0, sigma_c=250.0,

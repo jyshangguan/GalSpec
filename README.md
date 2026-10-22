@@ -135,15 +135,23 @@ into annotated cells). It fits the **whole optical spectrum** of IRAS 07546+3928
 Fe II template, H-alpha/H-beta/H-gamma/H-delta each as one narrow Gaussian plus
 **two** broad Gaussians, [O III] with a broad wing, and [N II], [S II], [O I],
 He II, [O III] 4363, [Ne III], [O II], [Ar III], plus the higher Balmer lines
-H-epsilon, H8, H9 and H11 -- 38 free parameters describing twenty components, with
+H-epsilon, H8, H9 and H11 -- 40 free parameters describing twenty components, with
 every narrow line tied to the [O III] kinematics, the two broad components tied
 across the four Balmer lines, and no least-squares step anywhere. The doublet
 ratios are tied at their atomic values except [S II], whose 6716/6731 ratio is a
-density diagnostic and is therefore measured. The model is not convolved with the
-LSF (this spectrum grossly oversamples the instrument); the fit is drawn with
-`galspec.plot.plot_fit`, so every component and the residuals appear in one
-figure, and the whole run is written to a FITS file that
+density diagnostic and is therefore measured. The Fe II template is fitted in its
+`IronTemplate_new` form -- velocity dispersion and velocity shift, redshift fixed
+-- so its width is a measurement (~840 +- 8 km/s here, plus a ~100 km/s redshift-like
+shift) rather than an assumption;
+`IronTemplate_tied`, which broadens the iron with the fitted multi-Gaussian line
+profile instead, is available too. The model is not convolved with the LSF (this
+spectrum grossly oversamples the instrument); the fit is drawn with
+`galspec.plot.plot_fit`, so every component and the sigma-scaled residuals appear
+in one figure, the marginals are drawn with `galspec.plot.plot_posterior_hist`,
+and the whole run is written to a FITS file that
 `galspec.jnesty_fit_io.load_jnesty_fit_from_fits` turns back into a working fit.
+Parameter labels come from `galspec.param_labels`, so plots print
+`BH$\alpha$:$\sigma_{w0}$` instead of `Halpha.sigma_w0`.
 
 ## Example Notebooks
 

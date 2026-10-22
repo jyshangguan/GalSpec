@@ -125,7 +125,7 @@ def build_full_cpu():
     w, label = LINE_WAVE, LINE_LABEL
     pl = models.PowerLaw1D(amplitude=.55, x_0=5500, alpha=1,
                            fixed={"x_0": True}, name="Continuum")
-    iron = galspec.IronTemplate(amplitude=.2, stddev=900, z=0, name="Fe II")
+    iron = galspec.IronTemplate_new(amplitude=.2, sigma=900, z=0, dv=0, name="Fe II")
     bha = galspec.Line_MultiGauss(n_components=2, amp_c=2.22, dv_c=280,
         sigma_c=830, wavec=w["Halpha"], name=label["Halpha"],
         amp_w0=.26, dv_w0=-185, sigma_w0=2400)
@@ -165,7 +165,7 @@ def build_full_jax():
     w, label = LINE_WAVE, LINE_LABEL
     pl = jxm.PowerLaw1D(amplitude=.55, x_0=5500, alpha=1,
                         fixed={"x_0": True}, name="Continuum")
-    iron = jxm.IronTemplate(amplitude=.2, stddev=900, z=0, name="Fe II")
+    iron = jxm.IronTemplate_new(amplitude=.2, sigma=900, z=0, dv=0, name="Fe II")
     bha = jxm.Line_MultiGauss(n_components=2, amp_c=2.22, dv_c=280,
         sigma_c=830, wavec=w["Halpha"], name=label["Halpha"],
         amp_w0=.26, dv_w0=-185, sigma_w0=2400)
@@ -322,7 +322,7 @@ AGN_BOUNDS = {
     "amplitude_0": (0.2, 1.0),        # power-law amplitude
     "alpha_0": (-2.0, 4.0),           # power-law index
     "amplitude_1": (0.01, 1.0),       # Fe II template amplitude
-    "stddev_1": (300.0, 3000.0),      # Fe II velocity width
+    "sigma_1": (300.0, 3000.0),       # Fe II velocity width
     "amp_c0_2": (0.2, 3.5),           # [O III] core, 5007
     "dv_c_2": (-350.0, 200.0),
     "sigma_c_2": (80.0, 600.0),
@@ -339,7 +339,8 @@ def build_agn_cpu():
 
     continuum = models.PowerLaw1D(amplitude=0.5, x_0=5000.0, alpha=1.0,
                                   fixed={"x_0": True}, name="Continuum")
-    iron = galspec.IronTemplate(amplitude=0.15, stddev=900.0, z=0.0, name="Fe II")
+    iron = galspec.IronTemplate_new(amplitude=0.15, sigma=900.0, z=0.0, dv=0.0,
+                                    name="Fe II")
     iron.z.fixed = True
     line = galspec.Line_MultiGauss_doublet(
         n_components=2, amp_c0=1.7, amp_c1=1.7 / 2.98, dv_c=-43.0, sigma_c=250.0,
@@ -355,7 +356,7 @@ def build_agn_jax():
 
     continuum = PowerLaw1D(amplitude=0.5, x_0=5000.0, alpha=1.0,
                            fixed={"x_0": True}, name="Continuum")
-    iron = IronTemplate(amplitude=0.15, stddev=900.0, z=0.0, name="Fe II")
+    iron = IronTemplate(amplitude=0.15, sigma=900.0, z=0.0, dv=0.0, name="Fe II")
     iron.z.fixed = True
     line = Line_MultiGauss_doublet(
         n_components=2, amp_c0=1.7, amp_c1=1.7 / 2.98, dv_c=-43.0, sigma_c=250.0,

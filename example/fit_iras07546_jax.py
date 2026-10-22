@@ -226,8 +226,37 @@ def _power_law(backend):
     return astro_models.PowerLaw1D
 
 
+#: Display names for the models, with the maths a paper would print.  Plot labels
+#: are built from these plus the parameter symbol, e.g. ``BH$\alpha$:$\sigma_{w0}$``
+#: for the width of the broad component of H-alpha.
+MODEL_LABELS = {
+    "Continuum": "Continuum",
+    "FeII": "Fe II",
+    "Halpha": r"BH$\alpha$", "Hbeta": r"BH$\beta$", "Hgamma": r"BH$\gamma$",
+    "Hdelta": r"BH$\delta$", "Hepsilon": r"BH$\epsilon$", "H8": "H8",
+    "H9": "H9", "H11": "H11",
+    "OIII": r"[O III]", "NII": r"[N II]", "SII": r"[S II]", "OI": r"[O I]",
+    "OIII4363": r"[O III] 4363", "NeIII": r"[Ne III]", "OII3727": r"[O II]",
+    "ArIII": r"[Ar III]", "OII7325": r"[O II] 7325", "HeII": r"He II",
+}
+
+
+def apply_model_labels(model, labels=None):
+    """Give every submodel a display name for plots.
+
+    ``galspec.param_labels`` turns a parameter into ``model-label:parameter-symbol``,
+    so setting ``label`` is what puts the line's name in front of the symbol.
+    """
+    mapping = MODEL_LABELS if labels is None else labels
+    for name in model.submodel_names:
+        display = mapping.get(name)
+        if display is not None:
+            model[name].label = display
+    return model
+
+
 def build_model(backend=jxm):
-    """The full model, with three Gaussians per Balmer line.
+    """The full model: narrow core plus two broad Gaussians per Balmer line.
 
     ``backend`` is either :mod:`galspec.jax_models` -- the models the fit uses --
     or :mod:`galspec` itself, the astropy equivalents.  Both expose the same
@@ -245,12 +274,12 @@ def build_model(backend=jxm):
     # -- continuum: a power law anchored at 5500 A, plus the iron pseudo-continuum --
     continuum = _power_law(backend)(amplitude=0.55, x_0=5500.0, alpha=1.0,
                                     fixed={"x_0": True}, name="Continuum")
-    iron = backend.IronTemplate(amplitude=0.2, stddev=3000.0, z=0.0, name="FeII")
+    # ``IronTemplate_new`` parameterises the template by velocity dispersion and
+    # velocity shift, like the broad lines, with the redshift fixed.  The width is
+    # *fitted*: the Fe II optical multiplet is emitted by the same gas as the broad
+    # Balmer lines, so its width is a measurement, not a nuisance parameter.
+    iron = backend.IronTemplate_new(amplitude=0.2, sigma=2500.0, z=0.0, dv=0.0, name="FeII")
     iron.z.fixed = True
-    # The template width is degenerate with the continuum slope: left free it runs
-    # to whatever limit it is given while chi2/dof stays put.  Fix it at a typical
-    # broad-line value instead of fitting noise.
-    iron.stddev.fixed = True
 
     # -- Balmer lines: narrow core + two broad Gaussians each -------------------
     def balmer(name, wavec, amp_c, amp_w0):
@@ -379,6 +408,10 @@ def make_priors(flux):
         "Continuum.amplitude": (0.2 * continuum, 4.0 * continuum),
         "Continuum.alpha": (-5.0, 5.0),
         "FeII.amplitude": (1e-3, 3.0 * continuum),
+        # iron width and shift, free: wide, data-driven priors around a broad-line
+        # value (the template itself is ~340 km/s wide, so the prior starts there)
+        "FeII.sigma": (400.0, 8000.0),
+        "FeII.dv": (-1500.0, 1500.0),
         # narrow kinematics: [O III] sets them for every narrow line
         "OIII.dv_c": (-1000.0, 1000.0),
         "OIII.sigma_c": (30.0, 800.0),
@@ -432,7 +465,7 @@ def run_fit(wave, flux, error, bounds, custom_priors, nlive=NLIVE, dlogz=DLOGZ,
         # Only draw the bar when someone is watching: in a batch job it would be
         # thousands of carriage-return updates in the log.
         progress = sys.stdout.isatty()
-    model = build_model(jxm)
+    model = apply_model_labels(build_model(jxm))   # so the fit carries plot labels
     fit = JNesty_Fit(model, wave, flux, error,
                      bounds_dict=bounds, custom_priors=custom_priors,
                      nlive=nlive, bound="multi", device=device)
@@ -459,12 +492,14 @@ PARAM_UNITS = {
     ".amp_w1": "(ratio to core)", ".amplitude": "1e-14 erg/s/cm2/A",
     ".alpha": "", ".dv_c": "km/s", ".sigma_c": "km/s", ".dv_w0": "km/s",
     ".sigma_w0": "km/s", ".dv_w1": "km/s", ".sigma_w1": "km/s",
+    ".sigma": "km/s", ".dv": "km/s",
 }
 
 PARAM_NOTES = {
     "Continuum.amplitude": "continuum flux density at 5500 A",
     "Continuum.alpha": "continuum slope (F_nu ~ nu^-alpha)",
     "FeII.amplitude": "iron pseudo-continuum strength",
+    "FeII.sigma": "iron velocity width", "FeII.dv": "iron velocity shift",
     "OIII.amp_c0": "[O III] 5007 narrow peak", "OIII.amp_w0": "[O III] wing / core",
     "OIII.dv_c": "velocity shift of all narrow lines",
     "OIII.sigma_c": "velocity width of all narrow lines",
@@ -607,7 +642,7 @@ def cpu_model_with_values(fit):
     """
     model_jax, _, _ = fit.get_best_fit()
     resolved = model_jax.param_dict()
-    model_cpu = build_model(galspec)
+    model_cpu = apply_model_labels(build_model(galspec))
     for flat, qualified in zip(model_jax.param_names, model_jax.qualified_param_names):
         value = resolved.get(flat)
         if value is None:
@@ -710,13 +745,42 @@ def plot_corner(fit, outfile, max_params=14):
               "Continuum.alpha", "FeII.amplitude", "Halpha.amp_c", "Halpha.amp_w0",
               "Halpha.amp_w1", "Hbeta.amp_c", "Hbeta.amp_w0")
     keep = [i for i, name in enumerate(fit.full_param_names) if name in wanted][:max_params]
+    # maths labels: "BH$\alpha$:$\sigma_{w0}$" instead of "Halpha.sigma_w0"
+    labels = getattr(fit, "param_labels", None) or fit.full_param_names
     fig = corner.corner(fit.samples_equal_weight[:, keep],
-                        labels=[fit.full_param_names[i] for i in keep],
+                        labels=[labels[i] for i in keep],
                         quantiles=(0.16, 0.5, 0.84), show_titles=True, title_fmt=".3g",
                         title_kwargs={"fontsize": 8}, label_kwargs={"fontsize": 9})
     fig.savefig(outfile, dpi=110, bbox_inches="tight")
     plt.close(fig)
     print(f"  wrote {outfile}")
+    return outfile
+
+
+#: Parameters worth a histogram: the numbers the fit exists to measure.
+HIST_PARAMS = ("Halpha.amp_c", "Halpha.amp_w0", "Halpha.dv_w0", "Halpha.sigma_w0",
+               "Halpha.sigma_w1", "Hbeta.amp_c", "OIII.sigma_c", "OIII.dv_c",
+               "FeII.sigma", "FeII.dv", "SII.amp_c0", "SII.amp_c1",
+               "Continuum.alpha")
+
+
+def plot_histograms(fit, outfile, params=HIST_PARAMS):
+    """One-dimensional posteriors, with the median and the 16-84 band.
+
+    A corner plot of forty parameters is unreadable; these are the marginals worth
+    showing, and they carry the numbers ``print_parameter_table`` quotes.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    names = list(fit.full_param_names)
+    wanted = [name for name in params if name in names]
+    fig, axes = galspec.plot.plot_posterior_hist(
+        fit, params=wanted, ncols=4, bins=40,
+        title="IRAS 07546+3928: marginal posteriors", filename=str(outfile))
+    plt.close(fig)
+    print(f"  wrote {outfile} ({len(wanted)} panels)")
     return outfile
 
 
@@ -764,7 +828,7 @@ def main(argv=None) -> int:
               f"median error {np.median(error[sel]):5.3f} "
               f"({100*np.median(error[sel]/flux[sel]):4.1f}%)")
 
-    model = build_model(jxm)
+    model = apply_model_labels(build_model(jxm))
     submodels = sorted({q.split(".")[0] for q in model.qualified_param_names})
     print(f"\n[2/5] model: {len(submodels)} components, no LSF convolution, "
           f"{len(model.free_param_names)} free parameters")
@@ -815,6 +879,7 @@ def main(argv=None) -> int:
         plot_result(wave, flux, model_cpu, outdir / "iras07546_jax_fit.png",
                     zooms, mask_list=list(MASK_WINDOWS), error=error)
         plot_corner(fit, outdir / "iras07546_jax_corner.png")
+        plot_histograms(fit, outdir / "iras07546_jax_histograms.png")
 
     # The sampler's GPU buffers (sized by max_iterations) are no longer needed:
     # the results and the model live in host memory and the FITS file keeps a

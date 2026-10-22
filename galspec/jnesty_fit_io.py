@@ -360,6 +360,26 @@ def load_jnesty_fit_from_fits(filename, wave: Optional[np.ndarray] = None):
     wave_grid = np.asarray(wave, dtype=float) if wave is not None else data.get("wave_use")
     model = deserialize_jax_model_tree(tree, arrays, wave=wave_grid)
 
+    from .jax_models.serialization import translate_parameter_name
+
+    stored = data.get("param_names") or []
+    translated = [translate_parameter_name(name) for name in stored]
+    if any(old != new for old, new in zip(stored, translated)):
+        renamed = {old: new for old, new in zip(stored, translated) if old != new}
+        warnings.warn(f"{filename} uses the old parameter name(s) {renamed}; they are "
+                      "renamed on load, the values are unchanged", stacklevel=2)
+        data["param_names"] = translated
+        data["full_param_names"] = [f"{name.rsplit('.', 1)[0]}.{translate_parameter_name(name.rsplit('.', 1)[-1])}"
+                                    if '.' in name else translate_parameter_name(name)
+                                    for name in data.get("full_param_names", translated)]
+    current = [str(name) for name in model.free_param_names]
+    if translated and translated != current:
+        raise ValueError(
+            f"{filename} was written with parameters {stored}, but the model in it now "
+            f"has {current}. The sample columns would be misaligned, so the file is not "
+            "loaded; refit with the current GalSpec, or load it with the version that "
+            "wrote it.")
+
     if data["param_bounds"] and data["param_names"]:
         model.set_prior_limits(_limits_by_base_name(data["param_bounds"],
                                                     data["param_names"]))
@@ -380,6 +400,9 @@ def load_jnesty_fit_from_fits(filename, wave: Optional[np.ndarray] = None):
     fit.sampler = None
     fit.param_map = {full: (index, name) for index, (full, name)
                      in enumerate(zip(fit.full_param_names, fit.param_names))}
+    from .param_labels import qualified_parameter_labels
+    fit.param_labels = qualified_parameter_labels(fit.model, fit.full_param_names)
+    fit.full_param_labels = list(fit.param_labels)
 
     if custom_names:
         warnings.warn(

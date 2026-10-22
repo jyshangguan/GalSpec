@@ -38,7 +38,7 @@ PARAM_INFO = {
     "amplitude_0": ("Continuum level", "flux at 5500 A", "How bright the smooth power law is at 5500 A."),
     "alpha_0": ("Continuum slope", "", "Power-law index: brightness falls as wavelength^(-alpha)."),
     "amplitude_1": ("Fe II strength", "flux", "Height of the iron (Fe II) template, the forest of iron lines."),
-    "stddev_1": ("Fe II broadening", "km/s", "How much the iron template is blurred by velocity."),
+    "sigma_1": ("Fe II broadening", "km/s", "How much the iron template is blurred by velocity."),
     "amp_c_2": ("H-alpha narrow peak", "flux", "Peak height of the narrow H-alpha line."),
     "amp_w0_2": ("H-alpha broad peak", "flux", "Peak height of the broad H-alpha line."),
     "dv_w0_2": ("H-alpha broad shift", "km/s", "Velocity offset of the broad H-alpha line."),
@@ -337,7 +337,7 @@ def fig_corner(runs: dict) -> list:
     made.append("img/corner_derived.png")
 
     short = {"amplitude_0": "cont. amp", "alpha_0": "gamma", "amplitude_1": "Fe II amp",
-             "stddev_1": "Fe II sd", "amp_c_2": "Ha nar", "amp_w0_2": "Ha brd",
+             "sigma_1": "Fe II sd", "amp_c_2": "Ha nar", "amp_w0_2": "Ha brd",
              "dv_w0_2": "Ha dv", "sigma_w0_2": "Ha sig", "amp_c_3": "Hb nar",
              "amp_w0_3": "Hb brd", "amp_c_4": "Hg nar", "amp_w0_4": "Hg brd",
              "amp_c0_5": "OIII nar", "dv_c_5": "nar dv", "sigma_c_5": "nar sig",

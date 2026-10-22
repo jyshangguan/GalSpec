@@ -6,6 +6,7 @@ from .stellar_continuum import *
 from .line_profile import *
 from .utils import *
 from .plot import *
+from .param_labels import *
 from .mcmc_fit import *
 from .measure_method import *
 from .convolution import *

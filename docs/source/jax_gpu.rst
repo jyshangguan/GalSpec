@@ -310,6 +310,106 @@ Float32 is worth knowing about: on this GeForce the 64-bit pipeline runs at a
 small fraction of the 32-bit rate, so float32 is ~3-10x faster per evaluation
 and ~2-4x faster end-to-end, at ~4e-5 relative accuracy instead of ~1e-16.
 
+The iron template, and letting the lines broaden it
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``galspec.jax_models.IronTemplate`` speaks the same language as the CPU
+``galspec.IronTemplate_new``: ``amplitude``, ``sigma`` (velocity dispersion in
+km/s), ``dv`` (velocity shift) and a ``z`` that is **fixed by default**.  This is
+the parameterisation to fit with, because ``sigma`` and ``dv`` are the numbers a
+paper quotes and the redshift is known:
+
+.. code-block:: python
+
+   iron = jxm.IronTemplate_new(amplitude=0.2, sigma=2500.0, dv=0.0, name="FeII")
+   iron.z.fixed = True                  # already the default
+   # sigma and dv are free: the Fe II optical multiplet is a measurement
+
+``IronTemplate_tied`` is the stricter model: the template is broadened not by one
+Gaussian but by a **multi-Gaussian profile that is fitted at the same time** --
+normally the profile of the broad Balmer lines, tied component by component:
+
+.. code-block:: python
+
+   iron = jxm.IronTemplate_tied(n_components=2, amplitude=0.2, name="FeII")
+   for index, (amp, dv, sigma) in enumerate(("amp_w0", "dv_w0", "sigma_w0"),
+                                             ("amp_w1", "dv_w1", "sigma_w1")):
+       getattr(iron, f"w_{index}").tied = getattr(galspec.tie, f"tie_MultiGauss_{amp}")("Halpha")
+       getattr(iron, f"dv_{index}").tied = getattr(galspec.tie, f"tie_MultiGauss_{dv}")("Halpha")
+       getattr(iron, f"sigma_{index}").tied = getattr(galspec.tie, f"tie_MultiGauss_{sigma}")("Halpha")
+
+With one component, ``dv = 0`` and unit weight it is *identical* to
+``IronTemplate`` (verified to machine precision in ``tests/test_model_features.py``),
+so the generalisation cannot quietly change the simpler model's meaning.  The
+weights are normalised to unit sum, which keeps ``amplitude`` meaning the same
+thing in both models.
+
+The implementation subtracts the template's own width in quadrature, component by
+component, instead of deconvolving it: exact for Gaussian kernels, and it needs no
+host-side kernel array, so the model stays differentiable and ``jit``-able
+through every kernel parameter.  (The CPU ``IronTemplate_tied`` takes the other
+route -- FFT deconvolution plus a Wiener filter, then a convolution with an
+explicit array -- which is stable but cannot be differentiated through ``dv`` and
+``sigma``.)
+
+**Cost.**  The convolution runs on the template grid (801 channels for
+``park2022``), not on the 80 000-pixel spectrum, and only the sum is interpolated
+onto the data.  Measured on this machine, a two-component kernel costs
+**+0.1 to +0.45 ms per evaluation** (it moves with how busy the card is): a few
+per cent of a full-spectrum model, up to 20% of one that is nothing but a line and
+the iron.  A fit needs 1e5-1e6 evaluations, so call it **0.2-7 minutes** on top of
+the sampling.  It is not free -- the kernel costs one smoothing and one
+interpolation per component -- but it does not change the scale of the problem.
+Two things keep it there: the smoothing happens on the 801-point template rather
+than on the spectrum, and the kernel radius is static ``jnp`` data sized from the
+prior bound, so nothing re-traces when a sample moves.
+
+LaTeX labels for parameters
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Fitters report ``amp_c0_7`` and ``Continuum.alpha``; plots should print
+:math:`A_{c0}` and :math:`\alpha`.  ``galspec.param_labels`` splits every
+parameter name into a base and a subscript, so one table covers the whole
+library, and prefixes the owning model:
+
+.. code-block:: python
+
+   model["Halpha"].label = r"BH$\alpha$"      # display name, may contain maths
+   fit = JNesty_Fit(model, wave, flux, error)
+   print(fit.param_labels[:3])
+   # ['Continuum:$A$', 'Continuum:$\alpha$', 'BH$\alpha$:$A_{c}$']
+
+Both fitters expose ``param_labels`` (aligned with ``full_param_names``), so
+``fit.plot_corner()`` and ``galspec.plot.plot_posterior_hist`` use them without
+further work.  The model's ``name`` is untouched: it is still the key you index
+with (``model["Halpha"]``).
+
+A model class that needs a different symbol declares it in a ``PARAM_SYMBOLS``
+class attribute, which overrides the shared table for that model only::
+
+    class Line_Exponential(Line_Gaussian):
+        PARAM_SYMBOLS = {"sigma": r"\varsigma", "amplitude": r"\mathcal{A}"}
+
+    >>> parameter_labels(Line_Exponential(amplitude=1.0, sigma=300.0))
+    ['$\mathcal{A}$', '$\Delta v$', '$\varsigma$', '$\lambda$']
+
+One-dimensional posteriors
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A corner plot of forty parameters is unreadable.  ``plot_posterior_hist`` draws
+one histogram per requested parameter, with the median, the 16-84 percentile band,
+the value printed on top, and the prior bounds as dotted lines (a parameter that
+has filled its prior is then obvious):
+
+.. code-block:: python
+
+   galspec.plot.plot_posterior_hist(
+       fit, params=["Halpha.sigma_w0", "OIII.sigma_c", "FeII.sigma"],
+       ncols=3, filename="marginals.png")
+
+It accepts a fit object or a plain ``(nsamples, ndim)`` array, and labels can be
+overridden with ``labels=``.
+
 Drawing twenty components
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -446,7 +546,7 @@ of H-alpha) and the fixed doublet ratios.  For the timing comparison the
 electron-density diagnostic, not a fixed number), and the worked example in
 ``example/fit_iras07546_jax.py`` leaves it free, adds a second broad Gaussian
 per Balmer line and four high-order Balmer lines (H-epsilon and H8-H11), which is
-why that fit has 38 free parameters over twenty components. The benchmark model
+why that fit has 40 free parameters over twenty components. The benchmark model
 is also convolved with
 the SDSS line-spread function (Gaussian, R = 2000 at 5500 A): at 0.046 A sampling
 the instrument, not the gas, sets the width of the narrow cores, so convolving

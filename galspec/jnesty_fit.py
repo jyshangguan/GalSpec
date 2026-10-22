@@ -55,6 +55,7 @@ except ImportError:  # pragma: no cover
     corner = None
 
 from .dynesty_fit import Dynesty_Fit, _resolve_named_priors
+from .param_labels import parameter_labels, qualified_parameter_labels
 
 __all__ = ["JNesty_Fit", "jax_devices_summary", "select_device"]
 
@@ -165,6 +166,10 @@ class JNesty_Fit:
                             tuple(model.param_names))
         self.full_param_names = [q for q, flat in zip(qualified, model.param_names)
                                  if flat in set(self.param_names)]
+        # LaTeX labels for plots: "Halpha.sigma_w0" -> "BH$\alpha$:$\sigma_{w0}$"
+        # when the model's `label` is set, otherwise "Halpha:$\sigma_{w0}$".
+        self.param_labels = qualified_parameter_labels(model, self.full_param_names)
+        self.full_param_labels = list(self.param_labels)
         self._initial = dict(zip(self.param_names,
                                  np.asarray(model.get_free_params(), dtype=float)))
         self.custom_priors = _resolve_named_priors(

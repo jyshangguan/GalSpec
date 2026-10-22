@@ -1,4 +1,44 @@
-"""JAX Fe II template model -- mirrors :class:`galspec.iron_template.IronTemplate`."""
+"""JAX Fe II template models.
+
+Two models, both mirroring the CPU side of GalSpec:
+
+``IronTemplate``
+    The JAX counterpart of :class:`galspec.iron_template.IronTemplate_new`:
+    ``amplitude``, ``sigma`` (velocity dispersion), ``dv`` (velocity shift) and a
+    ``z`` that defaults to *fixed*.  This is the parameterisation to fit with --
+    ``sigma`` and ``dv`` in km/s are the quantities a paper quotes, and the
+    redshift is known.
+
+``IronTemplate_tied``
+    The same template broadened not by one Gaussian but by a **multi-Gaussian**
+    profile that is fitted simultaneously -- normally the profile of the broad
+    Balmer lines, tied component by component.  A one-component tied model with
+    ``dv = 0`` and unit weight reproduces ``IronTemplate`` exactly.
+
+Why the broadened template is built the way it is
+-------------------------------------------------
+The template itself already contains the intrinsic broadening of the reference
+object (Mrk 493, ~340 km/s).  What we want is the template as it would look after
+passing through a Gaussian of width ``sigma``, so the extra variance to add is
+``sigma**2 - sigma_intr**2`` -- the quadrature subtraction
+:class:`~galspec.iron_template.IronTemplate_new` also does.  For a *sum* of
+Gaussians the same works component by component, which is why no deconvolution is
+needed here (the CPU ``IronTemplate_tied`` instead deconvolves the template with
+an FFT and a Wiener filter, then convolves with an explicit kernel array -- that
+needs a host-side kernel and is not differentiable through the kernel
+parameters).
+
+Cost
+----
+The convolution happens on the *template* grid -- 801 channels for ``park2022``,
+5 418 for ``boroson1992`` -- not on the 80 000-pixel spectrum, and only the final
+result is interpolated onto the data grid.  A two-component kernel therefore costs
+one extra smoothing and one extra interpolation per component: measured at
+**+0.1 to +0.45 ms per evaluation** on the example hardware (it moves with how
+busy the card is), i.e. 0.2-7 minutes over a fit that needs 1e5-1e6 evaluations.  The percentage is large for a model
+made of one line plus the iron and small for a whole spectrum, because
+``jnp.interp`` onto the data grid dominates either way.
+"""
 
 from __future__ import annotations
 
@@ -12,11 +52,14 @@ from ..utils import package_path, splitter
 from .core import JaxModel, ParamSpec
 from .functional import gaussian_smooth1d
 
-__all__ = ["IronTemplate"]
+__all__ = ["IronTemplate", "IronTemplate_new", "IronTemplate_tied"]
 
-#: Default upper bound on the template velocity dispersion [km/s] used to size the
-#: static convolution kernel.  Raise via ``sigma_max`` if a prior extends beyond it.
+#: Default upper bound on the fitted dispersion [km/s] used to size the static
+#: convolution kernel.  ``JNesty_Fit`` tightens it from the prior automatically.
 _DEFAULT_SIGMA_MAX = 5000.0
+
+#: Smallest dispersion the model treats as "narrower than the template itself".
+_MIN_SIGMA = 1e-6
 
 
 def _load_template(template_name: str):
@@ -45,34 +88,31 @@ def _load_template(template_name: str):
     return wave, flux, stddev_intr
 
 
-class IronTemplate(JaxModel):
-    """Fe II emission template -- ``galspec.IronTemplate``.
-
-    The CPU model broadens the template with
-    ``gaussian_filter1d(template, sigma_pix)`` where
-    ``sigma_pix = sqrt(stddev**2 - stddev_intr**2) / vchan``; here the kernel
-    radius is static (:class:`~galspec.jax_models.core.JaxModel.prepare`) so the
-    model stays ``jit``-able.
-
-    Parameters
-    ----------
-    template_name : {'park2022', 'boroson1992'}
-        Which template to load.
-    sigma_max : float, optional
-        Upper bound on the fitted ``stddev`` used to size the static kernel
-        radius.  ``JNesty_Fit`` tightens this automatically from the prior.
-    """
+class _IronBase(JaxModel):
+    """Shared template loading, kernel sizing and the final interpolation."""
 
     model_kind = "IronTemplate"
     PARAMS = (
         ParamSpec("amplitude", 1.0, bounds=(0.0, None)),
-        ParamSpec("stddev", 900.0 / 2.3548, bounds=(900.0 / 2.3548, None)),
-        ParamSpec("z", 0.0, bounds=(0.0, 10.0)),
+        ParamSpec("sigma", 900.0 / 2.3548, bounds=(900.0 / 2.3548, None)),
+        ParamSpec("z", 0.0, fixed=True),
+        ParamSpec("dv", 0.0, bounds=(-2000.0, 2000.0)),
     )
 
     def __init__(self, template_name: str = "park2022", sigma_max: Optional[float] = None,
                  name: Optional[str] = None, fixed: Optional[dict] = None,
                  bounds: Optional[dict] = None, **kwargs):
+        if "stddev" in kwargs:                      # pre-0.3 spelling of ``sigma``
+            import warnings
+
+            warnings.warn("IronTemplate parameter 'stddev' was renamed 'sigma' to match "
+                          "galspec.IronTemplate_new; passing stddev= still works but is "
+                          "deprecated", DeprecationWarning, stacklevel=3)
+            kwargs["sigma"] = kwargs.pop("stddev")
+            if fixed is not None and "stddev" in fixed:
+                fixed = dict(fixed, sigma=fixed.pop("stddev"))
+            if bounds is not None and "stddev" in bounds:
+                bounds = dict(bounds, sigma=bounds.pop("stddev"))
         wave, flux, stddev_intr = _load_template(template_name)
         self.template_name = template_name
         self._wave_temp = jnp.asarray(wave)
@@ -80,8 +120,7 @@ class IronTemplate(JaxModel):
         self._stddev_intr = float(stddev_intr)
         self._vchan = float((wave[1] - wave[0]) / wave[0] * ls_km)
 
-        # Size the static kernel from the tightest available upper bound.
-        upper = bounds.get("stddev", (None, None))[1] if bounds else None
+        upper = bounds.get("sigma", (None, None))[1] if bounds else None
         if sigma_max is None:
             sigma_max = float(upper) if upper is not None else _DEFAULT_SIGMA_MAX
         elif upper is not None and np.isfinite(upper):
@@ -91,22 +130,132 @@ class IronTemplate(JaxModel):
         super().__init__(name=name, fixed=fixed, bounds=bounds, **kwargs)
 
     # -- static kernel sizing ------------------------------------------------------
+    def _sigma_pixels(self, sigma_max: Optional[float] = None) -> float:
+        sigma_max = self.sigma_max if sigma_max is None else sigma_max
+        return float(np.sqrt(max(sigma_max ** 2 - self._stddev_intr ** 2, 0.0)) / self._vchan)
+
     def _update_radius(self) -> None:
-        sig_max_pix = np.sqrt(max(self.sigma_max ** 2 - self._stddev_intr ** 2, 0.0)) / self._vchan
-        # sigma_pix_max reproducibility requires the floor(4*sigma+0.5) convention.
-        self._radius = int(4.0 * sig_max_pix + 0.5)
+        # floor(4*sigma + 0.5) is the convention scipy uses, so the kernel matches.
+        self._radius = int(4.0 * self._sigma_pixels() + 0.5)
 
     def set_prior_limits(self, limits: dict) -> None:
         """Refine the static kernel radius from the fitter's prior bounds."""
-        upper = limits.get("stddev", (None, None))[1]
+        upper = limits.get("sigma", (None, None))[1]
         if upper is not None and np.isfinite(upper):
             self.sigma_max = float(upper)
             self._update_radius()
 
+    # -- evaluation ----------------------------------------------------------------
+    def _smoothed_template(self, sigma):
+        """Template broadened to a total dispersion ``sigma`` [km/s]."""
+        sig_pix = jnp.sqrt(jnp.clip(sigma ** 2 - self._stddev_intr ** 2, 0.0)) / self._vchan
+        smoothed = gaussian_smooth1d(self._flux_temp, jnp.maximum(sig_pix, _MIN_SIGMA),
+                                     radius=self._radius)
+        return jnp.where(sigma < self._stddev_intr, self._flux_temp, smoothed)
+
+
+class IronTemplate(_IronBase):
+    """Fe II emission with a single Gaussian broadening -- ``galspec.IronTemplate_new``.
+
+    Parameters
+    ----------
+    template_name : {'park2022', 'boroson1992'}
+        Which template to load.
+    sigma_max : float, optional
+        Upper bound on the fitted ``sigma``, used to size the static convolution
+        kernel.  ``JNesty_Fit`` tightens this automatically from the prior, so it
+        only needs setting when the model is evaluated outside a fit.
+    """
+
+    model_kind = "IronTemplate"
+
     def evaluate(self, x, p):
-        stddev = p["stddev"]
-        sig_pix = jnp.sqrt(jnp.clip(stddev ** 2 - self._stddev_intr ** 2, 0.0)) / self._vchan
-        sigma_safe = jnp.maximum(sig_pix, 1e-6)
-        smoothed = gaussian_smooth1d(self._flux_temp, sigma_safe, radius=self._radius)
-        flux_conv = jnp.where(stddev < self._stddev_intr, self._flux_temp, smoothed)
-        return p["amplitude"] * jnp.interp(x, self._wave_temp * (1.0 + p["z"]), flux_conv)
+        wave_shifted = self._wave_temp * (1.0 + p["z"] + p["dv"] / ls_km)
+        return p["amplitude"] * jnp.interp(x, wave_shifted,
+                                           self._smoothed_template(p["sigma"]))
+
+
+class IronTemplate_tied(_IronBase):
+    """Fe II emission broadened by a fitted multi-Gaussian profile.
+
+    The kernel is a sum of Gaussian components, each with its own velocity shift,
+    width and weight, so it can be tied to the broad Balmer lines component by
+    component::
+
+        fe = jxm.IronTemplate_tied(n_components=2, template_name="park2022", name="FeII")
+        fe.dv_0.tied = jxm.tie.tie_MultiGauss_dv_w0("Halpha")
+        fe.sigma_0.tied = jxm.tie.tie_MultiGauss_sigma_w0("Halpha")
+        fe.w_0.tied = jxm.tie.tie_MultiGauss_amp_w0("Halpha")
+        fe.dv_1.tied = jxm.tie.tie_MultiGauss_dv_w1("Halpha")
+        ...
+
+    The weights are normalised to unit sum, so ``amplitude`` keeps the meaning it
+    has in :class:`IronTemplate` (the template scale) whatever the line
+    amplitudes do.  Left untied, the components are free iron-profile parameters,
+    which is a legitimate model too.
+
+    Parameters
+    ----------
+    n_components : int
+        Number of Gaussian components in the broadening kernel (2 matches the
+        worked example's two broad Balmer components).
+    template_name : {'park2022', 'boroson1992'}
+        Which template to load.
+    sigma_max : float, optional
+        Upper bound on ``sigma_k``, used to size the static kernel.
+    """
+
+    model_kind = "IronTemplate_tied"
+
+    def __init__(self, n_components: int = 2, template_name: str = "park2022",
+                 sigma_max: Optional[float] = None, name: Optional[str] = None,
+                 fixed: Optional[dict] = None, bounds: Optional[dict] = None, **kwargs):
+        if n_components < 1:
+            raise ValueError("n_components must be >= 1")
+        self.n_components = int(n_components)
+        super().__init__(template_name=template_name, sigma_max=sigma_max, name=name,
+                         fixed=fixed, bounds=bounds, **kwargs)
+
+    def _build_specs(self, **kwargs):
+        from .core import _apply_kwargs
+
+        specs = [
+            ParamSpec("amplitude", 1.0, bounds=(0.0, None)),
+            ParamSpec("z", 0.0, fixed=True),
+        ]
+        for index in range(self.n_components):
+            specs += [
+                ParamSpec(f"dv_{index}", 0.0, bounds=(-2000.0, 2000.0)),
+                ParamSpec(f"sigma_{index}", 2000.0, bounds=(self._stddev_intr, None)),
+                ParamSpec(f"w_{index}", 1.0, bounds=(0.0, None)),
+            ]
+        return _apply_kwargs(specs, kwargs, type(self).__name__)
+
+    def set_prior_limits(self, limits: dict) -> None:
+        """Size the kernel from the largest ``sigma_k`` bound."""
+        upper = 0.0
+        for index in range(self.n_components):
+            candidate = limits.get(f"sigma_{index}", (None, None))[1]
+            if candidate is not None and np.isfinite(candidate):
+                upper = max(upper, float(candidate))
+        if upper > 0.0:
+            self.sigma_max = upper
+            self._update_radius()
+
+    def evaluate(self, x, p):
+        weights = jnp.stack([p[f"w_{index}"] for index in range(self.n_components)])
+        total_weight = jnp.where(jnp.sum(weights) > 0, jnp.sum(weights), 1.0)
+        # Each component is projected onto the data separately rather than summed on
+        # the template grid first: a shift resampled on the 150 km/s template grid
+        # costs ~1e-3 of the peak in interpolation error, and projecting each
+        # component keeps a one-component kernel *identical* to IronTemplate.
+        flux = jnp.zeros_like(jnp.asarray(x, dtype=jnp.float64))
+        for index in range(self.n_components):
+            template = self._smoothed_template(p[f"sigma_{index}"])
+            wave_k = self._wave_temp * (1.0 + p["z"] + p[f"dv_{index}"] / ls_km)
+            flux = flux + weights[index] / total_weight * jnp.interp(x, wave_k, template)
+        return p["amplitude"] * flux
+
+
+#: The JAX models follow the CPU naming, so ``IronTemplate_new`` is an alias.
+IronTemplate_new = IronTemplate

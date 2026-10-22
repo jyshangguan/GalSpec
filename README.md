@@ -129,7 +129,7 @@ The JAX models are verified against the CPU models by
 GPU and CPU fits are guaranteed to be solving the same problem.
 
 A complete worked example lives in `example/fit_iras07546_jax.py` (script,
-40-60 min on one GPU) and `example/fit_iras07546_jax.ipynb` (the same fit broken
+30-45 min on one GPU) and `example/fit_iras07546_jax.ipynb` (the same fit broken
 into annotated cells). It fits the **whole optical spectrum** of IRAS 07546+3928
 (3680-7500 A rest frame, 83 681 pixels) in one go: a power-law continuum plus an
 Fe II template, H-alpha/H-beta/H-gamma/H-delta each as one narrow Gaussian plus

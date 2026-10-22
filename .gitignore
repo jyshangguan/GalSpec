@@ -167,6 +167,23 @@ develop/*
 develop/dev_nautilus/*
 !develop/dev_nautilus/README.md
 !develop/dev_nautilus/*.py
+!develop/dev_jax/
+develop/dev_jax/*
+!develop/dev_jax/README.md
+!develop/dev_jax/*.py
+!develop/dev_jax/results/
+develop/dev_jax/results/*
+!develop/dev_jax/results/bench_*.json
+!develop/dev_jax/results/bench_*.png
+!develop/dev_jax/results/demo_*.png
+!develop/dev_jax/results/sdss_*.json
+!develop/dev_jax/results/report/
+develop/dev_jax/results/report/*
+!develop/dev_jax/results/report/*.html
+!develop/dev_jax/results/report/*.css
+!develop/dev_jax/results/report/img/
+develop/dev_jax/results/report/img/*
+!develop/dev_jax/results/report/img/*.png
 .vscode/*
 
 # Large data files - downloaded automatically

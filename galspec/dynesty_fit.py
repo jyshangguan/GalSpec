@@ -324,6 +324,7 @@ class Dynesty_Fit:
                     owned_pool.join()
         self.runtime_seconds = time.perf_counter() - started
         self.ncall = int(np.sum(self.results.ncall))
+        self.n_iterations = int(getattr(self.results, "niter", 0) or 0)
         weights = np.exp(self.results.logwt - self.results.logz[-1])
         self.samples_equal_weight = dyfunc.resample_equal(
             self.results.samples, weights, rstate=self.rstate)

@@ -42,6 +42,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+jax = [
+    "jax>=0.4.20",
+]
+gpu = [
+    "jax[cuda12]>=0.4.20",
+]
 dev = [
     "pytest>=7.0",
     "jupyter>=1.0",
@@ -54,7 +60,7 @@ Documentation = "https://github.com/jyshangguan/GalSpec"
 Repository = "https://github.com/jyshangguan/GalSpec"
 
 [tool.setuptools]
-packages = ["galspec"]
+packages = ["galspec", "galspec.jax_models"]
 
 [tool.setuptools.package-data]
 galspec = ["data/*"]

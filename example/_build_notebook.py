@@ -39,6 +39,7 @@ from scipy.ndimage import median_filter
 import galspec
 from galspec import jax_models as jxm
 from galspec.jnesty_fit import JNesty_Fit, jax_devices_summary
+from galspec.jnesty_fit_io import save_jnesty_fit_to_fits, load_jnesty_fit_from_fits
 from galspec.utils import line_wave_dict as LINE_WAVE
 
 warnings.simplefilter("ignore")
@@ -531,7 +532,7 @@ axr = fig.add_axes([0.055, 0.07, 0.885, 0.13])
 galspec.plot.plot_fit(
     wave, flux, model_cpu, ax=ax, axr=axr, mask_list=MASK_WINDOWS,
     xlabel="Rest wavelength  [A]",
-    ylabel=r"$F_\\\\lambda$  [$10^{-14}$ erg s$^{-1}$ cm$^{-2}$ $\\\\AA^{-1}$]",
+    ylabel=r"$F_\\lambda$  [$10^{-14}$ erg s$^{-1}$ cm$^{-2}$ $\\AA^{-1}$]",
     legend_kwargs={"fontsize": 10.5, "ncol": 3})
 ax.set_title("IRAS 07546+3928: whole optical spectrum, "
              "two broad Gaussians per Balmer line", fontsize=13)
@@ -550,7 +551,7 @@ for title, xlim, ylim in zooms:
         wave, flux, model_cpu, ax=ax, axr=axr, xlim=xlim, ylim0=ylim,
         mask_list=MASK_WINDOWS,
         xlabel="Rest wavelength  [A]",
-        ylabel=r"$F_\\\\lambda$  [$10^{-14}$ erg s$^{-1}$ cm$^{-2}$ $\\\\AA^{-1}$]",
+        ylabel=r"$F_\\lambda$  [$10^{-14}$ erg s$^{-1}$ cm$^{-2}$ $\\AA^{-1}$]",
         legend_kwargs={"fontsize": 9.5, "ncol": 2})
     ax.set_title(f"{title}: {xlim[0]:.0f}-{xlim[1]:.0f} A", fontsize=12)
     plt.show()
@@ -664,7 +665,8 @@ the continuum and the lines are constrained by the same posterior:
   (measured from [O III]); the two broad components are each shared across all
   four Balmer lines. 38 free numbers therefore describe twenty components.
 
-Runtime: 40-60 minutes on one GPU with `nlive=400, dlogz=0.01`. For a quick look
+Runtime: 30-45 minutes on one GPU with `nlive=400, dlogz=0.01` (this run:
+33 min, 84 994 iterations). For a quick look
 set `NLIVE = 200` and `DLOGZ = 0.1` in the settings cell and expect wider error
 bars."""),
 

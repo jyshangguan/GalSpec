@@ -310,6 +310,27 @@ Float32 is worth knowing about: on this GeForce the 64-bit pipeline runs at a
 small fraction of the 32-bit rate, so float32 is ~3-10x faster per evaluation
 and ~2-4x faster end-to-end, at ~4e-5 relative accuracy instead of ~1e-16.
 
+Drawing twenty components
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+``galspec.plot.plot_fit`` draws every component, the total model and the residual
+panel from one call.  Two conventions in it exist because a twenty-component fit
+broke the defaults:
+
+* **Colours.**  matplotlib's ten-colour cycle is not enough for twenty components:
+  two unrelated lines end up in the same colour, and the worst case is a line
+  taking the same red as the total model.  ``plot_fit`` therefore cycles a
+  24-colour palette (``galspec.plot._COMPONENT_COLORS``) with the red reserved for
+  the total model.
+* **Residuals.**  ``residual_in_sigma=True`` (with ``error=``) divides the residual
+  by the flux uncertainty and labels the panel ``Res./sigma``, with dotted guides
+  at +/-1.  In raw flux units a single bright pixel sets the scale of the whole
+  panel, so a well-fitted zoom looks flat and the stated rms cannot be checked by
+  eye.  Pass ``ylim1`` per panel for the same reason.
+
+The legend is placed by the caller: with twenty entries, ``bbox_to_anchor`` outside
+the axes is the only way to keep it from covering the data.
+
 Saving a fit, and what lives on the GPU
 ---------------------------------------
 

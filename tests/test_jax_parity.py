@@ -422,14 +422,16 @@ def test_multiplicative_compound_matches_cpu():
     wave = np.linspace(4200.0, 6800.0, 1200)
     cpu = (models.PowerLaw1D(amplitude=.55, x_0=5500, alpha=1, fixed={"x_0": True},
                              name="Continuum")
-           + galspec.IronTemplate(amplitude=.2, stddev=900, z=0, name="Fe II")
+           + galspec.IronTemplate_new(amplitude=.2, sigma=900, z=0, dv=0,
+                                       name="Fe II")
            + galspec.Line_Gaussian(amplitude=1.1, wavec=6563.0, dv=10.0, sigma=300.0,
                                    name="Ha")) \
         * models.Polynomial1D(degree=2, c0=1.0, c1=-1e-4, c2=2e-8, name="poly")
 
     jax_model = (jxm.PowerLaw1D(amplitude=.55, x_0=5500, alpha=1, fixed={"x_0": True},
                                 name="Continuum")
-                 + jxm.IronTemplate(amplitude=.2, stddev=900, z=0, name="Fe II")
+                 + jxm.IronTemplate_new(amplitude=.2, sigma=900, z=0, dv=0,
+                                       name="Fe II")
                  + jxm.Line_Gaussian(amplitude=1.1, wavec=6563.0, dv=10.0, sigma=300.0,
                                      name="Ha")) \
         * jxm.Polynomial1D(degree=2, c0=1.0, c1=-1e-4, c2=2e-8, name="poly")

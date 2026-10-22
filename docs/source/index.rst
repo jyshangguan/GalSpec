@@ -71,6 +71,7 @@ Contents
 
    installation
    quickstart
+   jax_gpu
 
 .. toctree::
    :maxdepth: 2

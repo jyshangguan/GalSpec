@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glossary</title>
+<style>
+
+:root {
+  --ink: #1b1f23; --muted: #5b6672; --accent: #b5364a; --accent2: #2b6cb0;
+  --bg: #fbfbf9; --card: #ffffff; --line: #dde1e6; --warn: #fff6e5;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.62 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+        Arial, "Noto Sans", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+header { border-bottom: 1px solid var(--line); background: var(--card); padding: 28px 0 0; }
+header h1 { max-width: 980px; margin: 0 auto 14px; padding: 0 24px; font-size: 30px;
+            line-height: 1.2; letter-spacing: -0.01em; }
+nav { max-width: 980px; margin: 0 auto; padding: 0 24px; display: flex; gap: 22px; }
+nav a { padding: 10px 0; color: var(--muted); text-decoration: none; font-size: 14.5px;
+        border-bottom: 2px solid transparent; }
+nav a:hover { color: var(--ink); }
+nav a.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+main { max-width: 980px; margin: 0 auto; padding: 30px 24px 60px; }
+h2 { font-size: 21px; margin: 38px 0 12px; letter-spacing: -0.01em; }
+h3 { font-size: 17px; margin: 26px 0 8px; }
+p { margin: 0 0 14px; }
+p.lead { font-size: 18.5px; line-height: 1.55; color: #2c333a; }
+ul, ol { margin: 0 0 16px; padding-left: 22px; }
+li { margin-bottom: 7px; }
+a { color: var(--accent2); }
+a.gl { color: var(--accent2); text-decoration: none; border-bottom: 1px dotted #9db6cf; }
+a.gl:hover { border-bottom-style: solid; }
+code { font: 13.5px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+       background: #eef1f4; padding: 1px 5px; border-radius: 3px; }
+figure { margin: 22px 0 26px; }
+figure img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 4px;
+             background: #fff; }
+figcaption { font-size: 13.5px; color: var(--muted); margin-top: 9px; line-height: 1.5; }
+table.data { width: 100%; border-collapse: collapse; margin: 16px 0 22px; font-size: 14px;
+             background: var(--card); }
+table.data th, table.data td { border-bottom: 1px solid var(--line); padding: 7px 10px;
+                               text-align: left; vertical-align: top; }
+table.data thead th { border-bottom: 1.5px solid #c3cad2; font-size: 13px;
+                      text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+table.data tbody tr:nth-child(even) { background: #fafbfc; }
+table.data td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.data td.unit { color: var(--muted); font-size: 13px; }
+table.data td.desc { color: #3b444d; font-size: 13.2px; }
+table.data.small { font-size: 13px; }
+table.data.small code { font-size: 12.4px; }
+.callout { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent);
+           border-radius: 5px; padding: 6px 20px 14px; margin: 24px 0; }
+.callout h2 { margin-top: 16px; font-size: 18px; }
+.callout.warn { border-left-color: #d99b2b; background: var(--warn); }
+ul.cards { list-style: none; padding: 0; display: grid; grid-template-columns: 1fr 1fr 1fr;
+           gap: 14px; }
+ul.cards li { background: var(--card); border: 1px solid var(--line); border-radius: 5px;
+              padding: 14px 16px; margin: 0; }
+ul.cards a { text-decoration: none; color: var(--ink); }
+ul.cards a:hover b { color: var(--accent2); }
+pre.cmd { background: #eceff3; border: 1px solid var(--line); border-radius: 4px;
+          padding: 12px 14px; overflow-x: auto; }
+pre.cmd code { background: none; padding: 0; font-size: 12.8px; line-height: 1.65; }
+header.sticky { position: sticky; top: 0; z-index: 20; background: #fff;
+                border-bottom: 1px solid var(--line); padding: 10px 0 8px; margin-bottom: 18px; }
+nav.toc { display: flex; gap: 6px; flex-wrap: wrap; max-width: 900px; margin: 0 auto; }
+nav.toc a { font-size: 13.5px; padding: 5px 12px; border-radius: 20px;
+            border: 1px solid var(--line); color: var(--muted); text-decoration: none; }
+nav.toc a:hover { color: var(--accent); border-color: var(--accent); background: #f4f8fb; }
+section { scroll-margin-top: 60px; border-top: 1px solid var(--line); padding-top: 26px;
+          margin-top: 34px; }
+section:first-of-type { border-top: none; margin-top: 0; }
+h1.section-title { font-size: 26px; margin: 0 0 18px; letter-spacing: -0.3px; }
+h1.section-title .blurb { font-size: 14.5px; font-weight: 400; color: var(--muted);
+                          letter-spacing: 0; }
+p.note { font-size: 13.5px; color: var(--muted); }
+dl.glossary { display: grid; grid-template-columns: 210px 1fr; gap: 4px 22px; margin: 20px 0; }
+dl.glossary dt { font-weight: 650; padding-top: 12px; border-top: 1px solid var(--line); }
+dl.glossary dd { margin: 0; padding-top: 12px; border-top: 1px solid var(--line); }
+footer { border-top: 1px solid var(--line); padding: 22px 24px 40px; color: var(--muted);
+         font-size: 13px; }
+footer p { max-width: 980px; margin: 0 auto; }
+@media (max-width: 720px) {
+  dl.glossary { grid-template-columns: 1fr; }
+  ul.cards { grid-template-columns: 1fr; }
+  header h1 { font-size: 24px; }
+}
+
+</style>
+
+</head>
+<body>
+<header>
+<h1>Glossary</h1>
+<nav><a href="index.html">Overview</a><a href="model.html">The model</a><a href="results.html">Results</a><a href="glossary.html" class='active'>Glossary</a></nav>
+</header>
+<main>
+
+<p class="lead">Every technical word used on these pages, in the order you are likely to
+meet it. Terms are explained for a reader who knows what a spectrum is but not what a
+"live point" or "dlogz" means.</p>
+<dl class="glossary">
+<dt id="spectrum">Spectrum</dt><dd>Light split up by wavelength. The horizontal axis is wavelength, the vertical axis is how much light arrives at each wavelength. A spectrum tells you which atoms and which physical conditions produced the light.</dd>
+<dt id="wavelength">Wavelength</dt><dd>The distance between two crests of a light wave, measured in &Aring;ngstr&ouml;m (1 &Aring; = 10<sup>-10</sup> m). Visible light spans roughly 4000&ndash;7000 &Aring;.</dd>
+<dt id="flux">Flux</dt><dd>The amount of light energy arriving per unit area per unit time per unit wavelength. In these pages it is in the FITS file's own arbitrary units, so only relative values matter.</dd>
+<dt id="pixel">Pixel</dt><dd>One wavelength bin of the spectrum. This spectrum has one pixel every 0.046 &Aring;.</dd>
+<dt id="redshift">Redshift (z)</dt><dd>Because the universe expands, light from a distant galaxy arrives stretched to longer wavelengths by a factor (1 + z). For IRAS 07546+3928, z = 0.0953, so every wavelength is 9.5% longer than in the galaxy's own frame.</dd>
+<dt id="rest-frame">Rest frame</dt><dd>Wavelengths as they would be measured by an observer sitting next to the galaxy, i.e. after dividing out the redshift. All plots here are in the rest frame, so the lines appear at their laboratory wavelengths.</dd>
+<dt id="dereddening">Dereddening</dt><dd>Correcting for dust absorption by our own Milky Way, which both dims and reddens extragalactic light. We apply the standard Cardelli, Clayton &amp; Mathis (1989) law with E(B&minus;V) = 0.176.</dd>
+<dt id="continuum">Continuum</dt><dd>The smooth part of the spectrum, without the sharp lines. Here it is modelled as a power law: brightness proportional to wavelength<sup>&minus;&alpha;</sup>.</dd>
+<dt id="emission-line">Emission line</dt><dd>A sharp spike of extra light at one specific wavelength, produced when an electron drops to a lower energy level in an atom. Each element has its own set of wavelengths, which is how we know what the gas is made of.</dd>
+<dt id="forbidden-line">Forbidden line</dt><dd>An emission line from a transition that is so slow that, in a laboratory, the atom is disturbed before it can emit. In the extremely thin gas of space it happens anyway. Written with square brackets, like [O III].</dd>
+<dt id="narrow-line">Narrow line</dt><dd>Light from gas moving slowly (a few hundred km/s), far from the black hole &mdash; the narrow-line region, hundreds to thousands of light years across.</dd>
+<dt id="broad-line">Broad line</dt><dd>Light from gas whirling rapidly (thousands of km/s) around the black hole, within a few light years. Fast motion smears the line out in wavelength (the Doppler effect).</dd>
+<dt id="gaussian">Gaussian</dt><dd>The bell curve, described by a peak height, a centre and a width &sigma;. A line profile is modelled as a sum of a few Gaussians.</dd>
+<dt id="sigma">&sigma; (sigma)</dt><dd>Two meanings, both standard. (1) The width of a Gaussian, in km/s. (2) The measurement error of a data point; residuals are quoted 'in &sigma;', so +2 means 'two error bars above the model'.</dd>
+<dt id="fwhm">FWHM</dt><dd>Full Width at Half Maximum: the width of a line measured at half its peak height. For a Gaussian, FWHM = 2.355 &sigma;. Astronomers quote it because it can be read off a plot directly.</dd>
+<dt id="lsf">Line-spread function (LSF)</dt><dd>The profile a spectrograph imposes on an infinitely sharp line: a real instrument smears every line into a small bell curve. Ignoring it makes a fit try to explain instrumental smearing with the gas's own motion.</dd>
+<dt id="resolving-power">Resolving power (R)</dt><dd>R = wavelength / smallest resolvable wavelength difference. SDSS has R &asymp; 2000, so at 5000 &Aring; it can just separate features 2.5 &Aring; apart.</dd>
+<dt id="convolution">Convolution</dt><dd>The mathematical operation of smearing one function with another: take the model, spread every point of it into the instrument's profile, and add up. Written f &lowast; g.</dd>
+<dt id="feii">Fe II (iron) emission</dt><dd>Thousands of blended emission lines from singly ionised iron. Together they look like a bumpy extra continuum, strongest bluewards of H&beta;, and are modelled with a template spectrum scaled and blurred by the fit.</dd>
+<dt id="tie">Tie (tied parameter)</dt><dd>A rule that forces one parameter to equal a function of others, e.g. 'all narrow lines share the width of [O III]'. Ties encode physics and remove parameters the data cannot constrain independently.</dd>
+<dt id="prior">Prior</dt><dd>What you allow a parameter to be before looking at the data: a range (and a shape, e.g. uniform or log-uniform). Wide priors mean the answer comes from the data.</dd>
+<dt id="posterior">Posterior</dt><dd>The probability distribution of the parameters after the data are taken into account. It answers 'given this spectrum, which parameter values are plausible, and how precisely?'.</dd>
+<dt id="likelihood">Likelihood</dt><dd>How probable the observed data are for a given set of parameters. For Gaussian errors it is exp(&minus;&chi;&sup2;/2), so maximising the likelihood means minimising &chi;&sup2;.</dd>
+<dt id="chi-squared">&chi;&sup2; (chi-squared)</dt><dd>The sum over all pixels of ((data &minus; model) / error)&sup2;. It is the natural measure of misfit when errors are Gaussian: 1 per pixel means a typical deviation of one error bar.</dd>
+<dt id="dof">Degrees of freedom</dt><dd>The number of data points minus the number of fitted parameters. Dividing &chi;&sup2; by it gives the 'reduced &chi;&sup2;', which is ~1 for a good fit regardless of how many pixels there are.</dd>
+<dt id="nested-sampling">Nested sampling</dt><dd>A way of mapping the posterior and computing the evidence at the same time: keep a set of 'live points' spread over the prior, repeatedly discard the worst one and replace it with a better one, so the live set shrinks onto the high-likelihood region. It handles awkward, multi-peaked posteriors that gradient methods miss.</dd>
+<dt id="live-points">Live points (nlive)</dt><dd>The number of parameter sets carried simultaneously by nested sampling. More live points means a more reliable map of the posterior, at proportionally higher cost.</dd>
+<dt id="log-evidence">log Z (log evidence)</dt><dd>The integral of likelihood &times; prior over all parameters, i.e. the average likelihood the model achieves over the whole prior. It is the number to compare models with, and the by-product of nested sampling.</dd>
+<dt id="dlogz">dlogz (stopping threshold)</dt><dd>The estimated amount of evidence still unaccounted for when the sampler stops. Requiring dlogz &lt; 0.01 means 'less than 1% of the evidence may still be missing', which forces the sampler to run until the answer is stable.</dd>
+<dt id="sampler">Sampler</dt><dd>The algorithm that explores the posterior. Here: <code>dynesty</code> (CPU, the existing code) and <code>JNesty</code> (GPU-capable, the new code).</dd>
+<dt id="jit">jit (just-in-time compilation)</dt><dd>Turning a Python function into machine code the first time it is called. The compile cost is paid once; every later call is fast. That is why compiled timings here exclude the first call.</dd>
+<dt id="vmap">vmap (vectorised map)</dt><dd>Telling JAX to run a function on many inputs at once, laid out as an array. On a GPU this fills the device with work instead of evaluating points one by one.</dd>
+<dt id="jax">JAX</dt><dd>A numerical library that compiles array code (like NumPy) for CPUs or GPUs. The GPU model in GalSpec is written in JAX so the same code runs on either device.</dd>
+<dt id="float64">float64 / float32</dt><dd>How many bits a computer uses for a real number. float64 (~16 digits) is the default here, because likelihood values differ in the 10th digit; float32 is twice as fast on some GPUs but only accurate to ~7 digits, which we offer as an option (<code>GALSPEC_JAX_X64=0</code>) rather than the default.</dd>
+<dt id="gpu">GPU (graphics processing unit)</dt><dd>A chip with thousands of simple cores. Bad at sequential logic, excellent at doing the same arithmetic to a million numbers at once &mdash; which is what evaluating a model on a 59 146-pixel spectrum is.</dd>
+<dt id="corner-plot">Corner plot</dt><dd>A grid of histograms: the diagonal shows each parameter's posterior, the off-diagonal panels show pairs, revealing correlations. A compact way to see a 23-dimensional result.</dd>
+<dt id="credible-interval">Credible interval</dt><dd>The range containing a given probability (here 68%, i.e. 1&sigma;) under the posterior. The Bayesian counterpart of a confidence interval.</dd>
+
+</dl>
+<h2>Symbols you will see</h2>
+<table class="data">
+<thead><tr><th>Symbol</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>&chi;&sup2;</td><td>Chi-squared: total squared misfit in units of the error bars.</td></tr>
+<tr><td>&sigma;</td><td>Width of a Gaussian, or the size of a measurement error (context decides).</td></tr>
+<tr><td>log Z</td><td>Logarithm of the evidence; higher is a better model.</td></tr>
+<tr><td>R</td><td>Resolving power of the spectrograph.</td></tr>
+<tr><td>z</td><td>Redshift.</td></tr>
+<tr><td>FWHM</td><td>Full width at half maximum of a line.</td></tr>
+</tbody>
+</table>
+
+</main>
+<footer>
+<p>Generated by <code>develop/dev_jax/make_report.py</code>. Machine: one RTX 4090 GPU and a
+192-core x86 host. All numbers on these pages were measured in this session.</p>
+</footer>
+</body>
+</html>

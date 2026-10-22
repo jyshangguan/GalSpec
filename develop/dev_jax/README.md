@@ -1,0 +1,91 @@
+# JAX / GPU development scripts
+
+Scripts for the optional JAX backend (`galspec.jax_models`) and the JNesty
+fitter (`galspec.jnesty_fit`). Everything here is additive: the astropy/CPU
+models and `galspec.Dynesty_Fit` are untouched.
+
+| file | purpose |
+| --- | --- |
+| `common.py` | the CPU *and* JAX versions of the example models (IRAS 07546+3928 [O III] window, full spectrum, stellar continuum) plus the data loaders; used by the tests and the benchmarks |
+| `bench_likelihood.py` | cost of one likelihood evaluation: astropy/CPU vs JAX `jit` vs JAX `vmap` batches |
+| `bench_device_scaling.py` | Device and precision scaling (CPU vs GPU, float64 vs float32). |
+| `bench_jnesty.py` | complete nested-sampling fits: dynesty serial / dynesty parallel / JNesty CPU / JNesty GPU, with the same data, priors, `nlive` and `dlogz` |
+| `demo_ir07546_jnesty.py` | user-facing demo: fit the [O III] complex with JNesty on the GPU |
+| `sdss_agn.py` | a realistic SDSS AGN model (H-alpha + H-beta + H-gamma, continuum, iron, all strong forbidden lines, 23 free parameters, LSF convolution) in both flavours |
+| `run_sdss_fit.py` | run one configuration of that fit (`--config dynesty-serial\|dynesty-parallel\|jnesty-cpu\|jnesty-gpu`) and save JSON + NPZ |
+| `make_report.py`, `report_pages.py` | build the multi-page HTML report from the saved runs |
+| `results/` | benchmark output (JSON + figures; `results/report/` holds the HTML) |
+
+## Running
+
+From the repository root:
+
+```bash
+# throughput benchmark (GPU if available, export JAX_PLATFORMS=cpu to force CPU)
+python develop/dev_jax/bench_likelihood.py
+
+# end-to-end nested sampling, the demo problem from develop/dev_dynesty
+python develop/dev_jax/bench_jnesty.py
+
+# the same for the 39-parameter full-spectrum model, a binned spectrum to keep
+# the CPU reference affordable
+python develop/dev_jax/bench_jnesty.py --problem full --bin-pixels 6000 \
+    --nlive 100 --dlogz 1e-4 --maxiter 4000 --queue-size 64 --tag full
+
+# the demo
+python develop/dev_jax/demo_ir07546_jnesty.py
+
+# the realistic SDSS AGN fit: H-gamma, H-beta and H-alpha at once, 23 parameters
+python develop/dev_jax/run_sdss_fit.py --config jnesty-gpu      --nlive 400 --dlogz 0.01
+python develop/dev_jax/run_sdss_fit.py --config dynesty-serial  --nlive 400 --dlogz 0.01
+python develop/dev_jax/run_sdss_fit.py --config dynesty-parallel --processes 16 \
+    --nlive 400 --dlogz 0.01
+
+# HTML report from whatever runs finished.  report.html holds all four sections
+# in one file (figures inlined, anchor navigation), so it renders anywhere;
+# index.html / model.html / results.html / glossary.html are the same content
+# as separate self-contained pages.
+python develop/dev_jax/make_report.py      # -> results/report/report.html
+```
+
+## The realistic comparison (numbers as measured)
+
+One SDSS spectrum of IRAS 07546+3928 (59 146 pixels, 4200-6900 A), 21 free
+parameters, H-gamma + H-beta + H-alpha fitted together with the continuum, the
+iron template and every strong forbidden line, convolved with the SDSS LSF.
+Same priors, same `nlive=400`, same `dlogz=0.01` everywhere.
+
+| | wall clock | sampler calls/s |
+| dynesty, 1 core | 8.9 h (measured) | 86 |
+| dynesty, 16 cores | 83.7 min | 513 |
+| JNesty, GPU | 6.3 min | 7 680 |
+
+* 13.3x faster than 16 CPU cores, 84.7x faster than one core (8.9 h measured).
+* All 21 posterior medians agree to <=0.05 of their error bar (median 0.02);
+  reduced chi2 is 1.978 for both.
+* log Z differs by 20.2 nats between the samplers while each claims +/-0.6;
+  doubling `nlive` moves JNesty by 0.3, so both have converged and the gap is
+  between integrators, not GPU precision: the same dynesty code on 1 core vs
+  16 cores differs by 13.6 nats (22x its quoted error). Prefer parameters over
+  evidence ratios when mixing samplers.
+
+`sdss_agn.py` can be run on its own: it prints the prior of every parameter and
+checks that the astropy and JAX models agree (they do, to 1.5e-15 of the peak
+flux). The priors are derived from the data's own flux range rather than from a
+least-squares fit, so the fit can be run on a new spectrum with no user
+intervention.
+
+`bench_jnesty.py` runs each configuration in its own subprocess: dynesty
+parallelises with `os.fork`, which is unsafe in a process that has already
+initialised JAX, and separate processes also give every configuration a cold
+cache. The JNesty numbers report the *sampling* time separately from the
+one-off setup (CUDA context + compilation), and absorb JNesty's own
+first-call compilation with a short discarded fit; pass `--no-warm-first` to
+time the very first run instead.
+
+## Numerics
+
+The JAX models reproduce the CPU fluxes to float64 rounding (~1e-16 relative),
+which `tests/test_jax_parity.py` asserts for every model and for the example
+compound models. Differences between the samplers in `results/` are therefore
+stochastic (posterior draws), not systematic.

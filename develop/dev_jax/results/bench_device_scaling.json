@@ -1,0 +1,130 @@
+{
+  "cpu-f64": {
+    "configuration": "cpu-f64",
+    "device": "cpu",
+    "float64": true,
+    "jax_devices": "gpu:0 (19.0 GB)",
+    "sizes": {
+      "4382": {
+        "n_pixels": 4382,
+        "n_free_parameters": 8,
+        "batched_likelihood_seconds_per_point": 2.898966795328306e-06,
+        "batched_likelihood_per_second": 344950.48429375014,
+        "jnesty_seconds": 5.11167960986495,
+        "jnesty_iterations": 300,
+        "jnesty_likelihood_calls": 8500,
+        "jnesty_seconds_per_call": 0.0006013740717488177,
+        "jnesty_milliseconds_per_iteration": 17.038932032883167,
+        "jnesty_overhead_milliseconds_per_iteration": 13.66011977661401
+      },
+      "35056": {
+        "n_pixels": 35056,
+        "n_free_parameters": 8,
+        "batched_likelihood_seconds_per_point": 1.5561572672595504e-05,
+        "batched_likelihood_per_second": 64260.85724362785,
+        "jnesty_seconds": 3.3877987819723785,
+        "jnesty_iterations": 300,
+        "jnesty_likelihood_calls": 8500,
+        "jnesty_seconds_per_call": 0.0003985645625849857,
+        "jnesty_milliseconds_per_iteration": 11.292662606574595,
+        "jnesty_overhead_milliseconds_per_iteration": 11.625596407490471
+      }
+    }
+  },
+  "gpu-f64": {
+    "configuration": "gpu-f64",
+    "device": "gpu",
+    "float64": true,
+    "jax_devices": "gpu:0 (19.0 GB)",
+    "sizes": {
+      "4382": {
+        "n_pixels": 4382,
+        "n_free_parameters": 8,
+        "batched_likelihood_seconds_per_point": 2.8520800697151573e-06,
+        "batched_likelihood_per_second": 350621.29237482167,
+        "jnesty_seconds": 5.098062384873629,
+        "jnesty_iterations": 300,
+        "jnesty_likelihood_calls": 8500,
+        "jnesty_seconds_per_call": 0.0005997720452792504,
+        "jnesty_milliseconds_per_iteration": 16.993541282912094,
+        "jnesty_overhead_milliseconds_per_iteration": 13.23498403808723
+      },
+      "35056": {
+        "n_pixels": 35056,
+        "n_free_parameters": 8,
+        "batched_likelihood_seconds_per_point": 1.5433983389812055e-05,
+        "batched_likelihood_per_second": 64792.08735316498,
+        "jnesty_seconds": 3.368219941854477,
+        "jnesty_iterations": 300,
+        "jnesty_likelihood_calls": 8500,
+        "jnesty_seconds_per_call": 0.0003962611696299385,
+        "jnesty_milliseconds_per_iteration": 11.22739980618159,
+        "jnesty_overhead_milliseconds_per_iteration": 11.089417259208858
+      }
+    }
+  },
+  "cpu-f32": {
+    "configuration": "cpu-f32",
+    "device": "cpu",
+    "float64": false,
+    "jax_devices": "gpu:0 (19.0 GB)",
+    "sizes": {
+      "4382": {
+        "n_pixels": 4382,
+        "n_free_parameters": 8,
+        "batched_likelihood_seconds_per_point": 1.1168706805619877e-06,
+        "batched_likelihood_per_second": 895358.8068914294,
+        "jnesty_seconds": 4.846786222886294,
+        "jnesty_iterations": 300,
+        "jnesty_likelihood_calls": 8500,
+        "jnesty_seconds_per_call": 0.0005702101438689758,
+        "jnesty_milliseconds_per_iteration": 16.155954076287646,
+        "jnesty_overhead_milliseconds_per_iteration": 12.485589099427063
+      },
+      "35056": {
+        "n_pixels": 35056,
+        "n_free_parameters": 8,
+        "batched_likelihood_seconds_per_point": 1.4839631148788612e-06,
+        "batched_likelihood_per_second": 673871.1966446901,
+        "jnesty_seconds": 2.26309299422428,
+        "jnesty_iterations": 300,
+        "jnesty_likelihood_calls": 8500,
+        "jnesty_seconds_per_call": 0.00026624623461462117,
+        "jnesty_milliseconds_per_iteration": 7.543643314080934,
+        "jnesty_overhead_milliseconds_per_iteration": 10.437376196496189
+      }
+    }
+  },
+  "gpu-f32": {
+    "configuration": "gpu-f32",
+    "device": "gpu",
+    "float64": false,
+    "jax_devices": "gpu:0 (19.0 GB)",
+    "sizes": {
+      "4382": {
+        "n_pixels": 4382,
+        "n_free_parameters": 8,
+        "batched_likelihood_seconds_per_point": 1.207896275445819e-06,
+        "batched_likelihood_per_second": 827885.6556875407,
+        "jnesty_seconds": 4.932543809060007,
+        "jnesty_iterations": 300,
+        "jnesty_likelihood_calls": 8500,
+        "jnesty_seconds_per_call": 0.0005802992716541185,
+        "jnesty_milliseconds_per_iteration": 16.44181269686669,
+        "jnesty_overhead_milliseconds_per_iteration": 12.591956810404858
+      },
+      "35056": {
+        "n_pixels": 35056,
+        "n_free_parameters": 8,
+        "batched_likelihood_seconds_per_point": 1.401828103553271e-06,
+        "batched_likelihood_per_second": 713354.2247193212,
+        "jnesty_seconds": 2.292981083970517,
+        "jnesty_iterations": 300,
+        "jnesty_likelihood_calls": 8500,
+        "jnesty_seconds_per_call": 0.00026976248046711965,
+        "jnesty_milliseconds_per_iteration": 7.643270279901723,
+        "jnesty_overhead_milliseconds_per_iteration": 10.678723777333895
+      }
+    }
+  }
+}

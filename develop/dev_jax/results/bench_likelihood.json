@@ -1,0 +1,94 @@
+{
+  "o3": {
+    "problem": "o3",
+    "oversample": 8,
+    "n_pixels": 35056,
+    "n_free_parameters": 8,
+    "device": "gpu:0 (19.0 GB)",
+    "cpu": {
+      "source": "galspec.Dynesty_Fit.log_likelihood (astropy model)",
+      "seconds_per_likelihood": 0.000697184088639915,
+      "evaluations_per_second": 1434.3413974791454
+    },
+    "jax_single": {
+      "source": "galspec.jnesty_fit.JNesty_Fit log-likelihood, jax.jit",
+      "seconds_per_likelihood": 3.0224439688026904e-05,
+      "evaluations_per_second": 33085.80772123096,
+      "speedup_vs_cpu": 23.06689870304187
+    },
+    "jax_batched": [
+      {
+        "batch_size": 64,
+        "seconds_per_batch": 0.0008911416650964663,
+        "seconds_per_likelihood": 1.3924088517132286e-05,
+        "evaluations_per_second": 71817.98641753776,
+        "speedup_vs_cpu": 50.07035740846485
+      },
+      {
+        "batch_size": 512,
+        "seconds_per_batch": 0.006855549342516396,
+        "seconds_per_likelihood": 1.3389744809602336e-05,
+        "evaluations_per_second": 74684.02230361097,
+        "speedup_vs_cpu": 52.06851202570609
+      },
+      {
+        "batch_size": 2048,
+        "seconds_per_batch": 0.026673624912897747,
+        "seconds_per_likelihood": 1.3024230914500853e-05,
+        "evaluations_per_second": 76779.96547854699,
+        "speedup_vs_cpu": 53.52977025796491
+      }
+    ],
+    "agreement": {
+      "at_starting_parameters_abs_logl_difference": 0.0,
+      "over_random_prior_draws_max_rel_logl_difference": 9.289337307570698e-16,
+      "bitwise_identical": false
+    }
+  },
+  "full": {
+    "problem": "full",
+    "oversample": 1,
+    "n_pixels": 51918,
+    "n_free_parameters": 39,
+    "device": "gpu:0 (19.0 GB)",
+    "cpu": {
+      "source": "galspec.Dynesty_Fit.log_likelihood (astropy model)",
+      "seconds_per_likelihood": 0.0076634036749601364,
+      "evaluations_per_second": 130.49032028254754
+    },
+    "jax_single": {
+      "source": "galspec.jnesty_fit.JNesty_Fit log-likelihood, jax.jit",
+      "seconds_per_likelihood": 0.0001918999245390296,
+      "evaluations_per_second": 5211.0494696761325,
+      "speedup_vs_cpu": 39.93437565631514
+    },
+    "jax_batched": [
+      {
+        "batch_size": 64,
+        "seconds_per_batch": 0.00465596578298853,
+        "seconds_per_likelihood": 7.274946535919578e-05,
+        "evaluations_per_second": 13745.805485477656,
+        "speedup_vs_cpu": 105.33965627269667
+      },
+      {
+        "batch_size": 512,
+        "seconds_per_batch": 0.044102989240652986,
+        "seconds_per_likelihood": 8.613865086065036e-05,
+        "evaluations_per_second": 11609.190415783694,
+        "speedup_vs_cpu": 88.96591249562876
+      },
+      {
+        "batch_size": 2048,
+        "seconds_per_batch": 0.17184842160592476,
+        "seconds_per_likelihood": 8.391036211226795e-05,
+        "evaluations_per_second": 11917.47925794968,
+        "speedup_vs_cpu": 91.32845434163278
+      }
+    ],
+    "agreement": {
+      "at_starting_parameters_abs_logl_difference": 0.0,
+      "over_random_prior_draws_max_rel_logl_difference": 2.1624868732028896e-16,
+      "bitwise_identical": false
+    }
+  }
+}

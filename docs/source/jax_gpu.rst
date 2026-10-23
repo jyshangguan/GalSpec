@@ -383,15 +383,22 @@ question of whether this model agrees with the CPU one.
 The implementation subtracts the template's own width in quadrature, component by
 component, instead of deconvolving it: exact for Gaussian kernels, and it needs no
 host-side kernel array, so the model stays differentiable and ``jit``-able
-through every kernel parameter.  (The CPU ``IronTemplate_tied`` takes the other
-route -- FFT deconvolution plus a Wiener filter, then a convolution with an
-explicit array -- which is stable but cannot be differentiated through ``dv`` and
-``sigma``.  It is *not* the same function: at the same parameters the two differ by
-8-10% of the iron peak, and against an independent velocity-space convolution the CPU
-class is 7-23% off (it deconvolves by a 200 km/s intrinsic width where the template
-measured 340, cuts its kernel at +/-10 000 km/s and filters the result), while this
-model is exact to 0.02% -- measured in ``develop/dev_jax/io_test/cpu_vs_jax.html``.
-So the CPU class cannot be the reference for a parity test of this model.)
+through every kernel parameter.
+
+The CPU ``galspec.IronTemplate_tied`` now takes the same route, component for
+component: every kernel component is smoothed once with
+``sqrt(sigma**2 - sigma_intr**2)`` on the template grid, projected onto the data grid
+at its own shift, and added with the line's own relative weight.  The two backends
+therefore agree to **1e-15** of the iron peak -- the same function, not two
+approximations to it -- and both are within **0.01-0.02%** of an independent
+velocity-space convolution (measured in ``develop/dev_jax/io_test/cpu_vs_jax.html``;
+the residue is the 126 km/s sampling of the template, not the algorithm).  Before
+this revision the CPU class FFT-*deconvolved* the template by a 200 km/s intrinsic
+Gaussian, filtered the result with a Wiener filter and convolved with a kernel
+sampled on a fixed +/-10 000 km/s window; it was 8.5% (mock) and 10.0% (fit) of the
+iron peak away from the exact answer, and 8-10% from this model.  That algorithm is
+kept, unmodified and clearly labelled, as ``legacy_iron()`` in the comparison script
+so the old numbers stay reproducible.
 
 **Cost.**  The convolution runs on the template grid (2 389 channels for
 ``park2022``, 801 of them the tabulated range and the rest the zero padding), not on

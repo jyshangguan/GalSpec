@@ -283,12 +283,16 @@ class Line_MultiGauss(Fittable1DModel):
         '''
         Generate the line profile as a kernel on a velocity grid.
 
-        This is what :class:`galspec.IronTemplate_tied` convolves the iron
-        template with, so a line model can be handed to it directly:
-        ``IronTemplate_tied(..., kernel=Line_MultiGauss(...))``.  The core sits at
-        zero velocity and the winds at their own ``dv_w``, i.e. the kernel is
-        centred and only its shape is used; the absolute ``dv_c`` of the line
-        belongs to the line, not to the kernel.
+        The core sits at zero velocity and the winds at their own ``dv_w``, i.e. the
+        profile is centred and only its shape is used; the absolute ``dv_c`` of the
+        line belongs to the line, not to the kernel.
+
+        :class:`galspec.IronTemplate_tied` takes a line model through
+        ``IronTemplate_tied(..., kernel=Line_MultiGauss(...))`` and reads its
+        component parameters -- ``sigma_c``, ``dv_c``, ``amp_w{i}``, ``dv_w{i}``,
+        ``sigma_w{i}`` -- rather than this array, because it has to subtract the
+        iron template's own width from each component in quadrature.  This method
+        is kept for plotting a kernel, and for convolving anything else with one.
 
         Parameters
         ----------

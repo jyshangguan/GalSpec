@@ -387,24 +387,25 @@ through every kernel parameter.  (The CPU ``IronTemplate_tied`` takes the other
 route -- FFT deconvolution plus a Wiener filter, then a convolution with an
 explicit array -- which is stable but cannot be differentiated through ``dv`` and
 ``sigma``.  It is *not* the same function: at the same parameters the two differ by
-15% of the iron peak, and against an independent velocity-space convolution the CPU
-class is 11-50% off (it deconvolves by a 200 km/s intrinsic width where the template
+8-10% of the iron peak, and against an independent velocity-space convolution the CPU
+class is 7-23% off (it deconvolves by a 200 km/s intrinsic width where the template
 measured 340, cuts its kernel at +/-10 000 km/s and filters the result), while this
-model is exact to 0.14% -- measured in ``develop/dev_jax/io_test/cpu_vs_jax.html``.
+model is exact to 0.02% -- measured in ``develop/dev_jax/io_test/cpu_vs_jax.html``.
 So the CPU class cannot be the reference for a parity test of this model.)
 
-**Cost.**  The convolution runs on the template grid (801 channels for
-``park2022``), not on the 80 000-pixel spectrum, and only the sum is interpolated
-onto the data.  Measured on this machine, a two-component kernel costs
-**+0.1 to +0.45 ms per evaluation** (it moves with how busy the card is): a few
-per cent of a full-spectrum model, up to 20% of one that is nothing but a line and
-the iron.  A fit needs 1e5-1e6 evaluations, so call it **0.2-7 minutes** on top of
-the sampling.  It is not free -- the kernel costs one smoothing and one
+**Cost.**  The convolution runs on the template grid (2 389 channels for
+``park2022``, 801 of them the tabulated range and the rest the zero padding), not on
+the 57 000-pixel spectrum, and only the sum is interpolated onto the data.  Measured
+on this machine, a two-component kernel costs **+0.40 ms per evaluation** -- 56% of a
+full-spectrum model, which is 0.32 ms without it.  A fit needs 1e5-1e6 evaluations,
+so call it **40 s to 7 minutes** on top of the sampling.  It is not free -- the kernel costs one smoothing and one
 interpolation per component -- but it does not change the scale of the problem.
-Two things keep it there: the smoothing happens on the 801-point template rather
-than on the spectrum, and the kernel radius is static ``jnp`` data sized from the
-widest width the model can be asked for (the prior bound inside a fit, the widest
-constructor value outside one), so nothing re-traces when a sample moves.
+Two things keep it there: the smoothing happens on the template rather than on the
+spectrum, and the kernel radius is static ``jnp`` data sized from the widest width
+the model can be asked for (the prior bound inside a fit, the widest constructor
+value outside one), so nothing re-traces when a sample moves.  The zero padding
+triples the template, which triples the smoothing; it is the price of not reflecting
+the template's edge flux into the fit, and it is paid once per evaluation.
 
 **The template grid is even in the logarithm of wavelength.**  As tabulated, both
 templates are even in *wavelength* (``park2022``: exactly 2 A over 4000-5600 A), so
@@ -413,14 +414,22 @@ Gaussian of a given ``sigma`` would be a different number of channels at each en
 29% narrower where the template is red.  Both backends therefore resample at load
 time, through :func:`galspec.iron_template.load_iron_template` (which calls
 :func:`galspec.stellar_continuum.log_rebin`), onto a grid with constant
-``dln(lambda)``: 126 km/s per channel, 801 channels, the same range.  Every model
-built on the template -- the CPU and JAX ``IronTemplate``, ``IronTemplate_new`` and
+``dln(lambda)``: 126 km/s per channel over 4000-5600 A.  Every model built on the
+template -- the CPU and JAX ``IronTemplate``, ``IronTemplate_new`` and
 ``IronTemplate_tied`` -- broadens it in velocity space by construction, and the CPU
-and JAX versions still agree to 1e-16 because they share the grid.  Against an
-independent convolution on a uniform velocity grid the JAX tied iron is then
-0.04-0.14% of the iron peak over 4200-5400 A, where the template has signal; only
-the outermost 100 A at each end differ, and that is a padding convention, not a
-velocity error.  ``tests/test_model_features.py`` pins both properties.
+and JAX versions still agree to 1e-16 because they share the grid.
+
+The tabulated range is then extended with zeros by 100 000 km/s on each side, on the
+same grid, for a total of 2 389 channels.  Without that the smoothing pads by
+mirroring, and the template's red end (still carrying about 4% of its peak at
+5600 A) is mirrored back into the spectrum as a constant floor: the model stayed at
+5% of the iron peak all the way to 6800 A even though there is no iron there, and it
+mis-set the iron wing at 5450-5600 A.  With the zeros the model fades out where the
+template runs out.  Against an independent convolution on a uniform velocity grid the
+JAX tied iron is then **0.02% of the iron peak over the whole range**, at every kernel
+width tested (0.01-0.47%, the 0.47% at the narrowest kernel, where the template's own
+sampling is what limits it).  ``tests/test_model_features.py`` pins the grid, the
+padding and the velocity-space broadening.
 
 LaTeX labels for parameters
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -615,7 +624,8 @@ electron-density diagnostic, not a fixed number), and the worked example in
 separate models (a narrow ``Line_Gaussian`` tied to [O III] and a broad
 ``Line_MultiGauss`` with a core and a wind), fits He I 5876 the same way, and ties
 the iron template's kernel to the broad H-alpha component by component, which is
-why that fit covers 4200-6800 A with 29 free parameters over sixteen models. The benchmark model is also convolved with
+why that fit covers 4200-6800 A with 30 free parameters over seventeen models. The
+benchmark model is also convolved with
 the SDSS line-spread function (Gaussian, R = 2000 at 5500 A): at 0.046 A sampling
 the instrument, not the gas, sets the width of the narrow cores, so convolving
 makes the comparison the harder, more realistic one.  (The worked example does

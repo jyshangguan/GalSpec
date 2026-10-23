@@ -53,8 +53,8 @@ def resample_log_even(wave, flux, velscale=None, oversample=1):
     return np.exp(ln_wave), flux_rebin
 
 
-def load_iron_template(template_name='park2022'):
-    """Read an Fe II template and put it on the log-even grid.
+def load_iron_template(template_name='park2022', pad_velocity=100000.0):
+    """Read an Fe II template and put it on the log-even, zero-padded grid.
 
     Resampling happens here, once, at load time, so every model built on the
     template -- :class:`IronTemplate`, :class:`IronTemplate_new`,
@@ -63,17 +63,32 @@ def load_iron_template(template_name='park2022'):
     *pixels* with a single velocity scale taken from the blue end, which applied
     a width 40% too small at the red end of ``park2022``.
 
+    The tabulated range is then extended with zeros by ``pad_velocity`` on each
+    side, on the same grid.  The templates stop where their flux does not (the
+    ``park2022`` table ends at 5600 A still carrying about 4% of its peak), and
+    the smoothing pads by *mirroring* at the ends, so without the extension the
+    model reflects that edge flux back into the spectrum and keeps a constant
+    ~5% floor redward of 5600 A -- which is inside the range the iron is fitted
+    over.  With the zeros the model simply fades out where the template runs out,
+    and its answer at the ends agrees with a convolution that has no flux beyond
+    the tabulated range.
+
     Parameters
     ----------
     template_name : {'park2022', 'boroson1992'}
         ``park2022``: Mrk 493, Park et al. (2022).  ``boroson1992``: I Zw 1,
         Boroson & Green (1992).
+    pad_velocity : float, optional
+        How far to extend each end with zero flux [km/s].  The default,
+        100 000 km/s, is four sigma of the widest kernel the models are asked
+        for, so the mirror padding at the ends never reaches the template's own
+        flux.  ``0`` returns the tabulated range only.
 
     Returns
     -------
     wave, flux : ndarray
         Wavelength [A], on a grid even in ``ln(wave)``, and flux normalised to
-        unit maximum.
+        unit maximum.  ``flux`` is zero outside the tabulated range.
     """
     try:
         name, fmt, wave_col, flux_col = _TEMPLATE_FILES[template_name]
@@ -85,7 +100,20 @@ def load_iron_template(template_name='park2022'):
     flux = np.asarray(table[flux_col].data, dtype=float)
 
     wave, flux = resample_log_even(wave, flux)
+    wave, flux = _pad_with_zeros(wave, flux, pad_velocity)
     return wave, flux / np.max(flux)
+
+
+def _pad_with_zeros(wave, flux, pad_velocity):
+    """Extend a log-even spectrum with zero flux, on its own grid."""
+    if pad_velocity <= 0.0:
+        return wave, flux
+    dln = np.log(wave[1]) - np.log(wave[0])
+    count = int(np.ceil(pad_velocity / (dln * ls_km)))
+    low = wave[0] * np.exp(-dln * np.arange(count, 0, -1))
+    high = wave[-1] * np.exp(dln * np.arange(1, count + 1))
+    return (np.concatenate([low, wave, high]),
+            np.concatenate([np.zeros(count), flux, np.zeros(count)]))
 
 
 wave_park2022, flux_park2022 = load_iron_template('park2022')

@@ -226,6 +226,39 @@ def test_plot_posterior_hist_shapes_and_annotations():
     print(f"  median recovered in the panel title '{axes.ravel()[0].get_title()}'")
 
 
+def test_plot_posterior_hist_uses_the_posterior_for_the_view():
+    """A wide prior must not squeeze the posterior into a spike.
+
+    The axis has to be set from the samples, not from the prior bounds: with the
+    axis stretched to the prior, a parameter measured to 0.1% is a one-pixel line
+    and the shape that the panel exists to show is invisible.
+    """
+    rng = np.random.default_rng(3)
+    samples = np.column_stack([rng.normal(2.0, 0.01, 4000),
+                               rng.normal(1000.0, 1.0, 4000)])
+    bounds = [(0.0, 100.0), (300.0, 8000.0)]      # priors far wider than the posterior
+
+    class _FakeFit:
+        samples_equal_weight = samples
+        param_names = ("amplitude", "sigma")
+        full_param_names = ("A.amplitude", "A.sigma")
+        param_bounds = bounds
+        param_labels = ("$A$.$A$", "$A$:$\\sigma$")
+
+    fig, axes = galspec.plot.plot_posterior_hist(_FakeFit(), params=[0, 1], ncols=2)
+    for ax, column in zip(axes.ravel(), (0, 1)):
+        lo, hi = ax.get_xlim()
+        inside = samples[:, column]
+        # the view covers the posterior, not the prior
+        assert (inside > lo).mean() > 0.99 and (inside < hi).mean() > 0.99, ax.get_xlim()
+        span = hi - lo
+        assert span < 0.25 * (bounds[column][1] - bounds[column][0]), "axis still prior-wide"
+        # the prior is not lost: it is written in the corner
+        assert any("prior" in text.get_text() for text in ax.texts), "prior not annotated"
+    plt.close(fig)
+    print(f"  posterior-only view: first panel {axes.ravel()[0].get_xlim()}")
+
+
 def test_plot_posterior_hist_labels_and_file(tmp_path=None):
     rng = np.random.default_rng(11)
     samples = rng.normal(size=(2000, 2))

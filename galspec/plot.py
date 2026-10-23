@@ -377,7 +377,8 @@ def _map_legend(model, legend_map, ignore_list=None):
 def plot_posterior_hist(fit_or_samples, params=None, labels=None, quantiles=(0.16, 0.5, 0.84),
                         bins=40, ncols=3, figsize=None, weights=None, color='C0',
                         show_bounds=True, show_stats=True, title=None, filename=None,
-                        density=True, histtype='stepfilled', alpha=0.45, log_scale=None):
+                        density=True, histtype='stepfilled', alpha=0.45, log_scale=None,
+                        view_quantiles=(0.001, 0.999), pad=0.06, prior_text=True):
     r"""Histograms of selected one-dimensional posteriors.
 
     A corner plot shows every pair, which for forty parameters is unreadable; most
@@ -418,6 +419,16 @@ def plot_posterior_hist(fit_or_samples, params=None, labels=None, quantiles=(0.1
         Annotate median and percentiles in each panel.
     log_scale : sequence of str, optional
         Subset of the drawn parameters to put on a logarithmic x axis.
+    view_quantiles : tuple of two floats
+        The x range of each panel covers this percentile range of the posterior,
+        plus ``pad`` of that span.  It is taken from the *samples*, never from the
+        prior: a prior ten times wider than the posterior would otherwise squeeze
+        the histogram into a spike, which is exactly the panel's job to avoid.
+    pad : float
+        Fraction of the posterior span added on each side.
+    prior_text : bool
+        When a prior bound falls outside the view (the usual case), write the prior
+        range in the panel corner instead of stretching the axis to reach it.
 
     Returns
     -------
@@ -473,10 +484,47 @@ def plot_posterior_hist(fit_or_samples, params=None, labels=None, quantiles=(0.1
                                                       100 * hi_q])
         ax.axvspan(lower, upper, color=color, alpha=0.18, lw=0)
         ax.axvline(centre, color='k', lw=1.4)
+
+        # The view comes from the posterior.  Left to autoscaling, the prior-bound
+        # lines below would drag the axis out to the prior width and turn a
+        # well-measured parameter into a thin spike.
+        on_log = bool(log_scale) and names[column] in log_scale
+        if on_log:
+            positive = values[values > 0]
+            if positive.size:
+                v_lo, v_hi = np.percentile(positive, [100 * view_quantiles[0],
+                                                      100 * view_quantiles[1]])
+                v_lo, v_hi = max(v_lo, positive.min()), max(v_hi, positive.min())
+                ax.set_xlim(v_lo / (1.0 + pad), v_hi * (1.0 + pad))
+        else:
+            v_lo, v_hi = np.percentile(values, [100 * view_quantiles[0],
+                                                100 * view_quantiles[1]])
+            span = v_hi - v_lo
+            if span <= 0:
+                span = max(abs(v_hi), 1.0) * 1e-6
+            v_lo, v_hi = v_lo - pad * span, v_hi + pad * span
+            if values.min() >= 0.0 and v_lo < 0.0 < values.min():
+                v_lo = 0.0
+            ax.set_xlim(v_lo, v_hi)
+
+        outside = []
         if show_bounds and bounds is not None:
             for limit in bounds[column]:
-                if limit is not None and np.isfinite(limit):
+                if limit is None or not np.isfinite(limit):
+                    continue
+                if v_lo <= limit <= v_hi:
                     ax.axvline(limit, color='gray', ls=':', lw=1.0)
+                else:
+                    outside.append(limit)
+        if prior_text and bounds is not None:
+            limits = [limit for limit in bounds[column]
+                      if limit is not None and np.isfinite(limit)]
+            if limits and outside:
+                # the axis cannot show both the posterior and the prior: say where
+                # the prior is instead of hiding it, and say that it is out of view
+                span_text = ", ".join(f"{limit:.3g}" for limit in limits)
+                ax.text(0.98, 0.97, f"prior [{span_text}]", transform=ax.transAxes,
+                        fontsize=8.5, color='gray', ha='right', va='top')
 
         ax.set_xlabel(label, fontsize=15)
         ax.set_yticks([])

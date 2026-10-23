@@ -5,29 +5,58 @@ What this script does
 ---------------------
 It takes the spectrum of the quasar IRAS 07546+3928 that ships with GalSpec
 (``example/data/ir07546sed.fits``), dereddens it, moves it to the rest frame and
-fits the **whole optical spectrum** -- 3680 to 7500 A -- in one go, so that the
-continuum and the three Balmer regions are constrained by the same posterior:
+fits **4200 to 6800 A** -- from H-gamma to the [S II] doublet -- in one go, so
+that the continuum and the three Balmer regions are constrained by the same
+posterior:
 
     power-law continuum  (flux density at 5500 A + slope)
   + Fe II template       (iron emission: the pseudo-continuum blue of H-beta)
-  + H-alpha, H-beta, H-gamma, H-delta:
+  + H-alpha, H-beta, H-gamma:
         one narrow Gaussian + TWO broad Gaussians each
+  + He I 5876 with a narrow core and a broad component
   + [O III] 4959/5007 (narrow core + broad wing), [N II] 6548/6584,
     [S II] 6716/6731, [O I] 6300/6364
-  + the higher Balmer lines H-epsilon 3970, H8 3889, H9 3835, H11 3770
-  + He II 4686, [O III] 4363, [Ne III] 3869, [O II] 3727,
-    [Ar III] 7136, [O II] 7319/7330
+  + He II 4686, [O III] 4363
+
+Everything blueward of H-gamma is left out: H-delta and the higher Balmer lines,
+[Ne III] 3869, [O II] 3727.  The data start at 4200 A, so H-gamma keeps its
+narrow core and the inner part of its broad wings but is cut on the blue side.
+The red end stops at 6800 A, before the atmospheric O2 A band, so [Ar III] 7136
+and [O II] 7319/7330 are out of range too -- nothing at either end has to be
+masked.
 
 The narrow lines are tied together: they all share one velocity shift and one
 width, measured from the [O III] core.  The broad Gaussians are tied across the
 Balmer lines the same way (broad component 1 of H-alpha sets the width of broad
-component 1 in H-beta, H-gamma and H-delta), and the doublet ratios follow
-atomic physics -- except for [S II] 6716/6731, which is left free because it is
-an electron-density diagnostic.
+component 1 in H-beta and H-gamma), and the doublet ratios follow atomic physics
+-- except for [S II] 6716/6731, which is left free because it is an
+electron-density diagnostic.
+
+The Fe II template is the *tied* model: instead of one Gaussian width it is
+broadened by the same multi-Gaussian kernel as the broad Balmer lines, tied
+component by component to broad H-alpha.  The iron then shares the velocity
+structure of the broad-line region instead of being described by a single
+dispersion -- the 2.4x difference between the two broad components is visible in
+the iron, and no width parameter has to be invented for it.
 
 Two broad Gaussians per line let the model describe a classical broad-line
 region plus a broader, more extreme-velocity component: the profile shape that a
 single Gaussian always misses in a real AGN spectrum.
+
+The error on every pixel
+------------------------
+The FITS file has flux only, no uncertainty, so the error is built from the data
+*and from the source*: the pixel-to-pixel scatter measured from a running median
+(which captures the read noise and the sky), plus **5% of the flux itself** in
+quadrature, which stands for the photon noise of the source.  The counts scale with
+the flux, so the uncertainty must too.
+
+The consequence is visible in the goodness of fit: with a 5% floor the residuals
+come out at 0.57 sigma and chi2/dof lands at 0.32, because the true pixel noise
+here is 2-3% and the floor is larger than that.  That is the safe direction -- the
+error bars are conservative rather than optimistic, which matters for a template
+fit that also carries flux-calibration and template-shape uncertainty.  Set
+``PHOTON_FRACTION`` to ~0.02 to let pixel noise dominate instead.
 
 No instrumental smoothing
 -------------------------
@@ -53,8 +82,8 @@ appear in one figure.
 
 Run it
 ------
-    python example/fit_iras07546_jax.py                 # ~30-45 min on one GPU
-    python example/fit_iras07546_jax.py --quick         # ~4 min, rough answer
+    python example/fit_iras07546_jax.py                 # ~10-20 min on one GPU
+    python example/fit_iras07546_jax.py --quick         # ~3 min, rough answer
 
 Results are written to ``example/output/``: figures, an ``.npz`` with the
 posterior samples, and a FITS file that holds the whole fit -- samples, evidence,
@@ -81,6 +110,7 @@ from pathlib import Path
 
 import numpy as np
 from scipy.ndimage import median_filter
+from astropy.modeling import Fittable1DModel
 
 # GalSpec is used straight from the checkout (it is not pip-installed), so put the
 # repository root on the path: this file lives in <repo>/example/.
@@ -103,34 +133,28 @@ OUTPUT_DIR = HERE / "output"
 
 REDSHIFT = 0.0953          # NASA/IPAC value for IRAS 07546+3928
 E_BV = 0.176               # Galactic extinction along this line of sight (Schlafly & Finkbeiner)
-WAVE_MIN, WAVE_MAX = 3680.0, 7500.0   # rest frame: the whole optical spectrum
+WAVE_MIN, WAVE_MAX = 4200.0, 6800.0   # rest frame: H-gamma out to [S II] 6731
 
-ERROR_FRACTION = 0.005     # floor on the pixel-to-pixel noise
-SYSTEMATIC_FRACTION = 0.030  # flux calibration, Fe II template, hot-star mismatch
-#: Regions the model does not describe.  Their pixels are down-weighted rather
-#: than cut, because the wavelength grid has to stay evenly spaced.
-MASK_WINDOWS = [(3905.0, 3995.0),    # Ca II H+K absorption from the host galaxy
-                (5840.0, 5930.0),    # Na D absorption (He I 5876 sits inside it)
-                (6860.0, 7100.0)]    # residual O2 A-band absorption at 7600 A observed
+ERROR_FRACTION = 0.005        # floor on the pixel-to-pixel noise
+PHOTON_FRACTION = 0.05        # 5% of the flux: photon noise of the source itself
+#: Regions the model does not describe.  Nothing is left to exclude: the blue end
+#: starts at H-gamma, so the Ca II H+K absorption of the old 3680 A cut is gone;
+#: the Na D window used to be masked because Na D is unmodelled, but He I 5876 sits
+#: inside it and is now fitted, so the window is back in the fit; and the red end
+#: stops at 6800 A, short of the atmospheric O2 A band.  The list is kept because
+#: :func:`galspec.plot.plot_fit` takes one.
+MASK_WINDOWS = []
 
 NLIVE = 400                # live points kept by the sampler
 DLOGZ = 0.01               # stop when less than 0.01 of the evidence may remain unseen
 
-#: Lines that are not in ``line_wave_dict``; vacuum rest wavelengths in A.
-EXTRA_LINES = {
-    "NeIII_3869": 3868.76,
-    "ArIII_7136": 7135.79,
-    "OII_7325": 7325.0,   # blend of the 7318.9/7330.2 pair, unresolved here
-    "Hepsilon_3970": 3970.07,   # the higher Balmer lines sit in the blue end
-    "H8_3889": 3889.05,
-    "H9_3835": 3835.39,     # n = 9 -> 2
-    "H11_3770": 3770.63,   # n = 11 -> 2
-}
-
-#: The Balmer lines and the other line peaks (used by the priors and the tables).
-BALMER_NAMES = ("Halpha", "Hbeta", "Hgamma", "Hdelta")
-SINGLE_LINES = ("HeII", "OIII4363", "NeIII", "OII3727", "ArIII", "OII7325",
-                "Hepsilon", "H8", "H9", "H11")
+#: The Balmer lines fitted (narrow core + two broad components each).  H-delta and
+#: the higher Balmer lines sit below the 4200 A cut and are not modelled.
+BALMER_NAMES = ("Halpha", "Hbeta", "Hgamma")
+#: Lines modelled as a narrow core plus ONE broad component.
+TWO_COMPONENT_LINES = ("HeI",)
+#: Single narrow Gaussians.
+SINGLE_LINES = ("HeII", "OIII4363")
 
 
 # --------------------------------------------------------------------------------------
@@ -168,16 +192,20 @@ def estimate_error(flux, window=751):
     a few hundred A.  That gives a wavelength-dependent noise level which grows
     from ~0.3% of the flux at 4700 A to ~2-4% at the red end.
 
-    A 3% systematic term is then added in quadrature.  It stands for everything
-    the model does not describe exactly -- flux calibration, the shape of the
-    Fe II template, departures from a pure power law -- and without it the fit
-    would chase pixel noise in the line-free continuum.
+    A term of ``PHOTON_FRACTION`` (5%) times the flux is then added in quadrature.
+    That is the photon noise of the source itself, which a spectrum with no error
+    extension would otherwise hide: the counts scale with the flux, so the
+    uncertainty does too, and on the bright continuum it dominates everything
+    else.  It also absorbs what the model does not describe exactly -- flux
+    calibration, the shape of the Fe II template, departures from a pure power
+    law -- which is why a 5% floor is not merely conservative but the honest
+    error budget for a template fit of this kind.
     """
     baseline = median_filter(flux, size=window, mode="nearest")
     scatter = median_filter(np.abs(flux - baseline), size=window, mode="nearest") / 0.6745
     scatter = median_filter(scatter, size=4 * window + 1, mode="nearest")
-    return np.hypot(np.maximum(scatter, ERROR_FRACTION * np.abs(flux)),
-                    SYSTEMATIC_FRACTION * np.abs(flux))
+    statistical = np.maximum(scatter, ERROR_FRACTION * np.abs(flux))
+    return np.hypot(statistical, PHOTON_FRACTION * np.abs(flux))
 
 
 def mask_regions(wave, error):
@@ -233,11 +261,8 @@ MODEL_LABELS = {
     "Continuum": "Continuum",
     "FeII": "Fe II",
     "Halpha": r"BH$\alpha$", "Hbeta": r"BH$\beta$", "Hgamma": r"BH$\gamma$",
-    "Hdelta": r"BH$\delta$", "Hepsilon": r"BH$\epsilon$", "H8": "H8",
-    "H9": "H9", "H11": "H11",
     "OIII": r"[O III]", "NII": r"[N II]", "SII": r"[S II]", "OI": r"[O I]",
-    "OIII4363": r"[O III] 4363", "NeIII": r"[Ne III]", "OII3727": r"[O II]",
-    "ArIII": r"[Ar III]", "OII7325": r"[O II] 7325", "HeII": r"He II",
+    "OIII4363": r"[O III] 4363", "HeII": r"He II", "HeI": r"He I",
 }
 
 
@@ -255,8 +280,14 @@ def apply_model_labels(model, labels=None):
     return model
 
 
-def build_model(backend=jxm):
+def build_model(backend=jxm, include_iron=None):
     """The full model: narrow core plus two broad Gaussians per Balmer line.
+
+    ``include_iron`` defaults to "yes for the JAX model, no for the astropy twin":
+    the twin is used for plotting, and there the iron enters as a curve evaluated
+    from the JAX model itself (the CPU ``IronTemplate_tied`` convolves with an
+    explicit kernel array, which is a different construction).  See
+    :func:`cpu_model_with_values`.
 
     ``backend`` is either :mod:`galspec.jax_models` -- the models the fit uses --
     or :mod:`galspec` itself, the astropy equivalents.  Both expose the same
@@ -271,15 +302,34 @@ def build_model(backend=jxm):
 
     No convolution is applied: see the module docstring.
     """
+    if include_iron is None:
+        # the astropy twin is drawn with the iron curve taken from the JAX model
+        include_iron = backend is jxm
+
     # -- continuum: a power law anchored at 5500 A, plus the iron pseudo-continuum --
     continuum = _power_law(backend)(amplitude=0.55, x_0=5500.0, alpha=1.0,
                                     fixed={"x_0": True}, name="Continuum")
-    # ``IronTemplate_new`` parameterises the template by velocity dispersion and
-    # velocity shift, like the broad lines, with the redshift fixed.  The width is
-    # *fitted*: the Fe II optical multiplet is emitted by the same gas as the broad
-    # Balmer lines, so its width is a measurement, not a nuisance parameter.
-    iron = backend.IronTemplate_new(amplitude=0.2, sigma=2500.0, z=0.0, dv=0.0, name="FeII")
-    iron.z.fixed = True
+    # The iron used to be fitted with a single velocity dispersion and a velocity
+    # shift, i.e. ``backend.IronTemplate_new(amplitude=..., sigma=..., z=..., dv=...)``.
+    # Those lines are kept here because they are the reference against which the
+    # tied version was checked (the two agree exactly when the kernel has one
+    # component of width ``sigma`` and zero shift):
+    #
+    #     iron = backend.IronTemplate_new(amplitude=0.2, sigma=2500.0, z=0.0,
+    #                                     dv=0.0, name="FeII")
+    #     iron.z.fixed = True
+    #
+    # What the fit uses instead: the same template, broadened by a *multi-Gaussian*
+    # kernel whose components are the broad components of H-alpha (tied below).  The
+    # iron then has one free parameter, its amplitude -- the redshift is known, and
+    # the kernel's two shifts, two widths and two weights are the Balmer line's.
+    iron = None
+    if include_iron:
+        iron = backend.IronTemplate_tied(n_components=2, amplitude=0.2, z=0.0,
+                                         sigma_0=2400.0, dv_0=0.0, w_0=0.28,
+                                         sigma_1=6000.0, dv_1=0.0, w_1=0.05,
+                                         name="FeII")
+        iron.z.fixed = True
 
     # -- Balmer lines: narrow core + two broad Gaussians each -------------------
     def balmer(name, wavec, amp_c, amp_w0):
@@ -291,7 +341,6 @@ def build_model(backend=jxm):
     halpha = balmer("Halpha", LINE_WAVE["Halpha"], 2.2, 0.28)
     hbeta = balmer("Hbeta", LINE_WAVE["Hbeta"], 0.8, 0.30)
     hgamma = balmer("Hgamma", LINE_WAVE["Hgamma"], 0.4, 0.30)
-    hdelta = balmer("Hdelta", LINE_WAVE["Hdelta"], 0.2, 0.30)
 
     # -- forbidden lines -------------------------------------------------------
     o3 = backend.Line_MultiGauss_doublet(
@@ -317,40 +366,58 @@ def build_model(backend=jxm):
 
     he2 = narrow("HeII", LINE_WAVE["HeII_4686"], 0.08)
     o3_4363 = narrow("OIII4363", LINE_WAVE["OIII_4363"], 0.05)
-    ne3 = narrow("NeIII", EXTRA_LINES["NeIII_3869"], 0.12)
-    o2_3727 = narrow("OII3727", 0.5 * (LINE_WAVE["OII_3726"] + LINE_WAVE["OII_3728"]), 0.5)
-    ar3 = narrow("ArIII", EXTRA_LINES["ArIII_7136"], 0.01)
-    o2_7325 = narrow("OII7325", EXTRA_LINES["OII_7325"], 0.01)
-    # The higher Balmer lines are strong enough to matter at the blue end and are
-    # modelled with a narrow core only: their broad wings are weak, and giving
-    # four more lines two broad Gaussians each would not be constrained by data
-    # this far down the Balmer series.
-    heps = narrow("Hepsilon", EXTRA_LINES["Hepsilon_3970"], 0.08)
-    h8 = narrow("H8", EXTRA_LINES["H8_3889"], 0.05)
-    h9 = narrow("H9", EXTRA_LINES["H9_3835"], 0.04)
-    h11 = narrow("H11", EXTRA_LINES["H11_3770"], 0.04)
 
-    model = (continuum + iron + halpha + hbeta + hgamma + hdelta
-             + o3 + n2 + s2 + o1 + he2 + o3_4363 + ne3 + o2_3727 + ar3 + o2_7325
-             + heps + h8 + h9 + h11)
+    # He I 5876 sits on top of what used to be the Na D mask.  With the mask gone it
+    # has to be modelled, and it is not a single Gaussian: the line has a narrow
+    # core from the narrow-line region and a broad foot from the broad-line region,
+    # so it gets the same two-part treatment as the Balmers (one broad component).
+    he1 = backend.Line_MultiGauss(
+        n_components=2, amp_c=0.12, dv_c=0.0, sigma_c=700.0,
+        wavec=LINE_WAVE["HeI_5876"], name="HeI",
+        amp_w0=0.5, dv_w0=0.0, sigma_w0=2400.0)
+
+    # Nothing blueward of H-gamma or redward of [S II] is modelled: the data start
+    # at 4200 A and stop at 6800 A.  Dropped with the old 3680-7500 A range: H-delta,
+    # H-epsilon, H8, H9, H11, [Ne III] 3869, [O II] 3727, [Ar III] 7136, [O II] 7325.
+    components = [continuum]
+    if iron is not None:
+        components.append(iron)
+    components += [halpha, hbeta, hgamma, o3, n2, s2, o1, he2, o3_4363, he1]
+    model = components[0]
+    for _component in components[1:]:
+        model = model + _component
 
     # -- ties: one narrow kinematics for every narrow line, [O III] as reference --
-    for line in (halpha, hbeta, hgamma, hdelta, n2, s2, o1):
+    for line in (halpha, hbeta, hgamma, n2, s2, o1, he1):
         line.dv_c.tied = _tie_fn(backend, "tie_MultiGauss_dv_c")("OIII")
         line.sigma_c.tied = _tie_fn(backend, "tie_MultiGauss_sigma_c")("OIII")
-    for line in (he2, o3_4363, ne3, o2_3727, ar3, o2_7325, heps, h8, h9, h11):
+    for line in (he2, o3_4363):
         line.dv.tied = _TieFrom("OIII", "dv_c")
         line.sigma.tied = _TieFrom("OIII", "sigma_c")
 
     # -- ties: broad component 0 and broad component 1, each shared by the Balmers --
     # They are separate structures, so they get separate kinematics: a classical
     # broad-line region and a broader one can rotate or be shifted differently.
-    for line in (hbeta, hgamma, hdelta):
+    for line in (hbeta, hgamma, he1):
         line.dv_w0.tied = _tie_fn(backend, "tie_MultiGauss_dv_w0")("Halpha")
         line.sigma_w0.tied = _tie_fn(backend, "tie_MultiGauss_sigma_w0")("Halpha")
+    for line in (hbeta, hgamma):
         line.dv_w1.tied = _tie_fn(backend, "tie_MultiGauss_dv_w1")("Halpha")
         line.sigma_w1.tied = _tie_fn(backend, "tie_MultiGauss_sigma_w1")("Halpha")
     o3.dv_w0.tied = _TieFrom("OIII", "dv_c")     # the wing sits at the core velocity
+
+    # -- ties: the iron kernel IS the broad H-alpha profile ----------------------
+    # Component k of the kernel takes the shift, width and weight of broad component
+    # k of H-alpha, so the iron cannot move, broaden or rebalance independently of
+    # the line it is emitted with.  The compound above already exists, which is what
+    # lets the tie names resolve.
+    if iron is not None:
+        iron.dv_0.tied = _tie_fn(backend, "tie_MultiGauss_dv_w0")("Halpha")
+        iron.sigma_0.tied = _tie_fn(backend, "tie_MultiGauss_sigma_w0")("Halpha")
+        iron.w_0.tied = _tie_fn(backend, "tie_MultiGauss_amp_w0")("Halpha")
+        iron.dv_1.tied = _tie_fn(backend, "tie_MultiGauss_dv_w1")("Halpha")
+        iron.sigma_1.tied = _tie_fn(backend, "tie_MultiGauss_sigma_w1")("Halpha")
+        iron.w_1.tied = _tie_fn(backend, "tie_MultiGauss_amp_w1")("Halpha")
 
     # -- doublet ratios fixed by atomic physics --------------------------------
     # (not [S II]: its ratio is density-sensitive and stays a free parameter)
@@ -407,11 +474,8 @@ def make_priors(flux):
     bounds = {
         "Continuum.amplitude": (0.2 * continuum, 4.0 * continuum),
         "Continuum.alpha": (-5.0, 5.0),
+        # the iron has ONE free parameter now: its amplitude (the kernel is H-alpha)
         "FeII.amplitude": (1e-3, 3.0 * continuum),
-        # iron width and shift, free: wide, data-driven priors around a broad-line
-        # value (the template itself is ~340 km/s wide, so the prior starts there)
-        "FeII.sigma": (400.0, 8000.0),
-        "FeII.dv": (-1500.0, 1500.0),
         # narrow kinematics: [O III] sets them for every narrow line
         "OIII.dv_c": (-1000.0, 1000.0),
         "OIII.sigma_c": (30.0, 800.0),
@@ -434,6 +498,9 @@ def make_priors(flux):
         bounds[f"{name}.amp_c"] = amp
         bounds[f"{name}.amp_w0"] = ratio
         bounds[f"{name}.amp_w1"] = ratio
+    for name in TWO_COMPONENT_LINES:
+        bounds[f"{name}.amp_c"] = amp
+        bounds[f"{name}.amp_w0"] = ratio
     for name in SINGLE_LINES:
         bounds[f"{name}.amplitude"] = amp
 
@@ -450,6 +517,8 @@ def make_priors(flux):
         ("narrow lines", "30-800 km/s, one width for all, set by [O III]"),
         ("broad component 0", "300-8000 km/s, one width and shift for all Balmers"),
         ("broad component 1", "800-25000 km/s, its own width and shift"),
+        ("iron template", "amplitude only: the broadening is broad H-alpha"),
+        ("He I 5876", "narrow core + one broad component, same ratio prior"),
         ("[S II] 6716/6731", "both peaks free: the ratio is a density diagnostic"),
     ]
     return bounds, custom, notes
@@ -498,8 +567,7 @@ PARAM_UNITS = {
 PARAM_NOTES = {
     "Continuum.amplitude": "continuum flux density at 5500 A",
     "Continuum.alpha": "continuum slope (F_nu ~ nu^-alpha)",
-    "FeII.amplitude": "iron pseudo-continuum strength",
-    "FeII.sigma": "iron velocity width", "FeII.dv": "iron velocity shift",
+    "FeII.amplitude": "iron strength (broadened by broad H-alpha)",
     "OIII.amp_c0": "[O III] 5007 narrow peak", "OIII.amp_w0": "[O III] wing / core",
     "OIII.dv_c": "velocity shift of all narrow lines",
     "OIII.sigma_c": "velocity width of all narrow lines",
@@ -508,10 +576,7 @@ PARAM_NOTES = {
     "SII.amp_c0": "[S II] 6716 peak", "SII.amp_c1": "[S II] 6731 peak",
     "OI.amp_c0": "[O I] 6300 peak",
     "HeII.amplitude": "He II 4686 peak", "OIII4363.amplitude": "[O III] 4363 peak",
-    "NeIII.amplitude": "[Ne III] 3869 peak", "OII3727.amplitude": "[O II] 3727 peak",
-    "ArIII.amplitude": "[Ar III] 7136 peak", "OII7325.amplitude": "[O II] 7320 peak",
-    "Hepsilon.amplitude": "H-epsilon 3970 peak", "H8.amplitude": "H8 3889 peak",
-    "H9.amplitude": "H9 3835 peak", "H11.amplitude": "H11 3770 peak",
+    "HeI.amp_c": "He I 5876 narrow peak", "HeI.amp_w0": "broad He I 5876 / narrow",
     "Halpha.dv_w0": "shift of broad component 0 (all Balmers)",
     "Halpha.sigma_w0": "width of broad component 0 (all Balmers)",
     "Halpha.dv_w1": "shift of broad component 1 (all Balmers)",
@@ -583,6 +648,22 @@ def derived_quantities(fit):
         block["broad/narrow"] = (broad / block["narrow"]["flux"][0], np.nan, np.nan)
         out[line] = block
 
+    # He I 5876 has one broad component rather than two
+    wavec = LINE_WAVE["HeI_5876"]
+    narrow_amp = get(samples, "HeI.amp_c")
+    for label, amplitude, sigma in (
+            ("narrow", narrow_amp, get(samples, "OIII.sigma_c")),
+            ("broad 0", narrow_amp * get(samples, "HeI.amp_w0"),
+             get(samples, "Halpha.sigma_w0"))):
+        flux = amplitude * sigma * np.sqrt(2.0 * np.pi) * wavec / 299792.458 * 1e3
+        out.setdefault("He I 5876", {})[label] = {
+            "fwhm": (np.median(fwhm * sigma), *np.percentile(fwhm * sigma, [16, 84])),
+            "flux": (np.median(flux), *np.percentile(flux, [16, 84])),
+        }
+    he1 = out["He I 5876"]
+    he1["broad/narrow"] = (he1["broad 0"]["flux"][0] / he1["narrow"]["flux"][0],
+                           np.nan, np.nan)
+
     # The [S II] ratio: I(6716)/I(6731) falls from ~1.4 in the low-density limit
     # to ~0.4 at high density -- one of the few density diagnostics in the optical
     # window.  amp_c0 is 6716 and amp_c1 is 6731.
@@ -601,6 +682,8 @@ def print_derived(fit):
                   "   [density diagnostic]")
             continue
         for label in ("narrow", "broad 0", "broad 1"):
+            if label not in block:
+                continue
             fw, fl = block[label]["fwhm"], block[label]["flux"]
             print(f"  {line:8s} {label:10s} {fw[0]:8.0f} (+{fw[2]-fw[0]:.0f}/-{fw[0]-fw[1]:.0f})"
                   f"        {fl[0]:9.1f} (+{fl[2]-fl[0]:.1f}/-{fl[0]-fl[1]:.1f})")
@@ -624,7 +707,33 @@ def report_quality(fit, wave, flux, error):
 # --------------------------------------------------------------------------------------
 # 7. Plots
 # --------------------------------------------------------------------------------------
-def cpu_model_with_values(fit):
+class _TabulatedCurve(Fittable1DModel):
+    """A curve already evaluated on a grid, presented as an astropy component.
+
+    The iron is the one component whose astropy equivalent is *not* the same
+    construction: the CPU ``IronTemplate_tied`` broadens the template with an
+    explicit kernel array (an FFT deconvolution, then a convolution with a kernel
+    tabulated in velocity), while the JAX model subtracts the intrinsic width in
+    quadrature component by component.  Rather than plot a slightly different
+    iron, this wrapper carries the flux the fitted JAX model actually produces, so
+    the figure and the fit agree exactly.
+    """
+
+    n_inputs = 1
+    n_outputs = 1
+
+    def __init__(self, wave, flux, name=None, **kwargs):
+        super().__init__(**kwargs)
+        self._wave = np.asarray(wave, dtype=float)
+        self._flux = np.asarray(flux, dtype=float)
+        if name is not None:
+            self.name = name
+
+    def evaluate(self, x):
+        return np.interp(np.asarray(x, dtype=float), self._wave, self._flux)
+
+
+def cpu_model_with_values(fit, wave):
     """The astropy twin of the fitted model, at the best-fitting sample.
 
     :func:`galspec.plot.plot_fit` walks an astropy compound model and draws every
@@ -637,15 +746,39 @@ def cpu_model_with_values(fit):
     given the widths and shifts that the ties produced, otherwise every
     ``dv_c``/``sigma_c`` would still hold its construction value.
 
+    The iron is handled differently from the other components: its astropy twin is
+    a curve, not a model, because the tied iron has no astropy counterpart with the
+    same parameters (see :class:`_TabulatedCurve`).  Its flux is what the JAX model
+    produces, obtained by subtracting the model with the iron amplitude set to zero.
+
     :func:`check_parity` then verifies the twin against the JAX model, which also
     re-proves CPU/JAX parity on this very fit.
     """
-    model_jax, _, _ = fit.get_best_fit()
+    model_jax, _, theta = fit.get_best_fit()
     resolved = model_jax.param_dict()
-    model_cpu = apply_model_labels(build_model(galspec))
+
+    # ``flux`` takes the *free* parameters, in free_param_names order: map the
+    # qualified name onto that index, not onto the full parameter list
+    free = set(model_jax.free_param_names)
+    free_qualified = [q for q, flat
+                      in zip(model_jax.qualified_param_names, model_jax.param_names)
+                      if flat in free]
+    theta_no_iron = np.array(theta, dtype=float).copy()
+    theta_no_iron[free_qualified.index("FeII.amplitude")] = 0.0
+    iron_flux = (np.asarray(model_jax.flux(wave, theta))
+                 - np.asarray(model_jax.flux(wave, theta_no_iron)))
+
+    iron = _TabulatedCurve(wave, iron_flux, name="FeII")
+    parts = list(build_model(galspec))          # astropy leaves, no iron model
+    parts.insert(1, iron)                       # right after the continuum
+    model_cpu = parts[0]
+    for part in parts[1:]:
+        model_cpu = model_cpu + part
+    apply_model_labels(model_cpu)
+
     for flat, qualified in zip(model_jax.param_names, model_jax.qualified_param_names):
         value = resolved.get(flat)
-        if value is None:
+        if value is None or qualified.startswith("FeII."):
             continue
         submodel, parameter = qualified.split(".", 1)
         getattr(model_cpu[submodel], parameter).value = float(value)
@@ -654,7 +787,7 @@ def cpu_model_with_values(fit):
 
 def check_parity(fit, wave, predicted):
     """Assert that the astropy twin reproduces the JAX model."""
-    model_cpu = cpu_model_with_values(fit)
+    model_cpu = cpu_model_with_values(fit, wave)
     cpu = np.asarray(model_cpu(wave))
     difference = float(np.max(np.abs(cpu - predicted)) / np.max(np.abs(predicted)))
     print(f"  CPU/JAX parity  : max difference {difference:.2e} of the peak flux")
@@ -683,8 +816,8 @@ def plot_result(wave, flux, model_cpu, outfile, zoom_windows, mask_list, error=N
                                          "loc": "center left",
                                          "bbox_to_anchor": (1.005, 0.5),
                                          "frameon": False})
-    ax.set_title("IRAS 07546+3928: whole optical spectrum, "
-                 "two broad Gaussians per Balmer line", fontsize=13)
+    ax.set_title("IRAS 07546+3928: 4200-6800 A, two broad Gaussians per Balmer "
+                 "line, iron tied to broad H-alpha", fontsize=13)
     fig.savefig(outfile, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  wrote {outfile}")
@@ -743,7 +876,7 @@ def plot_corner(fit, outfile, max_params=14):
     wanted = ("OIII.dv_c", "OIII.sigma_c", "Halpha.dv_w0", "Halpha.sigma_w0",
               "Halpha.dv_w1", "Halpha.sigma_w1", "Continuum.amplitude",
               "Continuum.alpha", "FeII.amplitude", "Halpha.amp_c", "Halpha.amp_w0",
-              "Halpha.amp_w1", "Hbeta.amp_c", "Hbeta.amp_w0")
+              "Halpha.amp_w1", "HeI.amp_c", "HeI.amp_w0")
     keep = [i for i, name in enumerate(fit.full_param_names) if name in wanted][:max_params]
     # maths labels: "BH$\alpha$:$\sigma_{w0}$" instead of "Halpha.sigma_w0"
     labels = getattr(fit, "param_labels", None) or fit.full_param_names
@@ -760,14 +893,14 @@ def plot_corner(fit, outfile, max_params=14):
 #: Parameters worth a histogram: the numbers the fit exists to measure.
 HIST_PARAMS = ("Halpha.amp_c", "Halpha.amp_w0", "Halpha.dv_w0", "Halpha.sigma_w0",
                "Halpha.sigma_w1", "Hbeta.amp_c", "OIII.sigma_c", "OIII.dv_c",
-               "FeII.sigma", "FeII.dv", "SII.amp_c0", "SII.amp_c1",
+               "HeI.amp_c", "HeI.amp_w0", "SII.amp_c0", "SII.amp_c1",
                "Continuum.alpha")
 
 
 def plot_histograms(fit, outfile, params=HIST_PARAMS):
     """One-dimensional posteriors, with the median and the 16-84 band.
 
-    A corner plot of forty parameters is unreadable; these are the marginals worth
+    A corner plot of thirty parameters is unreadable; these are the marginals worth
     showing, and they carry the numbers ``print_parameter_table`` quotes.
     """
     import matplotlib
@@ -815,14 +948,14 @@ def main(argv=None) -> int:
     outdir.mkdir(parents=True, exist_ok=True)
 
     print("=" * 78)
-    print("IRAS 07546+3928: whole optical spectrum, fitted with JNesty on the GPU")
+    print("IRAS 07546+3928: 4200-6800 A, fitted with JNesty on the GPU")
     print("=" * 78)
 
     wave, flux, error = load_spectrum()
     print(f"\n[1/5] data: {wave.size:,} pixels, {wave[0]:.0f}-{wave[-1]:.0f} A (rest frame)")
     print(f"      peak flux {flux.max():.2f}, line-free level "
           f"{np.percentile(flux, 15):.2f}  [1e-14 erg/s/cm2/A]")
-    for lo, hi in ((3800, 4200), (4200, 5000), (5000, 6000), (6000, 7000), (7000, 7500)):
+    for lo, hi in ((4200, 4600), (4600, 5400), (5400, 6000), (6000, 6800)):
         sel = (wave > lo) & (wave < hi)
         print(f"      {lo}-{hi} A: median flux {np.median(flux[sel]):5.2f}, "
               f"median error {np.median(error[sel]):5.3f} "
@@ -875,7 +1008,7 @@ def main(argv=None) -> int:
     if not args.no_plots:
         zooms = [("Hgamma_Hbeta", (4230, 5100), (0.0, 2.4)),
                  ("Halpha_NII_SII", (6420, 6800), (0.0, 5.0)),
-                 ("blue_end", (3700, 4250), (0.6, 1.7))]
+                 ("HeI_NaD", (5750, 6000), (0.4, 1.4))]
         plot_result(wave, flux, model_cpu, outdir / "iras07546_jax_fit.png",
                     zooms, mask_list=list(MASK_WINDOWS), error=error)
         plot_corner(fit, outdir / "iras07546_jax_corner.png")

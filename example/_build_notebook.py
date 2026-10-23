@@ -1167,7 +1167,7 @@ missing something.
 
 The 5% flux term sets the scale of this number, and it is worth knowing which way
 it cuts. A chi2/dof **above** 1 would mean the model cannot reach the error bar --
-something is missing. What this fit gets is **0.32**, which says the opposite: the
+something is missing. What this fit gets is **0.33**, which says the opposite: the
 5% term is *larger* than the true pixel-to-pixel noise (about 2-3% here), so the
 residuals are 0.57 sigma on average and the posterior is correspondingly
 conservative -- parameter errors are wider than the photon statistics alone would

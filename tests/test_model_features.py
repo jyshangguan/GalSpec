@@ -38,6 +38,9 @@ import galspec                                                      # noqa: E402
 from galspec.jnesty_fit import JNesty_Fit                            # noqa: E402
 from galspec import jax_models as jxm                               # noqa: E402
 from galspec.param_labels import parameter_labels, parameter_symbol  # noqa: E402
+from galspec.constants import ls_km as LS_KM                               # noqa: E402
+
+import pytest                                                              # noqa: E402
 
 WAVE = np.linspace(4000.0, 6000.0, 4000)
 
@@ -227,6 +230,82 @@ def test_multigauss_components_are_exchangeable():
     assert relative < 1e-12, relative
     assert swapped.amp_w0.value > 1.0, "the mirror solution needs amp_w0 > 1"
     print(f"  swap is exact ({relative:.1e}) and leaves [0, 1]")
+
+
+def _smooth_in_velocity_space(wave, flux, sigma, sigma_intr, step=5.0):
+    """The iron as it is meant to be: a Gaussian convolution in velocity space.
+
+    The template is sampled on a uniform velocity grid, convolved there -- so the
+    requested width is the requested width at every wavelength -- and returned on
+    the template's own grid.  Zero padding outside the tabulated range.
+    """
+    v = np.log(wave / wave[0]) * LS_KM
+    v_grid = np.arange(-80000.0, v[-1] + 80000.0 + step, step)
+    flux_v = np.interp(v_grid, v, flux, left=0.0, right=0.0)
+    extra = np.sqrt(max(sigma ** 2 - sigma_intr ** 2, 0.0))
+    half = int(5.0 * extra / step)
+    offsets = np.arange(-half, half + 1) * step
+    kernel = np.exp(-0.5 * (offsets / extra) ** 2)
+    kernel /= kernel.sum()
+    smoothed = np.convolve(np.pad(flux_v, half, mode="edge"), kernel,
+                           mode="same")[half:half + len(flux_v)]
+    return np.interp(v, v_grid, smoothed)
+
+
+def test_iron_templates_are_even_in_log_wavelength():
+    """Both templates are resampled at load, so a channel is one velocity everywhere.
+
+    Before this the grid was even in wavelength (2.00 A), so one channel spanned
+    150 km/s at the blue end and 107 km/s at the red end and a velocity width was
+    a different number of channels at each end.
+    """
+    from galspec.iron_template import (flux_boroson1992, flux_park2022,
+                                       load_iron_template, resample_log_even,
+                                       wave_boroson1992, wave_park2022)
+
+    for name, wave in (("park2022", wave_park2022), ("boroson1992", wave_boroson1992)):
+        spacing = np.diff(np.log(wave))
+        assert np.ptp(spacing) < 1e-9 * np.mean(spacing), name
+        velscale = np.mean(spacing) * LS_KM
+        assert 60.0 < velscale < 200.0, (name, velscale)
+
+    # the grid keeps the number of channels and the range; only the spacing changes
+    assert len(wave_park2022) == 801
+    assert wave_park2022[0] > 3990.0 and wave_park2022[-1] < 5610.0
+    assert np.isclose(flux_park2022.max(), 1.0) and np.isclose(flux_boroson1992.max(), 1.0)
+
+    # an unknown template is refused by name, not with a KeyError from a dict lookup
+    with pytest.raises(KeyError):
+        load_iron_template("boroson1993")
+    # oversampling halves the channel width and is available if ever needed
+    wave, _ = resample_log_even(wave_park2022, flux_park2022, oversample=2)
+    coarse = np.mean(np.diff(np.log(wave_park2022)))
+    assert len(wave) == 2 * len(wave_park2022)
+    assert np.isclose(np.mean(np.diff(np.log(wave))), 0.5 * coarse, rtol=0.5 * coarse)
+
+
+def test_iron_template_broadens_in_velocity_space():
+    """A Gaussian width must be the same at both ends of the template.
+
+    Compares :class:`galspec.IronTemplate_new` against an independent convolution
+    on a uniform velocity grid.  On a wavelength-even grid this test fails by
+    several per cent; on the log-even grid that both backends now load it agrees
+    to well under one per cent.
+    """
+    from galspec.iron_template import flux_park2022, wave_park2022
+
+    window = (wave_park2022 > 4500) & (wave_park2022 < 5500)
+    flux = flux_park2022 / np.max(flux_park2022[window])
+    sigma_intr = 800.0 / 2.3548
+    wavelengths = np.arange(4200.0, 5400.0, 1.0)
+
+    for sigma in (700.0, 1500.0, 4000.0):
+        model = galspec.IronTemplate_new(amplitude=1.0, sigma=sigma, z=0.0, dv=0.0)
+        got = np.asarray(model(wavelengths))
+        want = np.interp(wavelengths, wave_park2022,
+                         _smooth_in_velocity_space(wave_park2022, flux, sigma, sigma_intr))
+        error = np.max(np.abs(got - want)) / np.max(want)
+        assert error < 0.01, (sigma, error)
 
 
 # --------------------------------------------------------------------------------------

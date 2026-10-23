@@ -5,22 +5,91 @@ from astropy.modeling.core import Fittable1DModel
 from astropy.modeling.parameters import Parameter
 from .utils import splitter, package_path
 from .constants import ls_km
+from .stellar_continuum import log_rebin
 
 
 __all__ = ['IronTemplate', 'IronTemplate_new', 'IronTemplate_tied']
 
 
-irontemp_boroson1992 = Table.read('{0}{1}data{1}irontemplate_boroson1992.ipac'.format(package_path, splitter),
-                       format='ipac')
-wave_boroson1992 = irontemp_boroson1992['Spectral_axis'].data
-flux_boroson1992 = irontemp_boroson1992['Intensity'].data
-flux_boroson1992 /= np.max(flux_boroson1992)
+#: Template files, and the wavelength and flux column of each.
+_TEMPLATE_FILES = {
+    'park2022': ('irontemplate_park2022.dat', 'cds', 'Wave', 'Flux'),
+    'boroson1992': ('irontemplate_boroson1992.ipac', 'ipac', 'Spectral_axis', 'Intensity'),
+}
 
-irontemp_park2022 = Table.read('{0}{1}data{1}irontemplate_park2022.dat'.format(package_path, splitter),
-                       format='cds')
-wave_park2022 = irontemp_park2022['Wave'].data
-flux_park2022 = irontemp_park2022['Flux'].data
-flux_park2022 /= np.max(flux_park2022)
+
+def resample_log_even(wave, flux, velscale=None, oversample=1):
+    """Resample a spectrum onto a grid that is even in the natural log of wavelength.
+
+    Both Fe II templates are tabulated on a grid that is even in *wavelength*
+    (``park2022``: exactly 2.0 A from 4000 to 5600 A), so one channel spans
+    150 km/s at the blue end and 107 km/s at the red end.  Broadening such a
+    template means convolving it in velocity, and that needs a grid whose
+    spacing is constant in velocity -- ``dln(lambda) = dv / c`` -- otherwise a
+    Gaussian of a given ``sigma`` in km/s is a different number of channels at
+    each end of the template and the requested width is off by up to 40%.
+
+    Uses :func:`galspec.stellar_continuum.log_rebin`, which integrates the
+    template flux over the new bins (a template is a flux density, not a set of
+    point samples) and pads the limits by half an input pixel.
+
+    Parameters
+    ----------
+    wave, flux : array like
+        The spectrum as tabulated.  ``wave`` must be increasing.
+    velscale : float, optional
+        Velocity per channel [km/s].  The default, ``None``, keeps the number of
+        channels: 126 km/s for ``park2022``, 107 km/s for ``boroson1992`` --
+        never coarser than the red end of either original grid.
+    oversample : int, optional
+        Only used when ``velscale`` is None: output channels per input channel.
+
+    Returns
+    -------
+    wave, flux : ndarray
+        The spectrum on the new grid, with ``ln(wave)`` evenly spaced.
+    """
+    flux_rebin, ln_wave = log_rebin(wave, flux, velscale=velscale, oversample=oversample)
+    return np.exp(ln_wave), flux_rebin
+
+
+def load_iron_template(template_name='park2022'):
+    """Read an Fe II template and put it on the log-even grid.
+
+    Resampling happens here, once, at load time, so every model built on the
+    template -- :class:`IronTemplate`, :class:`IronTemplate_new`,
+    :class:`IronTemplate_tied` and their JAX counterparts -- broadens it in
+    velocity space by construction.  Before this, the template was smoothed in
+    *pixels* with a single velocity scale taken from the blue end, which applied
+    a width 40% too small at the red end of ``park2022``.
+
+    Parameters
+    ----------
+    template_name : {'park2022', 'boroson1992'}
+        ``park2022``: Mrk 493, Park et al. (2022).  ``boroson1992``: I Zw 1,
+        Boroson & Green (1992).
+
+    Returns
+    -------
+    wave, flux : ndarray
+        Wavelength [A], on a grid even in ``ln(wave)``, and flux normalised to
+        unit maximum.
+    """
+    try:
+        name, fmt, wave_col, flux_col = _TEMPLATE_FILES[template_name]
+    except KeyError:
+        raise KeyError('Cannot recognize the iron template model ({})!'.format(template_name))
+
+    table = Table.read('{0}{1}data{1}{2}'.format(package_path, splitter, name), format=fmt)
+    wave = np.asarray(table[wave_col].data, dtype=float)
+    flux = np.asarray(table[flux_col].data, dtype=float)
+
+    wave, flux = resample_log_even(wave, flux)
+    return wave, flux / np.max(flux)
+
+
+wave_park2022, flux_park2022 = load_iron_template('park2022')
+wave_boroson1992, flux_boroson1992 = load_iron_template('boroson1992')
 
 
 class IronTemplate(Fittable1DModel):
@@ -72,7 +141,9 @@ class IronTemplate(Fittable1DModel):
         self._wave_temp = wave_temp
         self._flux_temp = flux_temp / fmax
         #self._stddev_intr = 900 / 2.3548  # Velocity dispersion of I Zw 1, Mrk 493 looks similar
-        self._vchan = (wave_temp[1] - wave_temp[0]) / wave_temp[0] * ls_km  # Velocity width per channel
+        # velocity per channel; the grid is even in ln(wave), so this is the same
+        # everywhere (it used to be the blue end of a linear grid)
+        self._vchan = (np.log(wave_temp[1]) - np.log(wave_temp[0])) * ls_km
     
     def evaluate(self, x, amplitude, stddev, z):
         """
@@ -144,7 +215,9 @@ class IronTemplate_new(Fittable1DModel):
         fmax = np.max(flux_temp[fltr])
         self._wave_temp = wave_temp
         self._flux_temp = flux_temp / fmax
-        self._vchan = (wave_temp[1] - wave_temp[0]) / wave_temp[0] * ls_km  # Velocity width per channel
+        # velocity per channel; the grid is even in ln(wave), so this is the same
+        # everywhere (it used to be the blue end of a linear grid)
+        self._vchan = (np.log(wave_temp[1]) - np.log(wave_temp[0])) * ls_km
 
     def evaluate(self, x, amplitude, sigma, z, dv):
         """
@@ -217,8 +290,7 @@ class IronTemplate_tied(Fittable1DModel):
         self._flux_temp = flux_temp / fmax
         #self._stddev_intr = 900 / 2.3548  # Velocity dispersion of I Zw 1, Mrk 493 looks similar
         ln_wave_temp = np.log(wave_temp)
-        self._vchan = (ln_wave_temp[1]-ln_wave_temp[0])* ls_km
-        #self._vchan = (wave_temp[1] - wave_temp[0]) / wave_temp[0] * ls_km  # Velocity width per channel
+        self._vchan = (ln_wave_temp[1] - ln_wave_temp[0]) * ls_km
         
         # Store the broad emission line template
         self.kernel = kernel
@@ -246,7 +318,8 @@ class IronTemplate_tied(Fittable1DModel):
             
             # Calculate velocity offsets for each wavelength point
             center_wave = self._wave_temp[len(self._wave_temp)//2]
-            vel_offsets = (self._wave_temp - center_wave) / center_wave * ls_km
+            # exact velocity offset; on the log-even grid this is a uniform ladder
+            vel_offsets = np.log(self._wave_temp / center_wave) * ls_km
             
             # Create interpolator for the kernel
             kernel_interp = interp1d(velc_range, kernel, bounds_error=False, fill_value=0)

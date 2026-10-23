@@ -384,17 +384,20 @@ def log_uniform(lower, upper):
 def make_priors(flux):
     """Bounds and log-uniform priors for the whole model.
 
-    The two width ranges of the broad line do not overlap on purpose: component 0
-    and component 1 of a Line_MultiGauss are exchangeable (swapping them leaves the
-    spectrum bit-identical), so with overlapping priors the posterior is bimodal and
-    "core" and "wind" mean nothing.  300-3000 vs 3000-25000 km/s is also what the
-    two words say.  See ``develop/dev_jax/io_test/iron_tied_io_test.html``.
+    ``amp_w0`` -- the wind's amplitude relative to the broad core -- is uniform on
+    [0, 1].  A wind is by definition no brighter than its core, and the bound is
+    what breaks the core-wind degeneracy: component 0 and component 1 of a
+    Line_MultiGauss are exchangeable (swapping them leaves the spectrum
+    bit-identical), but the swap sends amp_w0 -> 1/amp_w0, i.e. outside [0, 1].
+    The *widths* therefore keep their full data-driven range.
+    See ``develop/dev_jax/io_test/iron_tied_io_test.html``.
     """
     peak = float(np.max(flux))
     continuum = float(np.percentile(flux, 15.0))
     amp = (1e-3, 3.0 * peak)      # line peaks
     ratio = (1e-3, 8.0)           # broad / narrow amplitude
-    broad_ratio = (1e-3, 8.0)     # wind / broad core
+    wind = (0.0, 1.0)             # wind / core: bounded, and that breaks the
+                                  # core-wind exchange degeneracy (swap -> 1/amp_w0)
 
     bounds = {
         "Continuum.amplitude": (0.2 * continuum, 4.0 * continuum),
@@ -405,30 +408,31 @@ def make_priors(flux):
         "OIII.dv_c": (-1000.0, 1000.0),
         "OIII.sigma_c": (30.0, 800.0),
         "OIII.amp_c0": amp,
-        "OIII.amp_w0": ratio,
+        "OIII.amp_w0": wind,
         "OIII.sigma_w0": (300.0, 4000.0),
         "NII.amp_c0": amp,
         "SII.amp_c0": amp, "SII.amp_c1": amp,
         "OI.amp_c0": amp,
         # broad H-alpha: the only place where the broad kinematics are free
         "b_halpha.dv_c": (-2500.0, 2500.0),
-        "b_halpha.sigma_c": (300.0, 3000.0),
-        "b_halpha.amp_w0": broad_ratio,
+        "b_halpha.sigma_c": (300.0, 8000.0),
+        "b_halpha.amp_w0": wind,
         "b_halpha.dv_w0": (-6000.0, 6000.0),
-        "b_halpha.sigma_w0": (3000.0, 25000.0),
+        "b_halpha.sigma_w0": (800.0, 25000.0),
     }
     for name in BALMER_NAMES:
         bounds[f"n_{name.lower()}.amplitude"] = amp
         bounds[f"b_{name.lower()}.amp_c"] = amp
-        bounds[f"b_{name.lower()}.amp_w0"] = broad_ratio
+        bounds[f"b_{name.lower()}.amp_w0"] = wind
     bounds["n_hei.amplitude"] = amp
     bounds["b_hei.amp_c"] = amp
     for name in SINGLE_LINES:
         bounds[f"{name}.amplitude"] = amp
 
+    # peak heights get a log-uniform prior; the wind ratios are bounded by 1 and
+    # take a uniform one instead
     log_params = [n for n in bounds
-                  if n.endswith(("amp_c", "amp_c0", "amp_c1", "amp_w0", "amp_w1",
-                                 "amplitude"))]
+                  if n.endswith(("amp_c", "amp_c0", "amp_c1", "amplitude"))]
     return bounds, {n: log_uniform(*bounds[n]) for n in log_params}
 
 
@@ -944,8 +948,9 @@ now stays in the fit: He I 5876 sits inside it and is modelled instead.
   narrow lines here are ~700 km/s. So the model is *not* convolved, exactly as in
   `wrk_sagan_iras07546.ipynb`; the fitted narrow width is the observed one.
 * **Wide priors, taken from the data.** Line peaks from invisible to 3x the
-  brightest pixel (log-uniform); the broad core 300-3000 km/s and the wind
-  3000-25000 km/s. Section 4 shows the prior spread against the data.
+  brightest pixel (log-uniform); the broad core 300-8000 km/s and the wind
+  800-25000 km/s; the wind's amplitude anywhere between 0 and 1 of the core.
+  Section 4 shows the prior spread against the data.
 * **Physical ties.** Every narrow line shares one velocity shift and one width
   (measured from [O III]); the broad core and the wind are each shared across the
   three Balmer lines and He I; and the Fe II template is broadened by broad
@@ -1074,11 +1079,12 @@ from the spectrum itself, never from a previous fit:
 | --- | --- | --- |
 | line peaks | 1e-3 to 3x the brightest pixel, **log-uniform** | four decades: from invisible to implausibly strong |
 | broad/narrow ratio | 1e-3 to 8, log-uniform | from no broad component to one that dominates |
+| wind/core ratio | 0-1, **uniform** | no wind is brighter than its own core -- and this is what breaks the core-wind degeneracy |
 | narrow widths | 30-800 km/s | unresolved up to the widest known narrow-line region |
-| broad core | 300-3000 km/s | FWHM up to ~7000 km/s |
-| broad wind | 3000-25000 km/s | FWHM up to ~59000 km/s, for a line wing |
+| broad core | 300-8000 km/s | FWHM up to ~19000 km/s |
+| broad wind | 800-25000 km/s | FWHM up to ~59000 km/s, for a line wing |
 | continuum level | 0.2-4x the line-free windows | cannot be negative, cannot swamp the lines |
-| He I broad/narrow | 1e-3 to 8, log-uniform | same ratio prior as the Balmers |
+| He I broad/narrow | 0-1, uniform | same ratio prior as the Balmers |
 | iron amplitude | 1e-3 to 3x the continuum level | the only free iron parameter |
 | [S II] 6716/6731 | both peaks 1e-3 to 3x peak | the ratio is measured, not assumed |
 
@@ -1093,10 +1099,12 @@ A second, less obvious one: the two components of a `Line_MultiGauss` are
 `dv_w0' = -dv_w0`, `sigma_w0' = sigma_c` — leaves the spectrum identical to 3e-16,
 and the Fe II kernel follows it because it is tied to the same profile. With
 overlapping width priors the posterior is therefore bimodal and a fit reports
-whichever mode it happened to fill. The ranges above do not overlap: the broad
-core is the narrower of the two. `develop/dev_jax/io_test/iron_tied_io_test.html`
-measures the degeneracy on a mock and shows the same fit recovering every
-parameter once the split is in place."""),
+whichever mode it happened to fill. One number settles it: `amp_w0` is uniform on
+[0, 1], so the swapped solution -- which needs `amp_w0' = 1/amp_w0 > 1` -- is
+outside the prior, and the *widths* keep their full range. The fit below lands in
+one mode with no posterior samples on the mirror branch;
+`develop/dev_jax/io_test/iron_tied_io_test.html` measures the same thing on a
+mock."""),
 
     ("code", priors),
 

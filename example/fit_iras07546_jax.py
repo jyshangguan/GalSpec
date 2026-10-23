@@ -63,12 +63,16 @@ One prior that is not just "wide"
 ---------------------------------
 The two components of a ``Line_MultiGauss`` are exchangeable: swapping them (with
 the amplitudes and shifts that go with them) leaves the spectrum bit-identical, so
-with wide overlapping priors the posterior is bimodal and "core" and "wind" mean
-nothing -- a fit reports whichever mode it happened to fill.  The prior ranges
-therefore do not overlap: the broad core is 300-3000 km/s and the wind
-3000-25000 km/s, which is also what the two words say.  The demonstration, with
-the mock and the recovery test, is in
-``develop/dev_jax/io_test/iron_tied_io_test.html``.
+with a prior that allows ``amp_w0 > 1`` the posterior is bimodal and "core" and
+"wind" mean nothing -- a fit reports whichever mode it happened to fill.
+
+One number settles it.  A wind is by definition no brighter than its core, so
+``amp_w0`` gets ``[0, 1]``, uniform.  The swap sends ``amp_w0 -> 1/amp_w0``, i.e.
+outside that interval, so the mirrored solution is excluded and the posterior has
+a single mode -- while the *widths* keep the full data-driven range (broad core
+300-8000 km/s, wind 800-25000 km/s) instead of having to be split apart to keep
+the labels meaningful.  ``develop/dev_jax/io_test/iron_tied_io_test.html``
+measures both cases.
 
 The error on every pixel
 ------------------------
@@ -517,26 +521,29 @@ def make_priors(flux):
     * a line peak may be anything from 1e-3 (invisible) to 3x the brightest pixel
       of the spectrum, log-uniform -- four decades of freedom per line;
     * a broad component may be up to 8x its own narrow core, log-uniform;
+    * a *wind* component is 0-1 of its core, uniform.  That is the whole range a
+      ratio can take in one direction, and it is what breaks the degeneracy:
+      component 0 and component 1 of a ``Line_MultiGauss`` are exchangeable --
+      swapping them leaves the spectrum bit-identical -- but the swap sends
+      ``amp_w0 -> 1/amp_w0``, which for ``amp_w0 < 1`` lies outside the prior.  So
+      the posterior has a single mode and the labels mean what the names say,
+      without any constraint being put on the widths;
     * narrow lines: 30-800 km/s of velocity dispersion (FWHM 70-1900 km/s).  No
       LSF is folded in, so this is the *observed* width;
-    * broad core (``b_halpha.sigma_c``): 300-3000 km/s, shifted by up to
+    * broad core (``b_halpha.sigma_c``): 300-8000 km/s, shifted by up to
       +-2500 km/s;
-    * broad wind (``b_halpha.sigma_w0``): 3000-25000 km/s (FWHM up to 59000 km/s),
+    * broad wind (``b_halpha.sigma_w0``): 800-25000 km/s (FWHM up to 59000 km/s),
       shifted by up to +-6000 km/s.
 
-    The two width ranges do not overlap on purpose.  Component 0 and component 1 of
-    a ``Line_MultiGauss`` are exchangeable -- swapping them (with the amplitudes and
-    shifts that go with them) leaves the spectrum bit-identical -- so without a
-    constraint the posterior is bimodal and the two labels mean nothing.  The
-    split encodes what the names say: the core is the narrower of the two broad
-    components.  ``develop/dev_jax/iron_tied_io_test.py`` measures the degeneracy
-    and shows the same fit recovering every parameter once the split is in place.
+    ``develop/dev_jax/iron_tied_io_test.py`` measures the degeneracy with and
+    without the amplitude limit.
     """
     peak = float(np.max(flux))
     continuum = float(np.percentile(flux, 15.0))
     amp = (1e-3, 3.0 * peak)      # line peaks
     ratio = (1e-3, 8.0)           # broad / narrow amplitude
-    broad_ratio = (1e-3, 8.0)     # wind / broad core
+    wind = (0.0, 1.0)             # wind / core: bounded, and that breaks the
+                                  # core-wind exchange degeneracy (swap -> 1/amp_w0)
 
     bounds = {
         "Continuum.amplitude": (0.2 * continuum, 4.0 * continuum),
@@ -548,7 +555,7 @@ def make_priors(flux):
         "OIII.sigma_c": (30.0, 800.0),
         "OIII.amp_c0": amp,
         # [O III] broad wing
-        "OIII.amp_w0": ratio,
+        "OIII.amp_w0": wind,
         "OIII.sigma_w0": (300.0, 4000.0),
         # other line peaks
         "NII.amp_c0": amp,
@@ -556,10 +563,10 @@ def make_priors(flux):
         "OI.amp_c0": amp,
         # broad H-alpha: the only place where the broad kinematics are free
         "b_halpha.dv_c": (-2500.0, 2500.0),
-        "b_halpha.sigma_c": (300.0, 3000.0),
-        "b_halpha.amp_w0": broad_ratio,
+        "b_halpha.sigma_c": (300.0, 8000.0),
+        "b_halpha.amp_w0": wind,
         "b_halpha.dv_w0": (-6000.0, 6000.0),
-        "b_halpha.sigma_w0": (3000.0, 25000.0),
+        "b_halpha.sigma_w0": (800.0, 25000.0),
     }
     # narrow peaks, one per line
     for name in BALMER_NAMES:
@@ -568,24 +575,26 @@ def make_priors(flux):
     # broad peaks and ratios: each line keeps its own (the Balmer decrement)
     for name in BALMER_NAMES:
         bounds[f"b_{name.lower()}.amp_c"] = amp
-        bounds[f"b_{name.lower()}.amp_w0"] = broad_ratio
+        bounds[f"b_{name.lower()}.amp_w0"] = wind
     bounds["b_hei.amp_c"] = amp
     for name in SINGLE_LINES:
         bounds[f"{name}.amplitude"] = amp
 
-    # everything that is a peak height or a broad/narrow ratio gets a log-uniform prior
+    # Peak heights get a log-uniform prior.  The wind ratios do not: they are
+    # bounded above by 1, and a uniform prior over [0, 1] is the unbiased one there.
     log_params = [name for name in bounds
-                  if name.endswith(("amp_c", "amp_c0", "amp_c1", "amp_w0", "amp_w1",
-                                    "amplitude"))]
+                  if name.endswith(("amp_c", "amp_c0", "amp_c1", "amplitude"))]
     custom = {name: log_uniform(*bounds[name]) for name in log_params}
 
     notes = [
         ("continuum", "0.2-4x the level of the line-free windows, slope -5 to 5"),
         ("line peaks", "1e-3 to 3x the brightest pixel, log-uniform"),
         ("broad/narrow ratio", "1e-3 to 8, log-uniform"),
+        ("wind/core ratio", "0-1, uniform: no wind is brighter than its core, and "
+                            "the bound breaks the core-wind exchange"),
         ("narrow lines", "30-800 km/s, one width for all, set by [O III]"),
-        ("broad core", "300-3000 km/s, one width and shift for all broad lines"),
-        ("broad wind", "3000-25000 km/s, its own width and shift"),
+        ("broad core", "300-8000 km/s, one width and shift for all broad lines"),
+        ("broad wind", "800-25000 km/s, its own width and shift"),
         ("iron template", "amplitude only: the broadening is broad H-alpha"),
         ("He I 5876", "narrow Gaussian + one broad component, same ratio prior"),
         ("[S II] 6716/6731", "both peaks free: the ratio is a density diagnostic"),

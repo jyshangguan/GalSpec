@@ -252,6 +252,11 @@ def log_uniform(lower: float, upper: float):
 #: exchange symmetry of section 5 unbroken; ``ordered`` encodes what the names
 #: core/wind are supposed to mean (component 0 is the narrower of the two) and
 #: therefore identifies the labels.
+#: The width priors the report compares.  Section 4.2 uses these to show that the
+#: core-wind exchange makes the posterior bimodal *when amp_w0 may exceed 1*.  The
+#: production fit does not need the disjoint ranges: it bounds amp_w0 to [0, 1],
+#: which removes the mirrored branch outright (see the docstring of
+#: ``example/fit_iras07546_jax.make_priors`` and ``io_test/cpu_vs_jax.html``).
 SIGMA_PRIORS = {"wide": ((300.0, 8000.0), (800.0, 25000.0)),
                 "ordered": ((300.0, 3000.0), (3000.0, 25000.0))}
 

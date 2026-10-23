@@ -14,6 +14,7 @@ models and `galspec.Dynesty_Fit` are untouched.
 | `sdss_agn.py` | a realistic SDSS AGN model (H-alpha + H-beta + H-gamma, continuum, iron, all strong forbidden lines, 23 free parameters, LSF convolution) in both flavours |
 | `run_sdss_fit.py` | run one configuration of that fit (`--config dynesty-serial\|dynesty-parallel\|jnesty-cpu\|jnesty-gpu`) and save JSON + NPZ |
 | `make_report.py`, `report_pages.py` | build the multi-page HTML report from the saved runs |
+| `iron_cpu_vs_jax.py` | does the JAX `IronTemplate_tied` reproduce the CPU one at the same parameters? Both are compared against an exact velocity-space convolution; writes `io_test/cpu_vs_jax.html` |
 | `iron_tied_io_test.py` | input/output test of `IronTemplate_tied` + `Line_MultiGauss`: generate a mock (iron convolved with a known broad H-beta profile, plus H-beta), fit it back with the JAX models, compare with the input; writes `io_test/iron_tied_io_test.html` |
 | `results/` | benchmark output (JSON + figures; `results/report/` holds the HTML) |
 | `io_test/` | output of the input/output test: the HTML report, the figures as PNGs, and `io_test_results.json` |
@@ -52,11 +53,23 @@ python develop/dev_jax/make_report.py      # -> results/report/report.html
 # the input/output test of the tied iron + multi-Gaussian kernel (about 6 min on
 # one GPU): checks the parameter names, the normalisation, the exactness of the
 # convolution, and whether a fit reproduces a known input
+python develop/dev_jax/iron_cpu_vs_jax.py          # -> io_test/cpu_vs_jax.html
+
 python develop/dev_jax/iron_tied_io_test.py --noise
 # -> develop/dev_jax/io_test/iron_tied_io_test.html
 ```
 
-**Read `io_test/iron_tied_io_test.html` before trusting the tied iron.** It is the
+**Two reports, two questions.**
+`io_test/cpu_vs_jax.html` (from `iron_cpu_vs_jax.py`, about a minute) asks whether
+the JAX `IronTemplate_tied` reproduces the CPU one at the same parameters, and
+measures both against an exact velocity-space convolution. Short answer: they differ
+by 10% of the iron peak, the JAX model is the closer of the two (4.5% vs 8.5%), and
+the CPU answer moves when its deconvolution, kernel window or intrinsic width are
+changed. `io_test/iron_tied_io_test.html` (from `iron_tied_io_test.py`, about six
+minutes) is the longer input/output study: a mock fitted back, the unit checks, and
+the core-wind degeneracy.
+
+**Read `io_test/cpu_vs_jax.html` before trusting either tied iron.** It is the
 one place where the model is checked against a known answer: the mock is generated
 by the *CPU* classes, the fit uses the JAX ones, and the test separates what the
 code must get exactly right (the convolution, the ties, the normalisation:

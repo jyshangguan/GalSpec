@@ -129,26 +129,33 @@ The JAX models are verified against the CPU models by
 GPU and CPU fits are guaranteed to be solving the same problem.
 
 A complete worked example lives in `example/fit_iras07546_jax.py` (script,
-30-45 min on one GPU) and `example/fit_iras07546_jax.ipynb` (the same fit broken
-into annotated cells). It fits the **whole optical spectrum** of IRAS 07546+3928
-(3680-7500 A rest frame, 83 681 pixels) in one go: a power-law continuum plus an
-Fe II template, H-alpha/H-beta/H-gamma/H-delta each as one narrow Gaussian plus
-**two** broad Gaussians, [O III] with a broad wing, and [N II], [S II], [O I],
-He II, [O III] 4363, [Ne III], [O II], [Ar III], plus the higher Balmer lines
-H-epsilon, H8, H9 and H11 -- 40 free parameters describing twenty components, with
-every narrow line tied to the [O III] kinematics, the two broad components tied
-across the four Balmer lines, and no least-squares step anywhere. The doublet
-ratios are tied at their atomic values except [S II], whose 6716/6731 ratio is a
-density diagnostic and is therefore measured. The Fe II template is fitted in its
-`IronTemplate_new` form -- velocity dispersion and velocity shift, redshift fixed
--- so its width is a measurement (~840 +- 8 km/s here, plus a ~100 km/s redshift-like
-shift) rather than an assumption;
-`IronTemplate_tied`, which broadens the iron with the fitted multi-Gaussian line
-profile instead, is available too. The model is not convolved with the LSF (this
-spectrum grossly oversamples the instrument); the fit is drawn with
-`galspec.plot.plot_fit`, so every component and the sigma-scaled residuals appear
-in one figure, the marginals are drawn with `galspec.plot.plot_posterior_hist`,
-and the whole run is written to a FITS file that
+about 10 min on one GPU) and `example/fit_iras07546_jax.ipynb` (the same fit broken
+into annotated cells). It fits **4200-6800 A** of IRAS 07546+3928 (rest frame,
+56 956 pixels, H-gamma to [S II]) in one go: a power-law continuum plus an Fe II
+template, H-alpha/H-beta/H-gamma each as one narrow Gaussian plus **two** broad
+Gaussians, He I 5876 with a narrow core and a broad component, [O III] with a
+broad wing, and [N II], [S II], [O I], He II and [O III] 4363 -- 29 free
+parameters describing twelve components, with every narrow line tied to the
+[O III] kinematics, the two broad components tied across the three Balmer lines,
+and no least-squares step anywhere. Nothing blueward of H-gamma or redward of
+[S II] is modelled, so no window has to be masked; the Na D region, which used to
+be masked, is now covered by fitting He I 5876.
+
+The doublet ratios are tied at their atomic values except [S II], whose 6716/6731
+ratio is a density diagnostic and is therefore measured. The Fe II template is
+fitted in its `IronTemplate_tied` form: the iron is broadened by the *same*
+multi-Gaussian kernel as broad H-alpha, tied component by component, so its only
+free parameter is its amplitude. (`IronTemplate_new` -- one velocity dispersion
+and a velocity shift -- remains available, and the two agree exactly for a
+one-component kernel.) The error bar on every pixel is the measured pixel-to-pixel
+scatter plus **5% of the flux** in quadrature, which stands for the photon noise
+of the source.
+
+The model is not convolved with the LSF (this spectrum grossly oversamples the
+instrument); the fit is drawn with `galspec.plot.plot_fit`, so every component and
+the sigma-scaled residuals appear in one figure, the marginals are drawn with
+`galspec.plot.plot_posterior_hist` (axis from the posterior, not the prior), and
+the whole run is written to a FITS file that
 `galspec.jnesty_fit_io.load_jnesty_fit_from_fits` turns back into a working fit.
 Parameter labels come from `galspec.param_labels`, so plots print
 `BH$\alpha$:$\sigma_{w0}$` instead of `Halpha.sigma_w0`.

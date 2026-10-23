@@ -396,19 +396,28 @@ class attribute, which overrides the shared table for that model only::
 One-dimensional posteriors
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-A corner plot of forty parameters is unreadable.  ``plot_posterior_hist`` draws
-one histogram per requested parameter, with the median, the 16-84 percentile band,
-the value printed on top, and the prior bounds as dotted lines (a parameter that
-has filled its prior is then obvious):
+A corner plot of thirty parameters is unreadable.  ``plot_posterior_hist`` draws
+one histogram per requested parameter, with the median, the 16-84 percentile band
+and the value printed on top:
 
 .. code-block:: python
 
    galspec.plot.plot_posterior_hist(
-       fit, params=["Halpha.sigma_w0", "OIII.sigma_c", "FeII.sigma"],
+       fit, params=["Halpha.sigma_w0", "OIII.sigma_c", "HeI.amp_w0"],
        ncols=3, filename="marginals.png")
 
 It accepts a fit object or a plain ``(nsamples, ndim)`` array, and labels can be
 overridden with ``labels=``.
+
+The x range of each panel comes from the posterior (``view_quantiles``, 0.1% to
+99.9% by default, plus ``pad`` of that span), **not** from the prior.  That is not
+cosmetic: the prior on a broad width spans 300-8000 km/s while the posterior spans
+a few km/s, so an axis stretched to the prior would draw a well-measured parameter
+as a spike one pixel wide -- the shape, which is the reason for the panel, would be
+invisible.  When a prior bound falls outside the plotted range, its value is
+written in the panel corner, so the zoom hides nothing.  A parameter that really
+has filled its prior is still obvious, because its histogram is flat rather than
+peaked.
 
 Drawing twenty components
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -545,9 +554,9 @@ of H-alpha) and the fixed doublet ratios.  For the timing comparison the
 [S II] 6716/6731 ratio is tied too; physically it should not be (it is an
 electron-density diagnostic, not a fixed number), and the worked example in
 ``example/fit_iras07546_jax.py`` leaves it free, adds a second broad Gaussian
-per Balmer line and four high-order Balmer lines (H-epsilon and H8-H11), which is
-why that fit has 40 free parameters over twenty components. The benchmark model
-is also convolved with
+per Balmer line, fits He I 5876, and ties the iron template's kernel to broad
+H-alpha, which is why that fit covers 4200-6800 A with 29 free parameters over
+twelve components. The benchmark model is also convolved with
 the SDSS line-spread function (Gaussian, R = 2000 at 5500 A): at 0.046 A sampling
 the instrument, not the gas, sets the width of the narrow cores, so convolving
 makes the comparison the harder, more realistic one.  (The worked example does

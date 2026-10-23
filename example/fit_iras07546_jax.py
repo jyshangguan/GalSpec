@@ -14,9 +14,10 @@ posterior:
   + H-alpha, H-beta, H-gamma:  two models each --
         a narrow Gaussian (n_*) and a broad MultiGauss (b_*)
   + He I 5876 with a narrow Gaussian and a broad component
+  + He II 4686 with a narrow Gaussian and one broad Gaussian
   + [O III] 4959/5007 (narrow core + broad wing), [N II] 6548/6584,
     [S II] 6716/6731, [O I] 6300/6364
-  + He II 4686, [O III] 4363
+  + [O III] 4363
 
 Everything blueward of H-gamma is left out: H-delta and the higher Balmer lines,
 [Ne III] 3869, [O II] 3727.  The data start at 4200 A, so H-gamma keeps its
@@ -35,7 +36,7 @@ nothing about each other:
     to the [O III] core -- one velocity shift and one width for every narrow
     line in the spectrum.
 
-``b_halpha``, ``b_hbeta``, ``b_hgamma``, ``b_hei``
+``b_halpha``, ``b_hbeta``, ``b_hgamma``, ``b_hei``, ``b_heii``
     ``Line_MultiGauss``: the broad component only.  Component 0 (``amp_c``,
     ``dv_c``, ``sigma_c``) is the broad core -- "core" here is a name for
     component 0, *not* a narrow line -- and ``amp_w0``/``dv_w0``/``sigma_w0``
@@ -297,6 +298,7 @@ MODEL_LABELS = {
     "n_hbeta": r"BH$\beta$ (narrow)", "b_hbeta": r"BH$\beta$ (broad)",
     "n_hgamma": r"BH$\gamma$ (narrow)", "b_hgamma": r"BH$\gamma$ (broad)",
     "n_hei": r"He I (narrow)", "b_hei": r"He I (broad)",
+    "b_heii": r"He II (broad)",
     "OIII": r"[O III]", "NII": r"[N II]", "SII": r"[S II]", "OI": r"[O I]",
     "OIII4363": r"[O III] 4363", "HeII": r"He II", "HeI": r"He I",
 }
@@ -413,6 +415,14 @@ def build_model(backend=jxm, include_iron=None):
                                     sigma_c=1500.0, wavec=LINE_WAVE["HeI_5876"],
                                     name="b_hei")
 
+    # He II 4686 gets a broad component as well: in a narrow-line Seyfert 1 the
+    # broad He II is strong enough to be measured, and one Gaussian is enough -- the
+    # line sits on the same broad-line kinematics as He I 5876.  It has to be there
+    # on the blue side of H-beta, where the iron and the Balmer wing overlap.
+    b_heii = backend.Line_MultiGauss(n_components=1, amp_c=0.05, dv_c=0.0,
+                                     sigma_c=1500.0, wavec=LINE_WAVE["HeII_4686"],
+                                     name="b_heii")
+
     # -- forbidden lines -------------------------------------------------------
     o3 = backend.Line_MultiGauss_doublet(
         n_components=2, amp_c0=1.8, amp_c1=1.8 / 2.98, dv_c=0.0, sigma_c=700.0,
@@ -441,7 +451,7 @@ def build_model(backend=jxm, include_iron=None):
     if iron is not None:
         components.append(iron)
     components += [n_halpha, b_halpha, n_hbeta, b_hbeta, n_hgamma, b_hgamma,
-                   o3, n2, s2, o1, he2, o3_4363, n_hei, b_hei]
+                   o3, n2, s2, o1, he2, b_heii, o3_4363, n_hei, b_hei]
     model = components[0]
     for _component in components[1:]:
         model = model + _component
@@ -467,8 +477,9 @@ def build_model(backend=jxm, include_iron=None):
         line.sigma_c.tied = _tie_fn(backend, "tie_MultiGauss_sigma_c")("b_halpha")
         line.dv_w0.tied = _tie_fn(backend, "tie_MultiGauss_dv_w0")("b_halpha")
         line.sigma_w0.tied = _tie_fn(backend, "tie_MultiGauss_sigma_w0")("b_halpha")
-    b_hei.dv_c.tied = _tie_fn(backend, "tie_MultiGauss_dv_c")("b_halpha")
-    b_hei.sigma_c.tied = _tie_fn(backend, "tie_MultiGauss_sigma_c")("b_halpha")
+    for line in (b_hei, b_heii):
+        line.dv_c.tied = _tie_fn(backend, "tie_MultiGauss_dv_c")("b_halpha")
+        line.sigma_c.tied = _tie_fn(backend, "tie_MultiGauss_sigma_c")("b_halpha")
     o3.dv_w0.tied = _TieFrom("OIII", "dv_c")     # the wing sits at the core velocity
 
     # -- ties: the iron kernel IS the broad H-alpha profile ----------------------
@@ -577,6 +588,7 @@ def make_priors(flux):
         bounds[f"b_{name.lower()}.amp_c"] = amp
         bounds[f"b_{name.lower()}.amp_w0"] = wind
     bounds["b_hei.amp_c"] = amp
+    bounds["b_heii.amp_c"] = amp
     for name in SINGLE_LINES:
         bounds[f"{name}.amplitude"] = amp
 
@@ -654,6 +666,8 @@ PARAM_NOTES = {
     "SII.amp_c0": "[S II] 6716 peak", "SII.amp_c1": "[S II] 6731 peak",
     "OI.amp_c0": "[O I] 6300 peak",
     "HeII.amplitude": "He II 4686 peak", "OIII4363.amplitude": "[O III] 4363 peak",
+    "b_heii.amp_c": "broad He II 4686 peak (one Gaussian)",
+    "b_hei.amp_c": "broad He I 5876 peak (one Gaussian)",
     "b_halpha.dv_c": "shift of the broad core (all broad lines)",
     "b_halpha.sigma_c": "width of the broad core (all broad lines)",
     "b_halpha.amp_w0": "wind / broad core of H-alpha",
@@ -667,6 +681,7 @@ for _name in BALMER_NAMES:
     PARAM_NOTES.setdefault(f"b_{_low}.amp_w0", f"wind / broad core of {_name}")
 PARAM_NOTES.setdefault("n_hei.amplitude", "narrow He I 5876 peak")
 PARAM_NOTES.setdefault("b_hei.amp_c", "broad core of He I 5876")
+PARAM_NOTES.setdefault("b_heii.amp_c", "broad He II 4686 (single Gaussian)")
 
 
 def parameter_table(fit):
@@ -746,6 +761,21 @@ def derived_quantities(fit):
         }
     he1 = out["He I 5876"]
     he1["broad/narrow"] = (he1["broad core"]["flux"][0] / he1["narrow"]["flux"][0],
+                           np.nan, np.nan)
+
+    # He II 4686 is the same construction with a single broad Gaussian
+    wavec = LINE_WAVE["HeII_4686"]
+    for label, amplitude, sigma in (
+            ("narrow", get(samples, "HeII.amplitude"), get(samples, "OIII.sigma_c")),
+            ("broad core", get(samples, "b_heii.amp_c"),
+             get(samples, "b_halpha.sigma_c"))):
+        flux = amplitude * sigma * np.sqrt(2.0 * np.pi) * wavec / 299792.458 * 1e3
+        out.setdefault("He II 4686", {})[label] = {
+            "fwhm": (np.median(fwhm * sigma), *np.percentile(fwhm * sigma, [16, 84])),
+            "flux": (np.median(flux), *np.percentile(flux, [16, 84])),
+        }
+    he2 = out["He II 4686"]
+    he2["broad/narrow"] = (he2["broad core"]["flux"][0] / he2["narrow"]["flux"][0],
                            np.nan, np.nan)
 
     # The [S II] ratio: I(6716)/I(6731) falls from ~1.4 in the low-density limit
@@ -961,7 +991,7 @@ def plot_corner(fit, outfile, max_params=14):
               "b_halpha.dv_w0", "b_halpha.sigma_w0", "Continuum.amplitude",
               "Continuum.alpha", "FeII.amplitude", "b_halpha.amp_c",
               "b_halpha.amp_w0", "n_halpha.amplitude", "b_hei.amp_c",
-              "n_hei.amplitude")
+              "n_hei.amplitude", "b_heii.amp_c")
     keep = [i for i, name in enumerate(fit.full_param_names) if name in wanted][:max_params]
     # maths labels: "BH$\alpha$:$\sigma_{w0}$" instead of "b_halpha.sigma_w0"
     labels = getattr(fit, "param_labels", None) or fit.full_param_names
@@ -980,7 +1010,7 @@ HIST_PARAMS = ("b_halpha.amp_c", "b_halpha.amp_w0", "b_halpha.dv_c",
                "b_halpha.sigma_c", "b_halpha.dv_w0", "b_halpha.sigma_w0",
                "b_hbeta.amp_c", "b_hbeta.amp_w0", "n_halpha.amplitude",
                "OIII.sigma_c", "OIII.dv_c", "b_hei.amp_c", "n_hei.amplitude",
-               "SII.amp_c0", "SII.amp_c1", "Continuum.alpha")
+               "b_heii.amp_c", "SII.amp_c0", "SII.amp_c1", "Continuum.alpha")
 
 
 def plot_histograms(fit, outfile, params=HIST_PARAMS):

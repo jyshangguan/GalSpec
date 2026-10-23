@@ -265,6 +265,12 @@ def build_model(backend=jxm, include_iron=None):
     b_hei = backend.Line_MultiGauss(
         n_components=1, amp_c=0.06, dv_c=0.0, sigma_c=1500.0,
         wavec=LINE_WAVE["HeI_5876"], name="b_hei")
+    # He II 4686 gets a broad component too: in a narrow-line Seyfert 1 the broad
+    # He II is strong enough to measure, and one Gaussian is enough.  It shares the
+    # broad-core kinematics, so it costs one number: its peak.
+    b_heii = backend.Line_MultiGauss(
+        n_components=1, amp_c=0.05, dv_c=0.0, sigma_c=1500.0,
+        wavec=LINE_WAVE["HeII_4686"], name="b_heii")
 
     # -- forbidden lines -------------------------------------------------------
     o3 = backend.Line_MultiGauss_doublet(
@@ -284,7 +290,7 @@ def build_model(backend=jxm, include_iron=None):
         wavec0=LINE_WAVE["OI_6300"], wavec1=LINE_WAVE["OI_6364"], name="OI")
 
     # -- other single narrow Gaussians ----------------------------------------
-    he2 = narrow("HeII", LINE_WAVE["HeII_4686"], 0.08, "HeII")
+    he2 = narrow("HeII", LINE_WAVE["HeII_4686"], 0.08, "HeII")   # the narrow one
     o3_4363 = narrow("OIII4363", LINE_WAVE["OIII_4363"], 0.05, "OIII4363")
 
     # Nothing blueward of H-gamma or redward of [S II] is modelled: the data are
@@ -294,7 +300,7 @@ def build_model(backend=jxm, include_iron=None):
     if iron is not None:
         components.append(iron)
     components += [n_halpha, b_halpha, n_hbeta, b_hbeta, n_hgamma, b_hgamma,
-                   o3, n2, s2, o1, he2, o3_4363, n_hei, b_hei]
+                   o3, n2, s2, o1, he2, b_heii, o3_4363, n_hei, b_hei]
     model = components[0]
     for _component in components[1:]:
         model = model + _component
@@ -319,8 +325,9 @@ def build_model(backend=jxm, include_iron=None):
         line.sigma_c.tied = _tie_fn(backend, "tie_MultiGauss_sigma_c")("b_halpha")
         line.dv_w0.tied = _tie_fn(backend, "tie_MultiGauss_dv_w0")("b_halpha")
         line.sigma_w0.tied = _tie_fn(backend, "tie_MultiGauss_sigma_w0")("b_halpha")
-    b_hei.dv_c.tied = _tie_fn(backend, "tie_MultiGauss_dv_c")("b_halpha")
-    b_hei.sigma_c.tied = _tie_fn(backend, "tie_MultiGauss_sigma_c")("b_halpha")
+    for line in (b_hei, b_heii):
+        line.dv_c.tied = _tie_fn(backend, "tie_MultiGauss_dv_c")("b_halpha")
+        line.sigma_c.tied = _tie_fn(backend, "tie_MultiGauss_sigma_c")("b_halpha")
     o3.dv_w0.tied = _TieFrom("OIII", "dv_c")   # the wing sits at the core velocity
 
     # -- ties: the iron kernel IS broad H-alpha -------------------------------
@@ -354,6 +361,7 @@ MODEL_LABELS = {
     "n_hbeta": r"BH$\\beta$ (narrow)", "b_hbeta": r"BH$\\beta$ (broad)",
     "n_hgamma": r"BH$\\gamma$ (narrow)", "b_hgamma": r"BH$\\gamma$ (broad)",
     "n_hei": r"He I (narrow)", "b_hei": r"He I (broad)",
+    "b_heii": r"He II (broad)",
     "OIII": r"[O III]", "NII": r"[N II]", "SII": r"[S II]", "OI": r"[O I]",
     "OIII4363": r"[O III] 4363", "HeII": r"He II",
 }
@@ -426,6 +434,7 @@ def make_priors(flux):
         bounds[f"b_{name.lower()}.amp_w0"] = wind
     bounds["n_hei.amplitude"] = amp
     bounds["b_hei.amp_c"] = amp
+    bounds["b_heii.amp_c"] = amp
     for name in SINGLE_LINES:
         bounds[f"{name}.amplitude"] = amp
 
@@ -501,6 +510,8 @@ PARAM_NOTES = {
     "SII.amp_c0": "[S II] 6716 peak", "SII.amp_c1": "[S II] 6731 peak",
     "OI.amp_c0": "[O I] 6300 peak",
     "HeII.amplitude": "He II 4686 peak", "OIII4363.amplitude": "[O III] 4363 peak",
+    "b_heii.amp_c": "broad He II 4686 peak (one Gaussian)",
+    "b_hei.amp_c": "broad He I 5876 peak (one Gaussian)",
     "b_halpha.dv_c": "shift of the broad core (all broad lines)",
     "b_halpha.sigma_c": "width of the broad core (all broad lines)",
     "b_halpha.amp_w0": "wind / broad core of H-alpha",
@@ -514,6 +525,7 @@ for name in BALMER_NAMES:
     PARAM_NOTES.setdefault(f"b_{low}.amp_w0", f"wind / broad core of {name}")
 PARAM_NOTES.setdefault("n_hei.amplitude", "narrow He I 5876 peak")
 PARAM_NOTES.setdefault("b_hei.amp_c", "broad core of He I 5876")
+PARAM_NOTES.setdefault("b_heii.amp_c", "broad He II 4686 (single Gaussian)")
 
 lo, med, hi = fit.get_quantiles((0.16, 0.5, 0.84))
 print(f"{'parameter':22s} {'value':>10s} {'-':>8s} {'+':>8s}  meaning")
@@ -569,6 +581,20 @@ def derived_quantities(fit):
                       "flux": np.percentile(line_flux, [16, 50, 84])}
     he1["broad/narrow"] = (he1["broad core"]["flux"][1] / he1["narrow"]["flux"][1])
     out["He I 5876"] = he1
+
+    # He II 4686: the same construction with a single broad Gaussian
+    wavec = LINE_WAVE["HeII_4686"]
+    he2 = {}
+    for label, amplitude, sigma in (
+            ("narrow", samples[:, index["HeII.amplitude"]],
+             samples[:, index["OIII.sigma_c"]]),
+            ("broad core", samples[:, index["b_heii.amp_c"]],
+             samples[:, index["b_halpha.sigma_c"]])):
+        line_flux = amplitude * sigma * np.sqrt(2.0 * np.pi) * wavec / 299792.458 * 1e3
+        he2[label] = {"fwhm": np.percentile(fwhm * sigma, [16, 50, 84]),
+                      "flux": np.percentile(line_flux, [16, 50, 84])}
+    he2["broad/narrow"] = (he2["broad core"]["flux"][1] / he2["narrow"]["flux"][1])
+    out["He II 4686"] = he2
 
     # [S II] I(6716)/I(6731): ~1.4 in the low-density limit, ~0.4 at high density.
     ratio = samples[:, index["SII.amp_c0"]] / samples[:, index["SII.amp_c1"]]
@@ -834,7 +860,8 @@ histogram_cell = '''\
 # plotted range it is written in the corner instead of stretching the axis.
 quoted = ["b_halpha.amp_c", "b_halpha.amp_w0", "b_halpha.dv_c", "b_halpha.sigma_c",
           "b_halpha.sigma_w0", "b_hbeta.amp_c", "OIII.sigma_c", "OIII.dv_c",
-          "b_hei.amp_c", "n_hei.amplitude", "SII.amp_c0", "SII.amp_c1"]
+          "b_hei.amp_c", "b_heii.amp_c", "n_hei.amplitude",
+          "SII.amp_c0", "SII.amp_c1"]
 fig, axes = galspec.plot.plot_posterior_hist(
     fit, params=[q for q in quoted if q in fit.full_param_names], ncols=4, bins=40)
 plt.show()
@@ -845,7 +872,7 @@ import corner
 wanted = ["OIII.dv_c", "OIII.sigma_c", "b_halpha.dv_c", "b_halpha.sigma_c",
           "b_halpha.dv_w0", "b_halpha.sigma_w0", "Continuum.amplitude", "Continuum.alpha",
           "FeII.amplitude", "b_halpha.amp_c", "b_halpha.amp_w0", "n_halpha.amplitude",
-          "b_hei.amp_c", "n_hei.amplitude"]
+          "b_hei.amp_c", "b_heii.amp_c", "n_hei.amplitude"]
 keep = [fit.full_param_names.index(name) for name in wanted
         if name in fit.full_param_names]
 # param_labels turns "b_halpha.sigma_w0" into "BH$\\alpha$:$\\sigma_{w0}$"
@@ -928,7 +955,8 @@ once, so the continuum and the lines are constrained by the same posterior:
 | 6548 / 6584 A | [N II] | narrow, doublet ratio 2.96 (atomic physics) |
 | 6716 / 6731 A | [S II] | narrow, **both peaks free** (the ratio is a density diagnostic) |
 | 6300 / 6364 A | [O I] | narrow, doublet ratio 3.00 |
-| 4686, 4363 A | He II, [O III] | single narrow Gaussian |
+| 4686 A | He II | a narrow Gaussian + one broad Gaussian |
+| 4363 A | [O III] | single narrow Gaussian |
 | all | continuum | power law + Fe II template |
 
 Nothing outside that window is fitted: no H-delta or higher Balmer lines, no
@@ -1005,7 +1033,11 @@ Sixteen models, added together:
    blueward of H-beta and is routinely mistaken for continuum. It uses
    `IronTemplate_tied`: the template is broadened by the *same* multi-Gaussian
    kernel as broad H-alpha, tied component by component, so the iron has a single
-   free parameter, its amplitude. An earlier version fitted it with one velocity
+   free parameter, its amplitude. The template is loaded through
+   `galspec.iron_template.load_iron_template`, which resamples it onto a grid even
+   in `ln(wavelength)` -- one channel is one velocity everywhere, so a width is one
+   number -- and pads the tabulated range with zeros, so the model fades out where
+   the template runs out instead of reflecting its edge flux. An earlier version fitted it with one velocity
    dispersion (`IronTemplate_new`); that is still available, and the two agree
    exactly when the kernel has one component. Tying it to the line is the more
    physical choice: the iron and the Balmer lines are emitted by the same gas, so
@@ -1020,16 +1052,20 @@ Sixteen models, added together:
 4. **He I 5876**, a narrow Gaussian (`n_hei`) plus **one** broad component
    (`b_hei`). It is what used to be inside the Na D mask, and it has to be
    modelled now that the mask is gone;
-5. **[O III] 4959/5007** as a doublet with a narrow core and one broad wing;
-6. **[N II], [S II], [O I]** doublets, plus single narrow Gaussians for **He II
-   4686** and **[O III] 4363**.
+5. **He II 4686**, the same pattern: a narrow Gaussian (`HeII`) plus **one**
+   broad Gaussian (`b_heii`). Broad He II is a standard feature of a narrow-line
+   Seyfert 1 and it sits on the blue side of H-beta, where the iron and the
+   Balmer wing overlap;
+6. **[O III] 4959/5007** as a doublet with a narrow core and one broad wing;
+7. **[N II], [S II], [O I]** doublets, plus a single narrow Gaussian for
+   **[O III] 4363**.
 
 The ties are what make this affordable:
 
 * one `dv` and one `sigma` for **all** narrow lines, taken from the [O III] core
   (forbidden lines come from the same low-density gas);
 * `dv_c`/`sigma_c` (the broad core) and `dv_w0`/`sigma_w0` (the wind) shared by the
-  three broad Balmers and by He I: the two broad components are separate physical
+  three broad Balmers, by He I and by He II: the two broad components are separate physical
   structures, so they get separate kinematics, but each is common to the lines.
   The Fe II kernel's two components are tied to these outright -- shifts, widths
   and the wind ratio alike;
@@ -1167,7 +1203,7 @@ missing something.
 
 The 5% flux term sets the scale of this number, and it is worth knowing which way
 it cuts. A chi2/dof **above** 1 would mean the model cannot reach the error bar --
-something is missing. What this fit gets is **0.33**, which says the opposite: the
+something is missing. What this fit gets is **0.32**, which says the opposite: the
 5% term is *larger* than the true pixel-to-pixel noise (about 2-3% here), so the
 residuals are 0.57 sigma on average and the posterior is correspondingly
 conservative -- parameter errors are wider than the photon statistics alone would

@@ -133,11 +133,11 @@ about 10 min on one GPU) and `example/fit_iras07546_jax.ipynb` (the same fit bro
 into annotated cells). It fits **4200-6800 A** of IRAS 07546+3928 (rest frame,
 56 956 pixels, H-gamma to [S II]) in one go: a power-law continuum plus an Fe II
 template, H-alpha/H-beta/H-gamma each modelled **twice** (a narrow `Line_Gaussian`
-and a broad `Line_MultiGauss` with a core and a wind), He I 5876 the same way,
-[O III] with a broad wing, and [N II], [S II], [O I], He II and [O III] 4363 --
-29 free parameters describing sixteen models, with every narrow line tied to the
-[O III] kinematics, the broad components tied across the three Balmer lines, and
-no least-squares step anywhere. Nothing blueward of H-gamma or redward of
+and a broad `Line_MultiGauss` with a core and a wind), He I 5876 and He II 4686
+with one broad Gaussian each, [O III] with a broad wing, and [N II], [S II], [O I]
+and [O III] 4363 -- 30 free parameters describing seventeen models, with every
+narrow line tied to the [O III] kinematics, the broad components tied across the
+three Balmer lines, and no least-squares step anywhere. Nothing blueward of H-gamma or redward of
 [S II] is modelled, so no window has to be masked; the Na D region, which used to
 be masked, is now covered by fitting He I 5876.
 

@@ -269,10 +269,17 @@ def test_iron_templates_are_even_in_log_wavelength():
         velscale = np.mean(spacing) * LS_KM
         assert 60.0 < velscale < 200.0, (name, velscale)
 
-    # the grid keeps the number of channels and the range; only the spacing changes
-    assert len(wave_park2022) == 801
-    assert wave_park2022[0] > 3990.0 and wave_park2022[-1] < 5610.0
+    # the tabulated range keeps its samples; beyond it the grid continues at the
+    # same spacing, carrying zero flux, so the smoothing has nothing to mirror
     assert np.isclose(flux_park2022.max(), 1.0) and np.isclose(flux_boroson1992.max(), 1.0)
+    filled = wave_park2022[flux_park2022 > 0.0]
+    assert 3995.0 < filled[0] < 4005.0 and 5595.0 < filled[-1] < 5605.0
+    assert wave_park2022[0] < 3200.0 and wave_park2022[-1] > 6600.0
+    assert flux_park2022[0] == 0.0 and flux_park2022[-1] == 0.0
+    # 100 000 km/s of padding either side, on the 126 km/s grid
+    unpadded, _ = load_iron_template("park2022", pad_velocity=0.0)
+    padding = len(wave_park2022) - len(unpadded)
+    assert 2 * 790 <= padding <= 2 * 800, padding
 
     # an unknown template is refused by name, not with a KeyError from a dict lookup
     with pytest.raises(KeyError):

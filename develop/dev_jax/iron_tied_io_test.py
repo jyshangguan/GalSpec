@@ -915,7 +915,7 @@ error budget of a real spectrum and it keeps the likelihood smooth enough for th
 sampler. The <code>cpu</code> row cannot reach zero: its iron is a different function
 from the one being fitted -- the CPU class deconvolves by a 200 km/s intrinsic width
 where the template measured 340, cuts its kernel at &plusmn;10 000 km/s and filters
-the result, which puts it 11-50% from an exact velocity-space convolution
+the result, which puts it 7-23% from an exact velocity-space convolution
 (<code>io_test/cpu_vs_jax.html</code>). The <code>velocity</code>, <code>pixel</code>
 and <code>jax</code> rows now do reach zero, because since the template is resampled
 onto a log-even grid at load they are all the same operator.</p>

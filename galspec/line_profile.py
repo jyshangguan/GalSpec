@@ -279,6 +279,40 @@ class Line_MultiGauss(Fittable1DModel):
         '''
         return self._param_names
     
+    def gen_template(self, v, normalized=True):
+        '''
+        Generate the line profile as a kernel on a velocity grid.
+
+        This is what :class:`galspec.IronTemplate_tied` convolves the iron
+        template with, so a line model can be handed to it directly:
+        ``IronTemplate_tied(..., kernel=Line_MultiGauss(...))``.  The core sits at
+        zero velocity and the winds at their own ``dv_w``, i.e. the kernel is
+        centred and only its shape is used; the absolute ``dv_c`` of the line
+        belongs to the line, not to the kernel.
+
+        Parameters
+        ----------
+        v : array like
+            The velocity array, units: km/s.
+        normalized : bool
+            Divide by the maximum so that the kernel is a unit-peak profile.
+
+        Returns
+        -------
+        flux : array like
+            The line profile evaluated at ``v``.
+        '''
+        v = np.asarray(v, dtype=float)
+        flux = self.amp_c * np.exp(-0.5 * (v / self.sigma_c) ** 2)
+        for loop in range(self.n_components - 1):
+            amp_w = getattr(self, f'amp_w{loop}')
+            dv_w = getattr(self, f'dv_w{loop}')
+            sigma_w = getattr(self, f'sigma_w{loop}')
+            flux += amp_w * self.amp_c * np.exp(-0.5 * ((v - dv_w) / sigma_w) ** 2)
+        if normalized:
+            flux /= np.max(flux)
+        return flux
+
     @property
     def subcomponents(self):
         '''

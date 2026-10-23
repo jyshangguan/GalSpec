@@ -14,7 +14,9 @@ models and `galspec.Dynesty_Fit` are untouched.
 | `sdss_agn.py` | a realistic SDSS AGN model (H-alpha + H-beta + H-gamma, continuum, iron, all strong forbidden lines, 23 free parameters, LSF convolution) in both flavours |
 | `run_sdss_fit.py` | run one configuration of that fit (`--config dynesty-serial\|dynesty-parallel\|jnesty-cpu\|jnesty-gpu`) and save JSON + NPZ |
 | `make_report.py`, `report_pages.py` | build the multi-page HTML report from the saved runs |
+| `iron_tied_io_test.py` | input/output test of `IronTemplate_tied` + `Line_MultiGauss`: generate a mock (iron convolved with a known broad H-beta profile, plus H-beta), fit it back with the JAX models, compare with the input; writes `io_test/iron_tied_io_test.html` |
 | `results/` | benchmark output (JSON + figures; `results/report/` holds the HTML) |
+| `io_test/` | output of the input/output test: the HTML report, the figures as PNGs, and `io_test_results.json` |
 
 ## Running
 
@@ -46,7 +48,23 @@ python develop/dev_jax/run_sdss_fit.py --config dynesty-parallel --processes 16 
 # index.html / model.html / results.html / glossary.html are the same content
 # as separate self-contained pages.
 python develop/dev_jax/make_report.py      # -> results/report/report.html
+
+# the input/output test of the tied iron + multi-Gaussian kernel (about 6 min on
+# one GPU): checks the parameter names, the normalisation, the exactness of the
+# convolution, and whether a fit reproduces a known input
+python develop/dev_jax/iron_tied_io_test.py --noise
+# -> develop/dev_jax/io_test/iron_tied_io_test.html
 ```
+
+**Read `io_test/iron_tied_io_test.html` before trusting the tied iron.** It is the
+one place where the model is checked against a known answer: the mock is generated
+by the *CPU* classes, the fit uses the JAX ones, and the test separates what the
+code must get exactly right (the convolution, the ties, the normalisation:
+machine precision) from what is a convention shared with the CPU model (the
+template's linear wavelength sampling: 4% of the iron peak). It also measures the
+one real trap in the model -- component 0 and component 1 of a `Line_MultiGauss`
+are *exchangeable*, so the posterior is bimodal unless their width priors are
+disjoint, which is why `example/fit_iras07546_jax.py` splits them at 3000 km/s.
 
 ## The realistic comparison (numbers as measured)
 

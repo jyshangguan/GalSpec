@@ -132,20 +132,25 @@ A complete worked example lives in `example/fit_iras07546_jax.py` (script,
 about 10 min on one GPU) and `example/fit_iras07546_jax.ipynb` (the same fit broken
 into annotated cells). It fits **4200-6800 A** of IRAS 07546+3928 (rest frame,
 56 956 pixels, H-gamma to [S II]) in one go: a power-law continuum plus an Fe II
-template, H-alpha/H-beta/H-gamma each as one narrow Gaussian plus **two** broad
-Gaussians, He I 5876 with a narrow core and a broad component, [O III] with a
-broad wing, and [N II], [S II], [O I], He II and [O III] 4363 -- 29 free
-parameters describing twelve components, with every narrow line tied to the
-[O III] kinematics, the two broad components tied across the three Balmer lines,
-and no least-squares step anywhere. Nothing blueward of H-gamma or redward of
+template, H-alpha/H-beta/H-gamma each modelled **twice** (a narrow `Line_Gaussian`
+and a broad `Line_MultiGauss` with a core and a wind), He I 5876 the same way,
+[O III] with a broad wing, and [N II], [S II], [O I], He II and [O III] 4363 --
+29 free parameters describing sixteen models, with every narrow line tied to the
+[O III] kinematics, the broad components tied across the three Balmer lines, and
+no least-squares step anywhere. Nothing blueward of H-gamma or redward of
 [S II] is modelled, so no window has to be masked; the Na D region, which used to
 be masked, is now covered by fitting He I 5876.
 
 The doublet ratios are tied at their atomic values except [S II], whose 6716/6731
 ratio is a density diagnostic and is therefore measured. The Fe II template is
-fitted in its `IronTemplate_tied` form: the iron is broadened by the *same*
-multi-Gaussian kernel as broad H-alpha, tied component by component, so its only
-free parameter is its amplitude. (`IronTemplate_new` -- one velocity dispersion
+fitted in its `IronTemplate_tied` form: the iron is broadened by the profile of
+the broad H-alpha component, tied component by component -- the core to the broad
+core, the wind to the wind -- so its only free parameter is its amplitude. It
+carries no weights of its own (a `Line_MultiGauss` is already a weighted sum, and
+the convolution renormalises it). The two width ranges of the broad line do not
+overlap, because the components are exchangeable and the posterior would otherwise
+be bimodal; `develop/dev_jax/io_test/iron_tied_io_test.html` measures that and
+shows a mock recovered with it. (`IronTemplate_new` -- one velocity dispersion
 and a velocity shift -- remains available, and the two agree exactly for a
 one-component kernel.) The error bar on every pixel is the measured pixel-to-pixel
 scatter plus **5% of the flux** in quadrature, which stands for the photon noise

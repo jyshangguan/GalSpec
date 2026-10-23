@@ -98,8 +98,8 @@ def test_iron_template_accepts_the_old_stddev_name():
 # --------------------------------------------------------------------------------------
 def test_tied_iron_reduces_to_single_gaussian():
     plain = jxm.IronTemplate(amplitude=1.0, sigma=2600.0, dv=180.0, template_name="park2022")
-    tied = jxm.IronTemplate_tied(n_components=1, amplitude=1.0, sigma_0=2600.0, dv_0=180.0,
-                                 w_0=1.0, template_name="park2022")
+    tied = jxm.IronTemplate_tied(n_components=1, amplitude=1.0, sigma_c=2600.0,
+                                 dv_c=180.0, template_name="park2022")
     expected = np.asarray(plain.flux(WAVE, _values(plain)))
     got = np.asarray(tied.flux(WAVE, _values(tied)))
     relative = np.max(np.abs(expected - got)) / np.max(np.abs(expected))
@@ -107,35 +107,72 @@ def test_tied_iron_reduces_to_single_gaussian():
     print(f"  tied(1 component) == IronTemplate: {relative:.1e}")
 
 
-def test_tied_iron_weights_are_normalised_and_ties_resolve():
-    tied = jxm.IronTemplate_tied(n_components=2, amplitude=1.0, sigma_0=1800.0,
-                                 sigma_1=3000.0, w_0=2.0, w_1=3.0, name="FeII")
-    base = np.asarray(tied.flux(WAVE, _values(tied)))
-    double = np.asarray(tied.flux(WAVE, _values(tied, {"w_0": 4.0, "w_1": 6.0})))
-    assert np.allclose(base, double), "weights must be normalised to unit sum"
+def test_tied_iron_parameters_follow_the_line_model():
+    """The kernel has the same parameters as the Line_MultiGauss, and no weights."""
+    tied = jxm.IronTemplate_tied(n_components=2, amplitude=1.0, name="FeII")
+    assert tied.param_names == ("amplitude", "z", "dv_c", "sigma_c",
+                                "amp_w0", "dv_w0", "sigma_w0")
+    assert tied.kernel_param_names() == ("dv_c", "sigma_c", "amp_w0",
+                                         "dv_w0", "sigma_w0")
+    assert not [name for name in tied.param_names if name.startswith("w_")], \
+        "the kernel must have no weights of its own"
+    two = jxm.Line_MultiGauss(n_components=2, amp_c=1.0, sigma_c=1000.0, wavec=6563.0)
+    assert set(tied.kernel_param_names()) <= set(two.param_names), \
+        "every kernel parameter must exist on the line model too"
+    print("  kernel parameters mirror Line_MultiGauss and carry no weights")
 
-    line = jxm.Line_MultiGauss(n_components=3, amp_c=1.0, sigma_c=700.0, wavec=6563.0,
-                               name="Halpha", amp_w0=0.3, sigma_w0=2400.0,
-                               amp_w1=0.05, sigma_w1=6000.0)
-    tied.dv_0.tied = jxm.tie.tie_MultiGauss_dv_w0("Halpha")
-    tied.sigma_0.tied = jxm.tie.tie_MultiGauss_sigma_w0("Halpha")
-    tied.w_0.tied = jxm.tie.tie_MultiGauss_amp_w0("Halpha")
+
+def test_tied_iron_scales_with_the_line_peak_only():
+    """The kernel is normalised: scaling the line's peak leaves the iron untouched."""
+    line = jxm.Line_MultiGauss(n_components=2, amp_c=1.0, sigma_c=1500.0, wavec=6563.0,
+                               name="b_halpha", amp_w0=0.3, sigma_w0=6000.0)
+    tied = jxm.IronTemplate_tied(n_components=2, amplitude=1.0, name="FeII")
+    compound = line + tied
+    flat = dict(zip(compound.qualified_param_names, compound.param_names))
+    iron = []
+    for factor in (1.0, 5.0):
+        model = compound.copy()
+        model[flat["b_halpha.amp_c"]].value = factor
+        total = np.asarray(model.flux(WAVE, model.get_free_params()))
+        # the line on its own, at the scaled peak
+        theta = np.array([factor, 0.0, 1500.0, 0.3, 0.0, 6000.0])
+        iron.append(total - np.asarray(model["b_halpha"].flux(WAVE, theta)))
+    relative = np.max(np.abs(iron[0] - iron[1])) / np.max(np.abs(iron[0]))
+    assert relative < 1e-12, relative
+    print(f"  iron independent of the line's peak: {relative:.1e}")
+
+
+def test_tied_iron_ties_resolve_onto_core_and_wind():
+    tied = jxm.IronTemplate_tied(n_components=2, amplitude=1.0, name="FeII")
+    line = jxm.Line_MultiGauss(n_components=2, amp_c=1.0, sigma_c=1500.0, wavec=6563.0,
+                               name="b_halpha", amp_w0=0.3, sigma_w0=6000.0)
+    tied.dv_c.tied = jxm.tie.tie_MultiGauss_dv_c("b_halpha")
+    tied.sigma_c.tied = jxm.tie.tie_MultiGauss_sigma_c("b_halpha")
+    tied.amp_w0.tied = jxm.tie.tie_MultiGauss_amp_w0("b_halpha")
+    tied.dv_w0.tied = jxm.tie.tie_MultiGauss_dv_w0("b_halpha")
+    tied.sigma_w0.tied = jxm.tie.tie_MultiGauss_sigma_w0("b_halpha")
     compound = line + tied
     resolved = compound.param_dict()
     flat = dict(zip(compound.qualified_param_names, compound.param_names))
-    assert np.isclose(resolved[flat["FeII.sigma_0"]], line.sigma_w0.value)
-    assert np.isclose(resolved[flat["FeII.w_0"]], line.amp_w0.value)
-    assert flat["FeII.sigma_0"] not in compound.free_param_names, \
-        "a tied parameter must not be free"
-    print("  weights normalised; ties resolve onto the line model")
+    for kernel_param, line_param in (("dv_c", "dv_c"), ("sigma_c", "sigma_c"),
+                                     ("amp_w0", "amp_w0"), ("dv_w0", "dv_w0"),
+                                     ("sigma_w0", "sigma_w0")):
+        assert np.isclose(resolved[flat[f"FeII.{kernel_param}"]],
+                          resolved[flat[f"b_halpha.{line_param}"]]), kernel_param
+        assert flat[f"FeII.{kernel_param}"] not in compound.free_param_names, \
+            "a tied parameter must not be free"
+    free_qualified = [q for q, f in flat.items() if f in set(compound.free_param_names)]
+    iron_free = [q for q in free_qualified if q.startswith("FeII.")]
+    assert iron_free == ["FeII.amplitude"], iron_free
+    print("  both the core and the wind resolve onto the line; only A is free")
 
 
 def test_tied_iron_broadens_with_the_kernel():
     """A wider kernel must produce a wider Fe II profile, monotonic in sigma."""
     widths = []
     for sigma in (1200.0, 2500.0, 5000.0):
-        tied = jxm.IronTemplate_tied(n_components=1, amplitude=1.0, sigma_0=sigma,
-                                     w_0=1.0, template_name="park2022")
+        tied = jxm.IronTemplate_tied(n_components=1, amplitude=1.0, sigma_c=sigma,
+                                     template_name="park2022")
         flux = np.asarray(tied.flux(WAVE, _values(tied)))
         # second moment about the centroid, as a width proxy
         weight = np.clip(flux, 0.0, None)
@@ -144,6 +181,26 @@ def test_tied_iron_broadens_with_the_kernel():
         widths.append(np.sqrt(var))
     assert widths[0] < widths[1] < widths[2], widths
     print(f"  width proxy grows with sigma: {np.round(widths, 1)}")
+
+
+def test_tied_iron_kernel_radius_covers_wide_widths():
+    """Evaluating outside a fit must not truncate the kernel early.
+
+    The kernel radius is static (it has to be, under jit), so the model sizes it
+    from the widest width it was told about.  A 4-sigma truncation at the wrong
+    width is a small but real error, and this is the regression test for it.
+    """
+    narrow = jxm.IronTemplate_tied(n_components=1, amplitude=1.0, sigma_c=1200.0)
+    wide = jxm.IronTemplate_tied(n_components=1, amplitude=1.0, sigma_c=9000.0)
+    assert wide.sigma_max >= 9000.0 > wide._radius * 0 + 1200.0
+    assert wide._radius > narrow._radius
+    # a profile built with a big radius must match an explicitly wide one
+    exact = jxm.IronTemplate(amplitude=1.0, sigma=9000.0, sigma_max=9000.0)
+    from_wide = np.asarray(wide.flux(WAVE, _values(wide)))
+    from_exact = np.asarray(exact.flux(WAVE, _values(exact)))
+    relative = np.max(np.abs(from_wide - from_exact)) / np.max(np.abs(from_exact))
+    assert relative < 1e-12, relative
+    print(f"  kernel radius tracks the widest width (max radius {wide._radius} px)")
 
 
 # --------------------------------------------------------------------------------------

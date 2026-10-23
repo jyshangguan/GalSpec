@@ -7,7 +7,7 @@ from .utils import splitter, package_path
 from .constants import ls_km
 
 
-__all__ = ['IronTemplate', 'IronTemplate_new']
+__all__ = ['IronTemplate', 'IronTemplate_new', 'IronTemplate_tied']
 
 
 irontemp_boroson1992 = Table.read('{0}{1}data{1}irontemplate_boroson1992.ipac'.format(package_path, splitter),

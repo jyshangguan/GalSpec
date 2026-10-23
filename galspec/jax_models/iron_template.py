@@ -10,10 +10,12 @@ Two models, both mirroring the CPU side of GalSpec:
     redshift is known.
 
 ``IronTemplate_tied``
-    The same template broadened not by one Gaussian but by a **multi-Gaussian**
-    profile that is fitted simultaneously -- normally the profile of the broad
-    Balmer lines, tied component by component.  A one-component tied model with
-    ``dv = 0`` and unit weight reproduces ``IronTemplate`` exactly.
+    The same template broadened not by one Gaussian but by the **profile of a
+    broad line**: a ``Line_MultiGauss``, tied component by component.  The kernel
+    carries that model's parameter names (``dv_c``, ``sigma_c``, ``amp_w0``,
+    ``dv_w0``, ``sigma_w0``, ...) and its relative-shift convention, so tying is
+    one stock tie class per parameter and the kernel *is* the line profile.  A
+    one-component kernel with ``dv_c = 0`` reproduces ``IronTemplate`` exactly.
 
 Why the broadened template is built the way it is
 -------------------------------------------------
@@ -176,33 +178,43 @@ class IronTemplate(_IronBase):
 
 
 class IronTemplate_tied(_IronBase):
-    """Fe II emission broadened by a fitted multi-Gaussian profile.
+    """Fe II emission broadened by the profile of a broad line.
 
-    The kernel is a sum of Gaussian components, each with its own velocity shift,
-    width and weight, so it can be tied to the broad Balmer lines component by
-    component::
+    The kernel is the *same multi-Gaussian profile* as a
+    :class:`~galspec.jax_models.Line_MultiGauss`, component for component, so it
+    takes that model's parameter names and can be tied to it parameter by
+    parameter with the stock tie classes::
 
-        fe = jxm.IronTemplate_tied(n_components=2, template_name="park2022", name="FeII")
-        fe.dv_0.tied = jxm.tie.tie_MultiGauss_dv_w0("Halpha")
-        fe.sigma_0.tied = jxm.tie.tie_MultiGauss_sigma_w0("Halpha")
-        fe.w_0.tied = jxm.tie.tie_MultiGauss_amp_w0("Halpha")
-        fe.dv_1.tied = jxm.tie.tie_MultiGauss_dv_w1("Halpha")
-        ...
+        fe = jxm.IronTemplate_tied(n_components=2, name="FeII")   # core + one wind
+        fe.dv_c.tied = jxm.tie.tie_MultiGauss_dv_c("b_halpha")
+        fe.sigma_c.tied = jxm.tie.tie_MultiGauss_sigma_c("b_halpha")
+        fe.amp_w0.tied = jxm.tie.tie_MultiGauss_amp_w0("b_halpha")
+        fe.dv_w0.tied = jxm.tie.tie_MultiGauss_dv_w0("b_halpha")
+        fe.sigma_w0.tied = jxm.tie.tie_MultiGauss_sigma_w0("b_halpha")
 
-    The weights are normalised to unit sum, so ``amplitude`` keeps the meaning it
-    has in :class:`IronTemplate` (the template scale) whatever the line
-    amplitudes do.  Left untied, the components are free iron-profile parameters,
-    which is a legitimate model too.
+    There is no weight parameter of its own, and no ``amp_c``: a
+    ``Line_MultiGauss`` already *is* a weighted sum of Gaussians, whose weights are
+    its own component amplitudes (``amp_c`` for the core, ``amp_c * amp_w{i}`` for
+    wind ``i``).  The iron only needs the *shape* of that sum -- the convolution is
+    normalised -- so the core amplitude is the unit in which the wind amplitudes
+    are expressed and cancels exactly.  ``amp_w{i}`` is therefore the line's own
+    parameter, not a new one: tied, the kernel is the line profile to the last
+    digit.
+
+    Component 0 sits at ``dv_c`` with width ``sigma_c``; component ``i`` at
+    ``dv_c + dv_w{i}`` with width ``sigma_w{i}`` -- the same relative-shift
+    convention as ``Line_MultiGauss``.  Component shifts mean the iron inherits the
+    line's velocity centroid instead of being told a separate one.
 
     Parameters
     ----------
     n_components : int
-        Number of Gaussian components in the broadening kernel (2 matches the
-        worked example's two broad Balmer components).
+        Total number of kernel components, core included: ``2`` is a core plus one
+        wind, matching ``Line_MultiGauss(n_components=2)``.
     template_name : {'park2022', 'boroson1992'}
         Which template to load.
     sigma_max : float, optional
-        Upper bound on ``sigma_k``, used to size the static kernel.
+        Upper bound on any kernel width, used to size the static kernel.
     """
 
     model_kind = "IronTemplate_tied"
@@ -213,47 +225,85 @@ class IronTemplate_tied(_IronBase):
         if n_components < 1:
             raise ValueError("n_components must be >= 1")
         self.n_components = int(n_components)
+        # The convolution kernel is static (its radius must be a Python int under
+        # jit), so it has to be sized for the widest width the model can be asked
+        # for.  Inside a fit ``JNesty_Fit`` passes the prior bounds and overrides
+        # this; outside one, the widths given here (and their bound upper limits)
+        # are the only information available, and a kernel sized too small would
+        # truncate the wings at less than 4 sigma.
+        widest = 2000.0
+        for key, value in dict(kwargs).items():
+            if key == "sigma_c" or key.startswith("sigma_w"):
+                if np.isscalar(value) and np.isfinite(value):
+                    widest = max(widest, float(value))
+        for key, value in dict(bounds or {}).items():
+            if key == "sigma_c" or key.startswith("sigma_w"):
+                upper = value[1] if isinstance(value, (tuple, list)) else None
+                if upper is not None and np.isfinite(upper):
+                    widest = max(widest, float(upper))
+        sigma_max = max(float(sigma_max or 0.0), widest)
         super().__init__(template_name=template_name, sigma_max=sigma_max, name=name,
                          fixed=fixed, bounds=bounds, **kwargs)
 
+    # -- parameter layout ------------------------------------------------------------
     def _build_specs(self, **kwargs):
         from .core import _apply_kwargs
 
         specs = [
             ParamSpec("amplitude", 1.0, bounds=(0.0, None)),
             ParamSpec("z", 0.0, fixed=True),
+            ParamSpec("dv_c", 0.0, bounds=(-2000.0, 2000.0)),
+            ParamSpec("sigma_c", 2000.0, bounds=(self._stddev_intr, None)),
         ]
-        for index in range(self.n_components):
+        for index in range(self.n_components - 1):
             specs += [
-                ParamSpec(f"dv_{index}", 0.0, bounds=(-2000.0, 2000.0)),
-                ParamSpec(f"sigma_{index}", 2000.0, bounds=(self._stddev_intr, None)),
-                ParamSpec(f"w_{index}", 1.0, bounds=(0.0, None)),
+                ParamSpec(f"amp_w{index}", 1.0, bounds=(0.0, None)),
+                ParamSpec(f"dv_w{index}", 0.0, bounds=(-8000.0, 8000.0)),
+                ParamSpec(f"sigma_w{index}", 2000.0, bounds=(self._stddev_intr, None)),
             ]
         return _apply_kwargs(specs, kwargs, type(self).__name__)
 
+    def kernel_param_names(self) -> tuple:
+        """The parameters this kernel shares with ``Line_MultiGauss``."""
+        names = ["dv_c", "sigma_c"]
+        for index in range(self.n_components - 1):
+            names += [f"amp_w{index}", f"dv_w{index}", f"sigma_w{index}"]
+        return tuple(names)
+
     def set_prior_limits(self, limits: dict) -> None:
-        """Size the kernel from the largest ``sigma_k`` bound."""
+        """Size the static kernel from the widest kernel-width prior bound."""
         upper = 0.0
-        for index in range(self.n_components):
-            candidate = limits.get(f"sigma_{index}", (None, None))[1]
+        for name in ["sigma_c"] + [f"sigma_w{i}" for i in range(self.n_components - 1)]:
+            candidate = limits.get(name, (None, None))[1]
             if candidate is not None and np.isfinite(candidate):
                 upper = max(upper, float(candidate))
         if upper > 0.0:
             self.sigma_max = upper
             self._update_radius()
 
+    # -- evaluation ------------------------------------------------------------------
     def evaluate(self, x, p):
-        weights = jnp.stack([p[f"w_{index}"] for index in range(self.n_components)])
-        total_weight = jnp.where(jnp.sum(weights) > 0, jnp.sum(weights), 1.0)
-        # Each component is projected onto the data separately rather than summed on
-        # the template grid first: a shift resampled on the 150 km/s template grid
-        # costs ~1e-3 of the peak in interpolation error, and projecting each
-        # component keeps a one-component kernel *identical* to IronTemplate.
+        # The kernel is a weighted sum of Gaussians whose weights are the line's own
+        # component amplitudes.  Only the *shape* reaches the iron -- the template is
+        # convolved and the result renormalised -- so the core amplitude is 1 here.
+        weights = [1.0]
+        centres = [p["dv_c"]]
+        widths = [p["sigma_c"]]
+        for index in range(self.n_components - 1):
+            weights.append(p[f"amp_w{index}"])
+            centres.append(p["dv_c"] + p[f"dv_w{index}"])
+            widths.append(p[f"sigma_w{index}"])
+        total = sum(weights)
+        total = jnp.where(total > 0.0, total, 1.0)
+
+        # Projecting each component separately keeps the one-component kernel
+        # identical to IronTemplate: nothing is resampled on the coarse template grid
+        # before it reaches the data grid.
         flux = jnp.zeros_like(jnp.asarray(x, dtype=jnp.float64))
-        for index in range(self.n_components):
-            template = self._smoothed_template(p[f"sigma_{index}"])
-            wave_k = self._wave_temp * (1.0 + p["z"] + p[f"dv_{index}"] / ls_km)
-            flux = flux + weights[index] / total_weight * jnp.interp(x, wave_k, template)
+        for weight, centre, width in zip(weights, centres, widths):
+            template = self._smoothed_template(width)
+            wave_k = self._wave_temp * (1.0 + p["z"] + centre / ls_km)
+            flux = flux + weight / total * jnp.interp(x, wave_k, template)
         return p["amplitude"] * flux
 
 

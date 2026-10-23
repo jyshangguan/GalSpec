@@ -193,18 +193,21 @@ def free_qualified_names(model):
 
 build = '''\
 def build_model(backend=jxm, include_iron=None):
-    """The full model: narrow core + two broad Gaussians per Balmer line.
+    """The full model: two models per line, narrow and broad.
 
-    ``backend`` is either ``galspec.jax_models`` (what the fit uses) or
-    ``galspec`` itself (the astropy equivalents).  Both expose the same
-    constructors, tie helpers and parameter names, so one function builds the
-    model twice: once to fit, once to hand to ``galspec.plot.plot_fit``.
+    Every Balmer line (and He I 5876) is described twice, as in
+    ``wrk_sagan_iras07546.ipynb``:
 
-    Each Balmer line is a ``Line_MultiGauss`` with ``n_components=3``: a narrow
-    core (amp_c, dv_c, sigma_c), a broad component (amp_w0, dv_w0, sigma_w0) and
-    a second, broader one (amp_w1, dv_w1, sigma_w1).  The wind amplitudes are
-    ratios to the core amplitude, which is how the GalSpec models are written.
-    No convolution is applied: see the introduction.
+    ``n_<line>``  a ``Line_Gaussian`` for the narrow component, tied to the
+                  [O III] core, so all the narrow lines share one kinematics;
+    ``b_<line>``  a ``Line_MultiGauss`` for the broad component only.  Component 0
+                  is the broad core -- "core" names component 0, it is not a
+                  narrow line -- and ``amp_w0``/``dv_w0``/``sigma_w0`` add the
+                  broader wind.
+
+    ``backend`` is ``galspec.jax_models`` (what the fit uses) or ``galspec``
+    itself (the astropy twin used for plotting).  No convolution is applied: see
+    the introduction.
     """
     if include_iron is None:
         # the astropy twin used for plotting gets the iron as a curve instead
@@ -220,28 +223,48 @@ def build_model(backend=jxm, include_iron=None):
     #                                     dv=0.0, name="FeII")
     #
     # and those two lines are kept here as the reference the tied model was checked
-    # against.  What the fit uses is the *tied* template: it is broadened by a
-    # multi-Gaussian kernel whose shifts, widths and weights ARE the broad
-    # components of H-alpha (tied below), so the iron has a single free parameter,
-    # its amplitude.
+    # against.  What the fit uses is the *tied* template, broadened by the profile of
+    # broad H-alpha.  Its parameters carry the same names as the Line_MultiGauss they
+    # come from (n_components=2 is a core plus one wind) and there are no weights of
+    # their own: a Line_MultiGauss already is a weighted sum, the convolution
+    # renormalises it, so the core amplitude cancels and the wind ratio -- the line's
+    # own amp_w0 -- is the only weight left.  One free parameter: the amplitude.
     iron = None
     if include_iron:
         iron = backend.IronTemplate_tied(n_components=2, amplitude=0.2, z=0.0,
-                                         sigma_0=2400.0, dv_0=0.0, w_0=0.28,
-                                         sigma_1=6000.0, dv_1=0.0, w_1=0.05,
+                                         dv_c=0.0, sigma_c=1500.0,
+                                         amp_w0=0.10, dv_w0=0.0, sigma_w0=6000.0,
                                          name="FeII")
         iron.z.fixed = True
 
-    # -- Balmer lines: narrow core + two broad Gaussians each -------------------
-    def balmer(name, wavec, amp_c, amp_w0):
-        return backend.Line_MultiGauss(
-            n_components=3, amp_c=amp_c, dv_c=0.0, sigma_c=700.0,
-            wavec=wavec, name=name, amp_w0=amp_w0, dv_w0=0.0, sigma_w0=2400.0,
-            amp_w1=0.05, dv_w1=0.0, sigma_w1=6000.0)
+    # -- narrow components: one Gaussian per line, one kinematics for all -------
+    def narrow(name, wavec, amplitude, model_name):
+        return backend.Line_Gaussian(amplitude=amplitude, dv=0.0, sigma=700.0,
+                                     wavec=wavec, name=model_name)
 
-    halpha = balmer("Halpha", LINE_WAVE["Halpha"], 2.2, 0.28)
-    hbeta = balmer("Hbeta", LINE_WAVE["Hbeta"], 0.8, 0.30)
-    hgamma = balmer("Hgamma", LINE_WAVE["Hgamma"], 0.4, 0.30)
+    # -- broad components: a Line_MultiGauss whose component 0 is the broad core --
+    n_halpha = narrow("Halpha", LINE_WAVE["Halpha"], 2.2, "n_halpha")
+    n_hbeta = narrow("Hbeta", LINE_WAVE["Hbeta"], 0.8, "n_hbeta")
+    n_hgamma = narrow("Hgamma", LINE_WAVE["Hgamma"], 0.4, "n_hgamma")
+    n_hei = narrow("HeI", LINE_WAVE["HeI_5876"], 0.12, "n_hei")
+
+    b_halpha = backend.Line_MultiGauss(
+        n_components=2, amp_c=0.65, dv_c=0.0, sigma_c=1500.0,
+        wavec=LINE_WAVE["Halpha"], name="b_halpha",
+        amp_w0=0.10, dv_w0=0.0, sigma_w0=6000.0)
+    b_hbeta = backend.Line_MultiGauss(
+        n_components=2, amp_c=0.22, dv_c=0.0, sigma_c=1500.0,
+        wavec=LINE_WAVE["Hbeta"], name="b_hbeta",
+        amp_w0=0.20, dv_w0=0.0, sigma_w0=6000.0)
+    b_hgamma = backend.Line_MultiGauss(
+        n_components=2, amp_c=0.10, dv_c=0.0, sigma_c=1500.0,
+        wavec=LINE_WAVE["Hgamma"], name="b_hgamma",
+        amp_w0=0.20, dv_w0=0.0, sigma_w0=6000.0)
+    # He I 5876: one broad component is enough.  It sits where the Na D mask used to
+    # be: with the mask gone, the line has to be modelled rather than hidden.
+    b_hei = backend.Line_MultiGauss(
+        n_components=1, amp_c=0.06, dv_c=0.0, sigma_c=1500.0,
+        wavec=LINE_WAVE["HeI_5876"], name="b_hei")
 
     # -- forbidden lines -------------------------------------------------------
     o3 = backend.Line_MultiGauss_doublet(
@@ -260,21 +283,9 @@ def build_model(backend=jxm, include_iron=None):
         n_components=1, amp_c0=0.05, amp_c1=0.05 / 3.0, dv_c=0.0, sigma_c=700.0,
         wavec0=LINE_WAVE["OI_6300"], wavec1=LINE_WAVE["OI_6364"], name="OI")
 
-    # -- single narrow Gaussians ----------------------------------------------
-    def narrow(name, wavec, amplitude):
-        return backend.Line_Gaussian(amplitude=amplitude, dv=0.0, sigma=700.0,
-                                     wavec=wavec, name=name)
-
-    he2 = narrow("HeII", LINE_WAVE["HeII_4686"], 0.08)
-    o3_4363 = narrow("OIII4363", LINE_WAVE["OIII_4363"], 0.05)
-
-    # He I 5876: narrow core plus a broad foot, the same two-part treatment as the
-    # Balmers but with one broad component.  It sits where the Na D mask used to be:
-    # with the mask gone, the line has to be modelled rather than hidden.
-    he1 = backend.Line_MultiGauss(
-        n_components=2, amp_c=0.12, dv_c=0.0, sigma_c=700.0,
-        wavec=LINE_WAVE["HeI_5876"], name="HeI",
-        amp_w0=0.5, dv_w0=0.0, sigma_w0=2400.0)
+    # -- other single narrow Gaussians ----------------------------------------
+    he2 = narrow("HeII", LINE_WAVE["HeII_4686"], 0.08, "HeII")
+    o3_4363 = narrow("OIII4363", LINE_WAVE["OIII_4363"], 0.05, "OIII4363")
 
     # Nothing blueward of H-gamma or redward of [S II] is modelled: the data are
     # 4200-6800 A.  Gone with the old range: H-delta, H-epsilon, H8-H11,
@@ -282,40 +293,47 @@ def build_model(backend=jxm, include_iron=None):
     components = [continuum]
     if iron is not None:
         components.append(iron)
-    components += [halpha, hbeta, hgamma, o3, n2, s2, o1, he2, o3_4363, he1]
+    components += [n_halpha, b_halpha, n_hbeta, b_hbeta, n_hgamma, b_hgamma,
+                   o3, n2, s2, o1, he2, o3_4363, n_hei, b_hei]
     model = components[0]
     for _component in components[1:]:
         model = model + _component
 
     # -- ties: one narrow kinematics for every narrow line, [O III] as reference --
-    for line in (halpha, hbeta, hgamma, n2, s2, o1, he1):
+    for line in (n_halpha, n_hbeta, n_hgamma, n_hei):
+        line.dv.tied = _TieFrom("OIII", "dv_c")
+        line.sigma.tied = _TieFrom("OIII", "sigma_c")
+    for line in (n2, s2, o1):
         line.dv_c.tied = _tie_fn(backend, "tie_MultiGauss_dv_c")("OIII")
         line.sigma_c.tied = _tie_fn(backend, "tie_MultiGauss_sigma_c")("OIII")
     for line in (he2, o3_4363):
         line.dv.tied = _TieFrom("OIII", "dv_c")
         line.sigma.tied = _TieFrom("OIII", "sigma_c")
 
-    # -- broad components: two of them, each shared by the Balmer lines --------
-    for line in (hbeta, hgamma, he1):
-        line.dv_w0.tied = _tie_fn(backend, "tie_MultiGauss_dv_w0")("Halpha")
-        line.sigma_w0.tied = _tie_fn(backend, "tie_MultiGauss_sigma_w0")("Halpha")
-    for line in (hbeta, hgamma):
-        line.dv_w1.tied = _tie_fn(backend, "tie_MultiGauss_dv_w1")("Halpha")
-        line.sigma_w1.tied = _tie_fn(backend, "tie_MultiGauss_sigma_w1")("Halpha")
+    # -- ties: one broad kinematics, set by broad H-alpha ----------------------
+    # The broad core and the wind are separate structures, so they get separate
+    # kinematics; what is shared is the shape.  Each line keeps its own peak and its
+    # own wind ratio, which is how the Balmer decrement falls out of the fit.
+    for line in (b_hbeta, b_hgamma):
+        line.dv_c.tied = _tie_fn(backend, "tie_MultiGauss_dv_c")("b_halpha")
+        line.sigma_c.tied = _tie_fn(backend, "tie_MultiGauss_sigma_c")("b_halpha")
+        line.dv_w0.tied = _tie_fn(backend, "tie_MultiGauss_dv_w0")("b_halpha")
+        line.sigma_w0.tied = _tie_fn(backend, "tie_MultiGauss_sigma_w0")("b_halpha")
+    b_hei.dv_c.tied = _tie_fn(backend, "tie_MultiGauss_dv_c")("b_halpha")
+    b_hei.sigma_c.tied = _tie_fn(backend, "tie_MultiGauss_sigma_c")("b_halpha")
     o3.dv_w0.tied = _TieFrom("OIII", "dv_c")   # the wing sits at the core velocity
 
     # -- ties: the iron kernel IS broad H-alpha -------------------------------
-    # Component k of the kernel takes the shift, width and weight of broad
-    # component k of H-alpha.  The iron therefore cannot broaden independently of
-    # the line it is emitted with.  The compound above already exists, which is what
-    # lets these tie references resolve.
+    # Kernel component for kernel component: the core takes the core's shift and
+    # width, the wind takes the wind's, ratios included.  Nothing is left to the iron
+    # but its amplitude.  The compound above already exists, which is what lets these
+    # tie references resolve.
     if iron is not None:
-        iron.dv_0.tied = _tie_fn(backend, "tie_MultiGauss_dv_w0")("Halpha")
-        iron.sigma_0.tied = _tie_fn(backend, "tie_MultiGauss_sigma_w0")("Halpha")
-        iron.w_0.tied = _tie_fn(backend, "tie_MultiGauss_amp_w0")("Halpha")
-        iron.dv_1.tied = _tie_fn(backend, "tie_MultiGauss_dv_w1")("Halpha")
-        iron.sigma_1.tied = _tie_fn(backend, "tie_MultiGauss_sigma_w1")("Halpha")
-        iron.w_1.tied = _tie_fn(backend, "tie_MultiGauss_amp_w1")("Halpha")
+        iron.dv_c.tied = _tie_fn(backend, "tie_MultiGauss_dv_c")("b_halpha")
+        iron.sigma_c.tied = _tie_fn(backend, "tie_MultiGauss_sigma_c")("b_halpha")
+        iron.amp_w0.tied = _tie_fn(backend, "tie_MultiGauss_amp_w0")("b_halpha")
+        iron.dv_w0.tied = _tie_fn(backend, "tie_MultiGauss_dv_w0")("b_halpha")
+        iron.sigma_w0.tied = _tie_fn(backend, "tie_MultiGauss_sigma_w0")("b_halpha")
 
     # -- doublet ratios fixed by atomic physics --------------------------------
     # (not [S II]: its ratio is density-sensitive and stays a free parameter)
@@ -328,18 +346,21 @@ def build_model(backend=jxm, include_iron=None):
 
 model = build_model(jxm)
 
-# Display names for plots: a line's `name` stays "Halpha" (it is the key you index
-# with), but `label` may contain maths, and param_labels combines it with the
-# parameter symbol -- "BH$\\alpha$:$\\sigma_{w0}$" for the broad-width parameter.
+# Display names for plots: one label per *model*, because the narrow Gaussian and the
+# broad MultiGauss of the same line are separate objects and are drawn separately.
 MODEL_LABELS = {
     "Continuum": "Continuum", "FeII": "Fe II",
-    "Halpha": r"BH$\\alpha$", "Hbeta": r"BH$\\beta$", "Hgamma": r"BH$\\gamma$",
+    "n_halpha": r"BH$\\alpha$ (narrow)", "b_halpha": r"BH$\\alpha$ (broad)",
+    "n_hbeta": r"BH$\\beta$ (narrow)", "b_hbeta": r"BH$\\beta$ (broad)",
+    "n_hgamma": r"BH$\\gamma$ (narrow)", "b_hgamma": r"BH$\\gamma$ (broad)",
+    "n_hei": r"He I (narrow)", "b_hei": r"He I (broad)",
     "OIII": r"[O III]", "NII": r"[N II]", "SII": r"[S II]", "OI": r"[O I]",
-    "OIII4363": r"[O III] 4363", "HeII": r"He II", "HeI": r"He I",
+    "OIII4363": r"[O III] 4363", "HeII": r"He II",
 }
 for _name in model.submodel_names:
     if _name in MODEL_LABELS:
         model[_name].label = MODEL_LABELS[_name]
+
 '''
 
 show_params = '''\
@@ -361,11 +382,19 @@ def log_uniform(lower, upper):
 
 
 def make_priors(flux):
-    """Bounds and log-uniform priors for the whole model."""
+    """Bounds and log-uniform priors for the whole model.
+
+    The two width ranges of the broad line do not overlap on purpose: component 0
+    and component 1 of a Line_MultiGauss are exchangeable (swapping them leaves the
+    spectrum bit-identical), so with overlapping priors the posterior is bimodal and
+    "core" and "wind" mean nothing.  300-3000 vs 3000-25000 km/s is also what the
+    two words say.  See ``develop/dev_jax/io_test/iron_tied_io_test.html``.
+    """
     peak = float(np.max(flux))
     continuum = float(np.percentile(flux, 15.0))
     amp = (1e-3, 3.0 * peak)      # line peaks
     ratio = (1e-3, 8.0)           # broad / narrow amplitude
+    broad_ratio = (1e-3, 8.0)     # wind / broad core
 
     bounds = {
         "Continuum.amplitude": (0.2 * continuum, 4.0 * continuum),
@@ -381,18 +410,19 @@ def make_priors(flux):
         "NII.amp_c0": amp,
         "SII.amp_c0": amp, "SII.amp_c1": amp,
         "OI.amp_c0": amp,
-        "Halpha.dv_w0": (-2500.0, 2500.0),
-        "Halpha.sigma_w0": (300.0, 8000.0),
-        "Halpha.dv_w1": (-6000.0, 6000.0),
-        "Halpha.sigma_w1": (800.0, 25000.0),
+        # broad H-alpha: the only place where the broad kinematics are free
+        "b_halpha.dv_c": (-2500.0, 2500.0),
+        "b_halpha.sigma_c": (300.0, 3000.0),
+        "b_halpha.amp_w0": broad_ratio,
+        "b_halpha.dv_w0": (-6000.0, 6000.0),
+        "b_halpha.sigma_w0": (3000.0, 25000.0),
     }
     for name in BALMER_NAMES:
-        bounds[f"{name}.amp_c"] = amp
-        bounds[f"{name}.amp_w0"] = ratio
-        bounds[f"{name}.amp_w1"] = ratio
-    for name in TWO_COMPONENT_LINES:
-        bounds[f"{name}.amp_c"] = amp
-        bounds[f"{name}.amp_w0"] = ratio
+        bounds[f"n_{name.lower()}.amplitude"] = amp
+        bounds[f"b_{name.lower()}.amp_c"] = amp
+        bounds[f"b_{name.lower()}.amp_w0"] = broad_ratio
+    bounds["n_hei.amplitude"] = amp
+    bounds["b_hei.amp_c"] = amp
     for name in SINGLE_LINES:
         bounds[f"{name}.amplitude"] = amp
 
@@ -408,6 +438,7 @@ for q in free_qualified_names(model):
     lo, hi = bounds[q]
     kind = "log" if q in custom_priors else "linear"
     print(f"  {q:22s} ({lo:9.3f}, {hi:9.3f})  {kind}-uniform")
+
 '''
 
 fit_cell = '''\
@@ -466,16 +497,19 @@ PARAM_NOTES = {
     "SII.amp_c0": "[S II] 6716 peak", "SII.amp_c1": "[S II] 6731 peak",
     "OI.amp_c0": "[O I] 6300 peak",
     "HeII.amplitude": "He II 4686 peak", "OIII4363.amplitude": "[O III] 4363 peak",
-    "HeI.amp_c": "He I 5876 narrow peak", "HeI.amp_w0": "broad He I 5876 / narrow",
-    "Halpha.dv_w0": "shift of broad component 0",
-    "Halpha.sigma_w0": "width of broad component 0",
-    "Halpha.dv_w1": "shift of broad component 1",
-    "Halpha.sigma_w1": "width of broad component 1",
+    "b_halpha.dv_c": "shift of the broad core (all broad lines)",
+    "b_halpha.sigma_c": "width of the broad core (all broad lines)",
+    "b_halpha.amp_w0": "wind / broad core of H-alpha",
+    "b_halpha.dv_w0": "shift of the wind, relative to the core",
+    "b_halpha.sigma_w0": "width of the wind (all broad lines)",
 }
 for name in BALMER_NAMES:
-    PARAM_NOTES.setdefault(f"{name}.amp_c", f"narrow {name} peak")
-    PARAM_NOTES.setdefault(f"{name}.amp_w0", f"broad {name} / narrow")
-    PARAM_NOTES.setdefault(f"{name}.amp_w1", f"second broad {name} / narrow")
+    low = name.lower()
+    PARAM_NOTES.setdefault(f"n_{low}.amplitude", f"narrow {name} peak")
+    PARAM_NOTES.setdefault(f"b_{low}.amp_c", f"broad core of {name}")
+    PARAM_NOTES.setdefault(f"b_{low}.amp_w0", f"wind / broad core of {name}")
+PARAM_NOTES.setdefault("n_hei.amplitude", "narrow He I 5876 peak")
+PARAM_NOTES.setdefault("b_hei.amp_c", "broad core of He I 5876")
 
 lo, med, hi = fit.get_quantiles((0.16, 0.5, 0.84))
 print(f"{'parameter':22s} {'value':>10s} {'-':>8s} {'+':>8s}  meaning")
@@ -483,6 +517,7 @@ print("-" * 100)
 for i, q in enumerate(fit.full_param_names):
     print(f"{q:22s} {med[i]:10.3f} {med[i]-lo[i]:8.3f} {hi[i]-med[i]:8.3f}  "
           f"{PARAM_NOTES.get(q, '')}")
+
 '''
 
 derived_cell = '''\
@@ -494,37 +529,41 @@ def derived_quantities(fit):
 
     out = {}
     for line in BALMER_NAMES:
+        low = line.lower()
         wavec = LINE_WAVE[line]
         block = {}
-        for label, comp in (("narrow", "c"), ("broad 0", "w0"), ("broad 1", "w1")):
-            if comp == "c":
-                amplitude = samples[:, index[f"{line}.amp_c"]]
-                sigma = samples[:, index["OIII.sigma_c"]]
-            else:
-                amplitude = (samples[:, index[f"{line}.amp_c"]]
-                             * samples[:, index[f"{line}.amp_{comp}"]])
-                sigma = samples[:, index[f"Halpha.sigma_{comp}"]]
+        # the narrow Gaussian and the broad MultiGauss are separate models, so each
+        # component is read from the model it actually lives in
+        for label, amplitude, sigma in (
+                ("narrow", samples[:, index[f"n_{low}.amplitude"]],
+                 samples[:, index["OIII.sigma_c"]]),
+                ("broad core", samples[:, index[f"b_{low}.amp_c"]],
+                 samples[:, index["b_halpha.sigma_c"]]),
+                ("broad wind",
+                 samples[:, index[f"b_{low}.amp_c"]]
+                 * samples[:, index[f"b_{low}.amp_w0"]],
+                 samples[:, index["b_halpha.sigma_w0"]])):
             # F = A sigma sqrt(2 pi) (lambda / c); A is in 1e-14 units and the
             # answer is quoted in 1e-17 erg/s/cm2, hence the 1e3.
             line_flux = amplitude * sigma * np.sqrt(2.0 * np.pi) * wavec / 299792.458 * 1e3
             block[label] = {"fwhm": np.percentile(fwhm * sigma, [16, 50, 84]),
                             "flux": np.percentile(line_flux, [16, 50, 84])}
-        broad = block["broad 0"]["flux"][1] + block["broad 1"]["flux"][1]
+        broad = block["broad core"]["flux"][1] + block["broad wind"]["flux"][1]
         block["broad/narrow"] = broad / block["narrow"]["flux"][1]
         out[line] = block
 
     # He I 5876: one broad component instead of two
     wavec = LINE_WAVE["HeI_5876"]
-    narrow_amp = samples[:, index["HeI.amp_c"]]
     he1 = {}
     for label, amplitude, sigma in (
-            ("narrow", narrow_amp, samples[:, index["OIII.sigma_c"]]),
-            ("broad 0", narrow_amp * samples[:, index["HeI.amp_w0"]],
-             samples[:, index["Halpha.sigma_w0"]])):
+            ("narrow", samples[:, index["n_hei.amplitude"]],
+             samples[:, index["OIII.sigma_c"]]),
+            ("broad core", samples[:, index["b_hei.amp_c"]],
+             samples[:, index["b_halpha.sigma_c"]])):
         line_flux = amplitude * sigma * np.sqrt(2.0 * np.pi) * wavec / 299792.458 * 1e3
         he1[label] = {"fwhm": np.percentile(fwhm * sigma, [16, 50, 84]),
                       "flux": np.percentile(line_flux, [16, 50, 84])}
-    he1["broad/narrow"] = (he1["broad 0"]["flux"][1] / he1["narrow"]["flux"][1])
+    he1["broad/narrow"] = (he1["broad core"]["flux"][1] / he1["narrow"]["flux"][1])
     out["He I 5876"] = he1
 
     # [S II] I(6716)/I(6731): ~1.4 in the low-density limit, ~0.4 at high density.
@@ -533,22 +572,23 @@ def derived_quantities(fit):
     return out
 
 
-print(f"{'line':18s} {'component':10s} {'FWHM [km/s]':>20s}   "
+print(f"{'line':18s} {'component':12s} {'FWHM [km/s]':>20s}   "
       f"{'flux [1e-17 erg/s/cm2]':>24s}")
-print("-" * 80)
+print("-" * 82)
 for line, block in derived_quantities(fit).items():
     if "ratio" in block:
         r = block["ratio"]
         print(f"{line:18s} = {r[1]:.3f} (+{r[2]-r[1]:.3f}/-{r[1]-r[0]:.3f})   "
               "[density diagnostic]")
         continue
-    for label in ("narrow", "broad 0", "broad 1"):
+    for label in ("narrow", "broad core", "broad wind"):
         if label not in block:
             continue
         fw, fl = block[label]["fwhm"], block[label]["flux"]
-        print(f"{line:18s} {label:10s} {fw[1]:8.0f} (+{fw[2]-fw[1]:.0f}/-{fw[1]-fw[0]:.0f})"
+        print(f"{line:18s} {label:12s} {fw[1]:8.0f} (+{fw[2]-fw[1]:.0f}/-{fw[1]-fw[0]:.0f})"
               f"      {fl[1]:9.1f} (+{fl[2]-fl[1]:.1f}/-{fl[1]-fl[0]:.1f})")
-    print(f"{'':18s} {'broad/narrow':10s} {block['broad/narrow']:8.2f}")
+    print(f"{'':18s} {'broad/narrow':12s} {block['broad/narrow']:8.2f}")
+
 '''
 
 quality_cell = '''\
@@ -652,8 +692,8 @@ galspec.plot.plot_fit(
     ylabel=r"$F_\\lambda$  [$10^{-14}$ erg s$^{-1}$ cm$^{-2}$ $\\AA^{-1}$]",
     legend_kwargs={"fontsize": 10.5, "ncol": 2, "loc": "center left",
                    "bbox_to_anchor": (1.005, 0.5), "frameon": False})
-ax.set_title("IRAS 07546+3928: 4200-6800 A, two broad Gaussians per Balmer line, "
-             "iron tied to broad H-alpha", fontsize=13)
+ax.set_title("IRAS 07546+3928: 4200-6800 A, each line split into a narrow and a "
+             "broad model, iron tied to broad H-alpha", fontsize=13)
 '''
 
 plot_zooms = '''\
@@ -694,33 +734,33 @@ tied_iron_cell = '''\
 # multi-Gaussian profile as the broad Balmer lines, tied component by component.
 # The cell builds it, resolves the ties, compares the resulting iron profile with
 # the single-Gaussian one, and measures what the extra work costs.
-fe_tied = jxm.IronTemplate_tied(n_components=2, amplitude=0.2, sigma_0=2400.0,
-                                sigma_1=6000.0, w_0=0.28, w_1=0.05,
+fe_tied = jxm.IronTemplate_tied(n_components=2, amplitude=0.2,
+                                dv_c=0.0, sigma_c=1500.0,
+                                amp_w0=0.10, dv_w0=0.0, sigma_w0=6000.0,
                                 template_name="park2022", name="FeII_tied")
-# a standalone copy of the broad H-alpha line, so this demonstration cannot touch
-# the model that the fit uses
-halpha = jxm.Line_MultiGauss(n_components=3, amp_c=2.2, sigma_c=700.0,
-                             wavec=LINE_WAVE["Halpha"], name="Halpha",
-                             amp_w0=0.28, sigma_w0=2400.0,
-                             amp_w1=0.05, sigma_w1=6000.0)
+# a standalone copy of the broad H-alpha line (a Line_MultiGauss used for the broad
+# component only), so this demonstration cannot touch the model that the fit uses
+b_halpha = jxm.Line_MultiGauss(n_components=2, amp_c=0.65, sigma_c=1500.0,
+                               wavec=LINE_WAVE["Halpha"], name="b_halpha",
+                               amp_w0=0.10, sigma_w0=6000.0)
 # compose first: a tie is resolved through the compound that holds both models
-demo = halpha + fe_tied
-fe_tied.dv_0.tied = jxm.tie.tie_MultiGauss_dv_w0("Halpha")
-fe_tied.sigma_0.tied = jxm.tie.tie_MultiGauss_sigma_w0("Halpha")
-fe_tied.w_0.tied = jxm.tie.tie_MultiGauss_amp_w0("Halpha")
-fe_tied.dv_1.tied = jxm.tie.tie_MultiGauss_dv_w1("Halpha")
-fe_tied.sigma_1.tied = jxm.tie.tie_MultiGauss_sigma_w1("Halpha")
-fe_tied.w_1.tied = jxm.tie.tie_MultiGauss_amp_w1("Halpha")
+demo = b_halpha + fe_tied
+fe_tied.dv_c.tied = jxm.tie.tie_MultiGauss_dv_c("b_halpha")
+fe_tied.sigma_c.tied = jxm.tie.tie_MultiGauss_sigma_c("b_halpha")
+fe_tied.amp_w0.tied = jxm.tie.tie_MultiGauss_amp_w0("b_halpha")
+fe_tied.dv_w0.tied = jxm.tie.tie_MultiGauss_dv_w0("b_halpha")
+fe_tied.sigma_w0.tied = jxm.tie.tie_MultiGauss_sigma_w0("b_halpha")
 
 print("tied iron parameters:", fe_tied.param_names)
 print("free after tying   :", fe_tied.free_param_names)
-print("(dv_*, sigma_*, w_* are all tied to the broad components of H-alpha)")
+print("(the core and the wind are both tied to broad H-alpha)")
+print("kernel parameters  :", fe_tied.kernel_param_names())
 
 # iron profile: tied to the line profile versus one Gaussian of the same width
 theta_demo = jnp.asarray(demo.get_free_params())       # ties resolved by the compound
-theta_halpha = jnp.asarray(halpha.get_free_params())   # the line on its own
+theta_halpha = jnp.asarray(b_halpha.get_free_params())  # the line on its own
 iron_tied = (np.asarray(demo.flux(wave, theta_demo))
-             - np.asarray(halpha.flux(wave, theta_halpha)))
+             - np.asarray(b_halpha.flux(wave, theta_halpha)))
 # the single-Gaussian description, for reference (the fit no longer uses it)
 iron_plain = np.asarray(
     jxm.IronTemplate_new(amplitude=0.2, sigma=2500.0, dv=0.0,
@@ -733,7 +773,7 @@ fig, ax = plt.subplots(figsize=(11.0, 4.5))
 ax.plot(wave[sel], iron_plain[sel], color="C0", lw=1.8,
         label="one Gaussian, sigma = 2500 km/s")
 ax.plot(wave[sel], iron_tied[sel], color="C1", lw=1.8, ls="--",
-        label="tied to the H-alpha broad profile")
+        label="tied to the broad H-alpha profile (core + wind)")
 ax.set_xlabel("Rest wavelength  [A]", fontsize=16)
 ax.set_ylabel("Fe II flux", fontsize=16)
 ax.legend(fontsize=10, frameon=False)
@@ -745,8 +785,8 @@ plt.show()
 # clock speed and ramps up under load, so timing the first model cold would credit
 # the second one with a speed-up it does not have.
 x = jnp.asarray(wave)
-demo_plain = halpha.copy() + jxm.IronTemplate_new(amplitude=0.2, sigma=2500.0,
-                                                  dv=0.0, name="FeII_plain")
+demo_plain = b_halpha.copy() + jxm.IronTemplate_new(amplitude=0.2, sigma=2500.0,
+                                                   dv=0.0, name="FeII_plain")
 evaluate_plain = jax.jit(lambda t: demo_plain.flux(x, t))
 evaluate_tied = jax.jit(lambda t: demo.flux(x, t))
 theta_plain = jnp.asarray(demo_plain.get_free_params())
@@ -788,9 +828,9 @@ histogram_cell = '''\
 # posterior, not from the prior: if it came from the prior, a parameter measured to
 # 0.5% would be drawn as a spike one pixel wide.  When a prior bound is off the
 # plotted range it is written in the corner instead of stretching the axis.
-quoted = ["Halpha.amp_c", "Halpha.amp_w0", "Halpha.dv_w0", "Halpha.sigma_w0",
-          "Halpha.sigma_w1", "Hbeta.amp_c", "OIII.sigma_c", "OIII.dv_c",
-          "HeI.amp_c", "HeI.amp_w0", "SII.amp_c0", "SII.amp_c1"]
+quoted = ["b_halpha.amp_c", "b_halpha.amp_w0", "b_halpha.dv_c", "b_halpha.sigma_c",
+          "b_halpha.sigma_w0", "b_hbeta.amp_c", "OIII.sigma_c", "OIII.dv_c",
+          "b_hei.amp_c", "n_hei.amplitude", "SII.amp_c0", "SII.amp_c1"]
 fig, axes = galspec.plot.plot_posterior_hist(
     fit, params=[q for q in quoted if q in fit.full_param_names], ncols=4, bins=40)
 plt.show()
@@ -798,13 +838,13 @@ plt.show()
 corner_cell = '''\
 import corner
 
-wanted = ["OIII.dv_c", "OIII.sigma_c", "Halpha.dv_w0", "Halpha.sigma_w0",
-          "Halpha.dv_w1", "Halpha.sigma_w1", "Continuum.amplitude", "Continuum.alpha",
-          "FeII.amplitude", "Halpha.amp_c", "Halpha.amp_w0", "Halpha.amp_w1",
-          "HeI.amp_c", "HeI.amp_w0"]
+wanted = ["OIII.dv_c", "OIII.sigma_c", "b_halpha.dv_c", "b_halpha.sigma_c",
+          "b_halpha.dv_w0", "b_halpha.sigma_w0", "Continuum.amplitude", "Continuum.alpha",
+          "FeII.amplitude", "b_halpha.amp_c", "b_halpha.amp_w0", "n_halpha.amplitude",
+          "b_hei.amp_c", "n_hei.amplitude"]
 keep = [fit.full_param_names.index(name) for name in wanted
         if name in fit.full_param_names]
-# param_labels turns "Halpha.sigma_w0" into "BH$\\alpha$:$\\sigma_{w0}$"
+# param_labels turns "b_halpha.sigma_w0" into "BH$\\alpha$:$\\sigma_{w0}$"
 fig = corner.corner(fit.samples_equal_weight[:, keep],
                     labels=[fit.param_labels[i] for i in keep],
                     quantiles=(0.16, 0.5, 0.84), show_titles=True, title_fmt=".3g",
@@ -876,10 +916,10 @@ once, so the continuum and the lines are constrained by the same posterior:
 
 | wavelength | what | model |
 | --- | --- | --- |
-| 4340 A | H-gamma | narrow + **two** broad Gaussians |
-| 4861 A | H-beta | narrow + **two** broad Gaussians |
-| 6563 A | H-alpha | narrow + **two** broad Gaussians |
-| 5876 A | He I | narrow + **one** broad component |
+| 4340 A | H-gamma | a narrow Gaussian + a broad MultiGauss (core + wind) |
+| 4861 A | H-beta | a narrow Gaussian + a broad MultiGauss (core + wind) |
+| 6563 A | H-alpha | a narrow Gaussian + a broad MultiGauss (core + wind) |
+| 5876 A | He I | a narrow Gaussian + one broad Gaussian |
 | 4959 / 5007 A | [O III] | narrow core + one broad wing |
 | 6548 / 6584 A | [N II] | narrow, doublet ratio 2.96 (atomic physics) |
 | 6716 / 6731 A | [S II] | narrow, **both peaks free** (the ratio is a density diagnostic) |
@@ -904,12 +944,12 @@ now stays in the fit: He I 5876 sits inside it and is modelled instead.
   narrow lines here are ~700 km/s. So the model is *not* convolved, exactly as in
   `wrk_sagan_iras07546.ipynb`; the fitted narrow width is the observed one.
 * **Wide priors, taken from the data.** Line peaks from invisible to 3x the
-  brightest pixel (log-uniform); broad components 300-8000 and 800-25000 km/s.
-  Section 4 shows the prior spread against the data.
+  brightest pixel (log-uniform); the broad core 300-3000 km/s and the wind
+  3000-25000 km/s. Section 4 shows the prior spread against the data.
 * **Physical ties.** Every narrow line shares one velocity shift and one width
-  (measured from [O III]); the two broad components are each shared across the
-  three Balmer lines; and the Fe II template is broadened by broad H-alpha itself.
-  29 free numbers therefore describe twelve components.
+  (measured from [O III]); the broad core and the wind are each shared across the
+  three Balmer lines and He I; and the Fe II template is broadened by broad
+  H-alpha itself. 29 free numbers therefore describe sixteen models.
 
 Runtime: 8-15 minutes on one GPU with `nlive=400, dlogz=0.01` (fewer pixels and
 fewer parameters than the previous 3680-7500 A version, so it is quicker). For a
@@ -952,7 +992,7 @@ Units: fluxes in `1e-14 erg/s/cm2/A`, velocities in km/s."""),
 
     ("md", """## 3. The model
 
-Twenty components, added together:
+Sixteen models, added together:
 
 1. a **power-law continuum** anchored at 5500 A -- this is what fixes the
    continuum level and slope from the line-free regions of the whole spectrum;
@@ -965,26 +1005,29 @@ Twenty components, added together:
    exactly when the kernel has one component. Tying it to the line is the more
    physical choice: the iron and the Balmer lines are emitted by the same gas, so
    they cannot have different kinematics;
-3. **H-alpha, H-beta, H-gamma**, each a `Line_MultiGauss` with three Gaussians: a
-   narrow core (`amp_c`, `dv_c`, `sigma_c`), a broad component (`amp_w0`,
-   `dv_w0`, `sigma_w0`) and a second, broader one (`amp_w1`, `dv_w1`,
-   `sigma_w1`). The wind amplitudes are *ratios to the core amplitude*, which is
-   how the GalSpec models are written;
-4. **He I 5876**, a narrow core plus **one** broad component. It is what used to
-   be inside the Na D mask, and it has to be modelled now that the mask is gone;
+3. **H-alpha, H-beta, H-gamma**, each described **twice**, as in
+   `wrk_sagan_iras07546.ipynb`: `n_halpha` is a `Line_Gaussian` for the narrow
+   component, and `b_halpha` is a `Line_MultiGauss` for the **broad component
+   only** -- its component 0 (`amp_c`, `dv_c`, `sigma_c`) is the broad core, not a
+   narrow line, and `amp_w0`/`dv_w0`/`sigma_w0` add the broader wind. The wind
+   amplitude is a *ratio to the core amplitude*, which is how the GalSpec models
+   are written. The two models are simply added; neither knows about the other;
+4. **He I 5876**, a narrow Gaussian (`n_hei`) plus **one** broad component
+   (`b_hei`). It is what used to be inside the Na D mask, and it has to be
+   modelled now that the mask is gone;
 5. **[O III] 4959/5007** as a doublet with a narrow core and one broad wing;
 6. **[N II], [S II], [O I]** doublets, plus single narrow Gaussians for **He II
    4686** and **[O III] 4363**.
 
 The ties are what make this affordable:
 
-* one `dv_c` and one `sigma_c` for **all** narrow lines, taken from the [O III]
-  core (forbidden lines come from the same low-density gas);
-* `dv_w0`/`sigma_w0` shared by the three Balmer lines and by He I, and
-  `dv_w1`/`sigma_w1` by the three Balmers: the two broad components are separate
-  physical structures, so they get separate kinematics, but each is common to the
-  lines. The Fe II kernel's two components are tied to these outright, shifts,
-  widths and weights alike;
+* one `dv` and one `sigma` for **all** narrow lines, taken from the [O III] core
+  (forbidden lines come from the same low-density gas);
+* `dv_c`/`sigma_c` (the broad core) and `dv_w0`/`sigma_w0` (the wind) shared by the
+  three broad Balmers and by He I: the two broad components are separate physical
+  structures, so they get separate kinematics, but each is common to the lines.
+  The Fe II kernel's two components are tied to these outright -- shifts, widths
+  and the wind ratio alike;
 * doublet ratios fixed by atomic physics for [O III] (2.98), [N II] (2.96) and
   [O I] (3.00) -- but **not** for [S II], whose 6716/6731 ratio is a density
   diagnostic and therefore stays free.
@@ -1032,8 +1075,8 @@ from the spectrum itself, never from a previous fit:
 | line peaks | 1e-3 to 3x the brightest pixel, **log-uniform** | four decades: from invisible to implausibly strong |
 | broad/narrow ratio | 1e-3 to 8, log-uniform | from no broad component to one that dominates |
 | narrow widths | 30-800 km/s | unresolved up to the widest known narrow-line region |
-| broad component 0 | 300-8000 km/s | FWHM up to ~19000 km/s |
-| broad component 1 | 800-25000 km/s | FWHM up to ~59000 km/s, for a line wing |
+| broad core | 300-3000 km/s | FWHM up to ~7000 km/s |
+| broad wind | 3000-25000 km/s | FWHM up to ~59000 km/s, for a line wing |
 | continuum level | 0.2-4x the line-free windows | cannot be negative, cannot swamp the lines |
 | He I broad/narrow | 1e-3 to 8, log-uniform | same ratio prior as the Balmers |
 | iron amplitude | 1e-3 to 3x the continuum level | the only free iron parameter |
@@ -1042,7 +1085,18 @@ from the spectrum itself, never from a previous fit:
 One subtlety: bounds passed in `bounds_dict` are *linear*-uniform by design, and a
 linear prior over four decades would put 99% of its probability at the bright
 end. Amplitudes therefore get an explicit `log_uniform` callable through
-`custom_priors`, so every factor of ten is equally likely."""),
+`custom_priors`, so every factor of ten is equally likely.
+
+A second, less obvious one: the two components of a `Line_MultiGauss` are
+**exchangeable**. Swapping them — `amp_c' = amp_c * amp_w0`,
+`sigma_c' = sigma_w0`, `dv_c' = dv_c + dv_w0`, `amp_w0' = 1/amp_w0`,
+`dv_w0' = -dv_w0`, `sigma_w0' = sigma_c` — leaves the spectrum identical to 3e-16,
+and the Fe II kernel follows it because it is tied to the same profile. With
+overlapping width priors the posterior is therefore bimodal and a fit reports
+whichever mode it happened to fill. The ranges above do not overlap: the broad
+core is the narrower of the two. `develop/dev_jax/io_test/iron_tied_io_test.html`
+measures the degeneracy on a mock and shows the same fit recovering every
+parameter once the split is in place."""),
 
     ("code", priors),
 
@@ -1078,8 +1132,8 @@ The table is the answer: posterior median and the 16th/84th percentiles (a 68%
 credible interval, the Bayesian counterpart of "1 sigma").
 
 Read it with the ties in mind -- `OIII.dv_c` is the shift of *every* narrow line,
-and `Halpha.sigma_w0` is the width of broad component 0 in *all three* Balmer
-lines, in He I and in the Fe II kernel."""),
+and `b_halpha.sigma_w0` is the width of the wind in *all three* Balmer lines, in
+He I and in the Fe II kernel."""),
 
     ("code", table_cell),
 
@@ -1132,7 +1186,7 @@ from other instruments."""),
 
 `galspec.plot.plot_fit` takes the model and draws the data, the total model,
 **every component**, the dashed sub-components of each multi-Gaussian line (so
-the narrow core and the two broad Gaussians of each Balmer line can be told
+the narrow Gaussian and the broad core and wind of each Balmer line can be told
 apart) and the residual panel.
 
 It needs an *astropy* compound model, so the fitted JAX model is mirrored into its
@@ -1188,11 +1242,13 @@ corner, so nothing is hidden by the zoom."""),
   model: H-gamma is cut by the window edge on its blue wing, and there is no
   Balmer continuum, which rises towards its 3646 A limit and is not modelled at
   all. Trust H-gamma's broad flux less than H-alpha's.
-* The two broad Gaussians are a *description* of a profile, not a physical
+* The two broad components are a *description* of a profile, not a physical
   decomposition. Real broad-line profiles have longer wings than any Gaussian, so
   read them as "a broad part and a broader part" and treat their individual
   fluxes as indicative. Because the iron kernel is tied to them, that caveat
-  propagates to the iron profile too.
+  propagates to the iron profile too. They are also *exchangeable* (see the
+  priors section), which is why their width ranges are disjoint -- without that,
+  "core" and "wind" would be two labels for the same two numbers.
 * Without the LSF folded in, the narrow widths include the instrument (~150 km/s
   FWHM, small next to ~700 km/s but not zero). Subtract it in quadrature if you
   need the gas kinematics alone.

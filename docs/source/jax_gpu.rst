@@ -327,22 +327,38 @@ paper quotes and the redshift is known:
 
 ``IronTemplate_tied`` is the stricter model: the template is broadened not by one
 Gaussian but by a **multi-Gaussian profile that is fitted at the same time** --
-normally the profile of the broad Balmer lines, tied component by component:
+normally the profile of the broad line, tied component by component.  Its kernel
+parameters carry the *same names* as the ``Line_MultiGauss`` they come from, and
+``n_components`` counts the kernel's components, so ``2`` is a core plus one wind:
 
 .. code-block:: python
 
-   iron = jxm.IronTemplate_tied(n_components=2, amplitude=0.2, name="FeII")
-   for index, (amp, dv, sigma) in enumerate(("amp_w0", "dv_w0", "sigma_w0"),
-                                             ("amp_w1", "dv_w1", "sigma_w1")):
-       getattr(iron, f"w_{index}").tied = getattr(galspec.tie, f"tie_MultiGauss_{amp}")("Halpha")
-       getattr(iron, f"dv_{index}").tied = getattr(galspec.tie, f"tie_MultiGauss_{dv}")("Halpha")
-       getattr(iron, f"sigma_{index}").tied = getattr(galspec.tie, f"tie_MultiGauss_{sigma}")("Halpha")
+   # the broad component of H-alpha, on its own: component 0 is the broad core
+   b_ha = jxm.Line_MultiGauss(n_components=2, amp_c=0.65, dv_c=0.0, sigma_c=1500.0,
+                              amp_w0=0.10, dv_w0=0.0, sigma_w0=6000.0,
+                              wavec=6563.0, name="b_halpha")
 
-With one component, ``dv = 0`` and unit weight it is *identical* to
-``IronTemplate`` (verified to machine precision in ``tests/test_model_features.py``),
-so the generalisation cannot quietly change the simpler model's meaning.  The
-weights are normalised to unit sum, which keeps ``amplitude`` meaning the same
-thing in both models.
+   iron = jxm.IronTemplate_tied(n_components=2, amplitude=0.2, name="FeII")
+   iron.dv_c.tied     = tie.tie_MultiGauss_dv_c("b_halpha")      # the broad core
+   iron.sigma_c.tied  = tie.tie_MultiGauss_sigma_c("b_halpha")
+   iron.amp_w0.tied   = tie.tie_MultiGauss_amp_w0("b_halpha")    # the wind
+   iron.dv_w0.tied    = tie.tie_MultiGauss_dv_w0("b_halpha")
+   iron.sigma_w0.tied = tie.tie_MultiGauss_sigma_w0("b_halpha")
+   # free iron parameters left: amplitude, and z (fixed by default)
+
+There are **no weight parameters**, and no ``amp_c``: a ``Line_MultiGauss`` already
+*is* a weighted sum of Gaussians, whose weights are its own amplitudes
+(``amp_c`` for component 0, ``amp_c * amp_w0`` for the wind).  The iron only needs
+the *shape* of that sum, and the convolution renormalises it, so the core
+amplitude cancels identically and the wind ratio -- the line's own ``amp_w0``,
+tied -- is the only weight left.  Adding a separate weight would introduce a flat
+direction that the data cannot close.
+
+With one component it is *identical* to ``IronTemplate`` (verified to machine
+precision in ``tests/test_model_features.py``), so the generalisation cannot
+quietly change the simpler model's meaning.  Shifts are relative to the core
+(``dv_c + dv_w0``), exactly as in the line model, so the iron inherits the line's
+centroid.
 
 The implementation subtracts the template's own width in quadrature, component by
 component, instead of deconvolving it: exact for Gaussian kernels, and it needs no
@@ -350,7 +366,10 @@ host-side kernel array, so the model stays differentiable and ``jit``-able
 through every kernel parameter.  (The CPU ``IronTemplate_tied`` takes the other
 route -- FFT deconvolution plus a Wiener filter, then a convolution with an
 explicit array -- which is stable but cannot be differentiated through ``dv`` and
-``sigma``.)
+``sigma``.  It is *not* the same function: at the same parameters the two differ by
+about 10% of the iron peak, measured in
+``develop/dev_jax/io_test/iron_tied_io_test.html``, so it cannot be used as the
+reference for a parity test of this model.)
 
 **Cost.**  The convolution runs on the template grid (801 channels for
 ``park2022``), not on the 80 000-pixel spectrum, and only the sum is interpolated
@@ -362,7 +381,18 @@ the sampling.  It is not free -- the kernel costs one smoothing and one
 interpolation per component -- but it does not change the scale of the problem.
 Two things keep it there: the smoothing happens on the 801-point template rather
 than on the spectrum, and the kernel radius is static ``jnp`` data sized from the
-prior bound, so nothing re-traces when a sample moves.
+widest width the model can be asked for (the prior bound inside a fit, the widest
+constructor value outside one), so nothing re-traces when a sample moves.
+
+**One caveat about the widths.**  The template is sampled linearly in wavelength
+(2 A over 4000-5600 A), so one channel is 150 km/s in velocity at the blue end and
+107 km/s at the red end, while the model smooths with a constant *pixel* width.
+The velocity width actually applied at 5600 A is therefore 29% smaller than the one
+asked for.  Both the CPU ``IronTemplate_new`` and the JAX models share this
+convention -- which is why their parity is exact -- but do not quote a single
+velocity dispersion for the iron without knowing it.  Resampling the template onto
+a logarithmic wavelength grid would remove the approximation; the test report
+above quantifies it at 4.3% of the iron peak.
 
 LaTeX labels for parameters
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -553,10 +583,11 @@ lines share the kinematics of [O III]; all broad Balmer lines share the kinemati
 of H-alpha) and the fixed doublet ratios.  For the timing comparison the
 [S II] 6716/6731 ratio is tied too; physically it should not be (it is an
 electron-density diagnostic, not a fixed number), and the worked example in
-``example/fit_iras07546_jax.py`` leaves it free, adds a second broad Gaussian
-per Balmer line, fits He I 5876, and ties the iron template's kernel to broad
-H-alpha, which is why that fit covers 4200-6800 A with 29 free parameters over
-twelve components. The benchmark model is also convolved with
+``example/fit_iras07546_jax.py`` leaves it free, models each Balmer line as two
+separate models (a narrow ``Line_Gaussian`` tied to [O III] and a broad
+``Line_MultiGauss`` with a core and a wind), fits He I 5876 the same way, and ties
+the iron template's kernel to the broad H-alpha component by component, which is
+why that fit covers 4200-6800 A with 29 free parameters over sixteen models. The benchmark model is also convolved with
 the SDSS line-spread function (Gaussian, R = 2000 at 5500 A): at 0.046 A sampling
 the instrument, not the gas, sets the width of the narrow cores, so convolving
 makes the comparison the harder, more realistic one.  (The worked example does

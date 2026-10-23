@@ -171,6 +171,11 @@ develop/dev_nautilus/*
 develop/dev_jax/*
 !develop/dev_jax/README.md
 !develop/dev_jax/*.py
+!develop/dev_jax/io_test/
+develop/dev_jax/io_test/*
+!develop/dev_jax/io_test/*.html
+!develop/dev_jax/io_test/*.json
+!develop/dev_jax/io_test/*.png
 !develop/dev_jax/results/
 develop/dev_jax/results/*
 !develop/dev_jax/results/bench_*.json

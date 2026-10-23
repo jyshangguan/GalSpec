@@ -59,7 +59,8 @@ DEFAULT_OUT = HERE / "io_test"
 # --------------------------------------------------------------------------------------
 # The truth: one broad H-beta, described by one Line_MultiGauss, and the iron tied to it
 # --------------------------------------------------------------------------------------
-#: Park et al. (2022) template: 801 channels, 4000-5600 A rest frame.
+#: Park et al. (2022) template: 801 channels as tabulated, 4000-5600 A rest
+#: frame; 2 389 after the load-time log-even resampling and zero padding.
 TEMPLATE = "park2022"
 
 #: Truth values.  ``amp_c`` is the peak of broad component 0 in 1e-14 units,

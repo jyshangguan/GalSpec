@@ -638,11 +638,15 @@ from astropy.modeling import Fittable1DModel
 class TabulatedCurve(Fittable1DModel):
     """A curve already evaluated on a grid, presented as an astropy component.
 
-    The iron is the one component without a like-for-like astropy twin: the CPU
-    ``IronTemplate_tied`` convolves the template with an explicit kernel array,
-    while the JAX model subtracts the intrinsic width in quadrature component by
-    component. Rather than plot a slightly different iron, this wrapper carries the
-    flux the fitted JAX model produces.
+    The iron is the one component without a parameter-for-parameter astropy twin,
+    and for a reason that has nothing to do with the arithmetic: the CPU
+    ``IronTemplate_tied`` takes the broad line as a *kernel object* and exposes
+    only ``amplitude``/``stddev``, while the JAX model takes ``n_components`` plus
+    the five kernel parameters.  Both broaden the template the same way -- they
+    agree to 1e-15, ``develop/dev_jax/io_test/cpu_vs_jax.html`` -- so this is
+    plumbing, not a modelling difference.  The wrapper carries the flux the fitted
+    JAX model actually produces, so the figure and the fit agree bit for bit
+    rather than to 1e-15.
     """
 
     n_inputs = 1
@@ -689,10 +693,13 @@ def cpu_model_with_values(model_jax, wave_grid):
     model_cpu = parts[0]
     for part in parts[1:]:
         model_cpu = model_cpu + part
-    for name in ("Continuum", "FeII", "Halpha", "Hbeta", "Hgamma", "OIII", "NII",
-                 "SII", "OI", "HeII", "OIII4363", "HeI"):
-        if name in MODEL_LABELS:
-            model_cpu[name].label = MODEL_LABELS[name]
+    # the submodels are named n_halpha/b_halpha/... not Halpha/..., so this has to
+    # walk the compound's own names (the batch script does the same in
+    # apply_model_labels)
+    for name in model_cpu.submodel_names:
+        display = MODEL_LABELS.get(name)
+        if display is not None:
+            model_cpu[name].label = display
 
     for flat, qualified in zip(model_jax.param_names, model_jax.qualified_param_names):
         value = resolved.get(flat)
@@ -982,9 +989,9 @@ now stays in the fit: He I 5876 sits inside it and is modelled instead.
 * **Physical ties.** Every narrow line shares one velocity shift and one width
   (measured from [O III]); the broad core and the wind are each shared across the
   three Balmer lines and He I; and the Fe II template is broadened by broad
-  H-alpha itself. 29 free numbers therefore describe sixteen models.
+  H-alpha itself. 30 free numbers therefore describe seventeen models.
 
-Runtime: 8-15 minutes on one GPU with `nlive=400, dlogz=0.01` (fewer pixels and
+Runtime: 10-20 minutes on one GPU with `nlive=400, dlogz=0.01` (fewer pixels and
 fewer parameters than the previous 3680-7500 A version, so it is quicker). For a
 quick look set `NLIVE = 200` and `DLOGZ = 0.1` in the settings cell and expect
 wider error bars."""),
@@ -1096,7 +1103,7 @@ two-component kernel adds 0.1-0.45 ms per evaluation depending on how busy the
 card is -- a bigger share of a small model than of a full spectrum, so the
 percentage below depends on what else is in the model -- and that is up to a few
 extra minutes over a whole fit. The
-price is one smoothing and one interpolation per component, done on the 801-point
+price is one smoothing and one interpolation per component, done on the 2 389-point
 template rather than on the spectrum. Run the cell below and it measures the
 number where you are.
 
@@ -1319,7 +1326,10 @@ corner, so nothing is hidden by the zoom."""),
 * `python fit_iras07546_jax.py` -- the same fit as a batch script.
 * `python fit_iras07546_jax.py --quick` -- a rough answer in a few minutes.
 * `docs/source/jax_gpu.rst` -- the CPU/GPU benchmark built on a fit like this.
-* `tests/test_jax_parity.py` -- proves the JAX models equal the astropy ones.
+* `tests/test_jax_parity.py` -- proves the JAX models equal the astropy ones,
+  the tied iron included.
+* `tests/test_model_features.py` -- pins the iron template's grid and padding, the
+  tied kernel, and the other model features this fit relies on.
 * `tests/test_jax_io.py` -- proves the FITS round trip gives back the same fit."""),
 
     ("md", """## 10. Saving the fit so it can be reused

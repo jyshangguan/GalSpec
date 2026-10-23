@@ -25,21 +25,24 @@ passing through a Gaussian of width ``sigma``, so the extra variance to add is
 ``sigma**2 - sigma_intr**2`` -- the quadrature subtraction
 :class:`~galspec.iron_template.IronTemplate_new` also does.  For a *sum* of
 Gaussians the same works component by component, which is why no deconvolution is
-needed here (the CPU ``IronTemplate_tied`` instead deconvolves the template with
-an FFT and a Wiener filter, then convolves with an explicit kernel array -- that
-needs a host-side kernel and is not differentiable through the kernel
-parameters).
+needed here: the template is smoothed once per component and the components are
+added at their own shifts.  The CPU ``IronTemplate_tied`` does the same thing now
+(``galspec.iron_template``) and the two agree to 1e-15, so a GPU/CPU parity test
+of the tied iron is meaningful; before that revision the CPU class deconvolved
+the template with an FFT and a Wiener filter and was 8-10% away.
 
 Cost
 ----
-The convolution happens on the *template* grid -- 801 channels for ``park2022``,
-5 418 for ``boroson1992`` -- not on the 80 000-pixel spectrum, and only the final
-result is interpolated onto the data grid.  A two-component kernel therefore costs
-one extra smoothing and one extra interpolation per component: measured at
-**+0.1 to +0.45 ms per evaluation** on the example hardware (it moves with how
-busy the card is), i.e. 0.2-7 minutes over a fit that needs 1e5-1e6 evaluations.  The percentage is large for a model
-made of one line plus the iron and small for a whole spectrum, because
-``jnp.interp`` onto the data grid dominates either way.
+The convolution happens on the *template* grid -- 2 389 channels for
+``park2022`` and 7 282 for ``boroson1992`` once they are resampled onto a grid even
+in ``ln(lambda)`` and zero-padded at load -- not on the 80 000-pixel spectrum, and
+only the final result is interpolated onto the data grid.  A two-component kernel
+therefore costs one extra smoothing and one extra interpolation per component:
+measured at **+0.1 to +0.45 ms per evaluation** on the example hardware (it moves
+with how busy the card is), i.e. 0.2-7 minutes over a fit that needs 1e5-1e6
+evaluations.  The percentage is large for a model made of one line plus the iron
+and small for a whole spectrum, because ``jnp.interp`` onto the data grid dominates
+either way.
 """
 
 from __future__ import annotations

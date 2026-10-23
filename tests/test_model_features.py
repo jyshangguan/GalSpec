@@ -1,11 +1,18 @@
 """Tests for the model-level additions: iron parameterisation, ties, labels, plots.
 
-Covers the four things that are easy to break silently:
+Covers the things that are easy to break silently:
 
 * ``IronTemplate`` speaks the ``IronTemplate_new`` language (``sigma``, ``dv``,
   fixed ``z``) and is reproduced by the CPU astropy model to machine precision;
-* ``IronTemplate_tied`` reduces to ``IronTemplate`` for a one-component kernel, so
-  the generalisation cannot quietly change the old model's meaning;
+* the iron templates are resampled at load onto a grid even in ``ln(wavelength)``
+  and zero-padded, so one Gaussian is the same number of channels everywhere and
+  the tabulated edge does not leak into the fitted range;
+* ``IronTemplate_tied`` reduces to ``IronTemplate`` for a one-component kernel --
+  the generalisation cannot quietly change the old model's meaning -- and the CPU
+  class is now the same function as the JAX one: an exact convolution in velocity
+  space, which is what the old FFT-deconvolution version was not;
+* a two-component ``Line_MultiGauss`` is exchangeable (why the wind ratio is
+  bounded to [0, 1]);
 * parameter labels become mathtext (``BH$\\alpha$:$\\sigma_{w0}$``) and the fitters
   expose them;
 * ``plot_posterior_hist`` draws one panel per requested parameter and annotates

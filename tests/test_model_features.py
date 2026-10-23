@@ -203,6 +203,32 @@ def test_tied_iron_kernel_radius_covers_wide_widths():
     print(f"  kernel radius tracks the widest width (max radius {wide._radius} px)")
 
 
+def test_multigauss_components_are_exchangeable():
+    """The core and the wind are the same two numbers under a label swap.
+
+    This is a property of the model, not of the fit: it is why the worked example
+    bounds the wind ratio to [0, 1] instead of leaving it free.  The swap maps
+    ``amp_w0`` to ``1/amp_w0``, which is outside [0, 1] whenever the wind is
+    fainter than the core -- so that single bound removes the ambiguity.
+    """
+    line = jxm.Line_MultiGauss(n_components=2, amp_c=1.0, dv_c=0.0, sigma_c=1500.0,
+                               amp_w0=0.3, dv_w0=-500.0, sigma_w0=6000.0,
+                               wavec=6563.0)
+    base = np.asarray(line.flux(WAVE, _values(line)))
+
+    # the exchange map: amp_c*A, sigma_c<->sigma_w0, dv_c+dv_w0<->dv_c,
+    # amp_w0 -> 1/amp_w0, dv_w0 -> -dv_w0
+    swapped = jxm.Line_MultiGauss(
+        n_components=2, amp_c=1.0 * 0.3, dv_c=0.0 + (-500.0), sigma_c=6000.0,
+        amp_w0=1.0 / 0.3, dv_w0=500.0, sigma_w0=1500.0, wavec=6563.0)
+    other = np.asarray(swapped.flux(WAVE, _values(swapped)))
+
+    relative = np.max(np.abs(base - other)) / np.max(np.abs(base))
+    assert relative < 1e-12, relative
+    assert swapped.amp_w0.value > 1.0, "the mirror solution needs amp_w0 > 1"
+    print(f"  swap is exact ({relative:.1e}) and leaves [0, 1]")
+
+
 # --------------------------------------------------------------------------------------
 # 3. Parameter labels
 # --------------------------------------------------------------------------------------

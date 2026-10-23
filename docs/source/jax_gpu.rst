@@ -360,6 +360,26 @@ quietly change the simpler model's meaning.  Shifts are relative to the core
 (``dv_c + dv_w0``), exactly as in the line model, so the iron inherits the line's
 centroid.
 
+**Bound the wind ratio, and the core-wind ambiguity disappears.**  The two
+components of a ``Line_MultiGauss`` are *exchangeable*: the map
+
+.. math::
+
+   A_c \to A_c A_w,\quad \sigma_c \to \sigma_w,\quad \Delta v_c \to \Delta v_c + \Delta v_w,
+   \quad A_w \to 1/A_w,\quad \Delta v_w \to -\Delta v_w,\quad \sigma_w \to \sigma_c
+
+leaves the spectrum unchanged to 3e-16 (a unit check in
+``develop/dev_jax/iron_tied_io_test.py``), and the tied iron follows it.  So a fit
+with ``A_w`` allowed above 1 has two equally good answers and the words "core" and
+"wind" mean nothing.  Since a wind is by definition no brighter than its own core,
+put ``A_w`` in ``[0, 1]``: the swap needs ``A_w' = 1/A_w > 1`` and is excluded,
+while the widths keep their full data-driven range.  Measured on the worked
+example's posterior (67 620 samples): zero samples on the mirror branch, and the
+widths come out the same as with artificially disjoint width priors -- 1409 and
+7247 km/s here, 1409 and 7255 km/s there -- with the same error bars, so the bound
+costs no information.  ``develop/dev_jax/io_test/cpu_vs_jax.html`` is the separate
+question of whether this model agrees with the CPU one.
+
 The implementation subtracts the template's own width in quadrature, component by
 component, instead of deconvolving it: exact for Gaussian kernels, and it needs no
 host-side kernel array, so the model stays differentiable and ``jit``-able

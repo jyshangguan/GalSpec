@@ -432,25 +432,26 @@ def unit_checks():
         f"{rel_pixel:.2e} % of peak", rel_pixel < 0.01,
         "no gaussian_smooth1d, no scipy, no FFT on the other side")
 
-    # 7. FINDING: the model smooths at constant *pixel* width on a template sampled
-    #    linearly in wavelength, so the velocity width applied drifts across it
+    # 7. the JAX iron against an exact convolution in velocity space: the template is
+    #    resampled onto a grid even in ln(wavelength) at load and zero-padded, so
+    #    smoothing in pixels *is* smoothing in velocity, everywhere
     rel_velocity = float(np.max(np.abs(iron_velocity - iron_jax)) / peak * 100)
     wave_t, _, _ = _template()
-    vchan = (wave_t[1] - wave_t[0]) / wave_t * ls_km
-    add("JAX iron vs an exact velocity-space convolution", "should be 0",
-        f"{rel_velocity:.2f} % of peak", rel_velocity < 1.0,
-        f"the template's velocity per channel runs {vchan[0]:.0f} -> {vchan[-1]:.0f} km/s; "
-        "constant pixel smoothing is 29% too narrow at the red end.  Shared by the CPU "
-        "IronTemplate_new, so it is a convention, not a porting error",
-        kind="finding")
+    vchan = np.diff(np.log(wave_t)) * ls_km
+    add("JAX iron vs an exact velocity-space convolution", "0",
+        f"{rel_velocity:.3f} % of peak", rel_velocity < 0.1,
+        f"one channel is {vchan[0]:.0f} km/s everywhere (spread "
+        f"{vchan.max() - vchan.min():.1e} km/s), so the pixel-space smoothing is the "
+        "velocity-space one; the residue is that 126 km/s sampling the kernel")
 
-    # 8. FINDING: the CPU IronTemplate_tied is a different construction
+    # 8. the CPU IronTemplate_tied and the JAX one are the same function: both
+    #    subtract the template's own width in quadrature and smooth once per
+    #    component, so there is no deconvolution anywhere
     rel_cpu = float(np.max(np.abs(iron_cpu - iron_jax)) / peak * 100)
-    add("JAX iron vs the CPU IronTemplate_tied at the same parameters", "small",
-        f"{rel_cpu:.2f} % of peak", rel_cpu < 1.0,
-        "the CPU class deconvolves the template by an FFT, filters it with scipy's "
-        "wiener and uses a 200 km/s intrinsic width instead of 340 km/s",
-        kind="finding")
+    add("JAX iron vs the CPU IronTemplate_tied at the same parameters", "0",
+        f"{rel_cpu:.1e} % of peak", rel_cpu < 1e-10,
+        "both broaden the template in velocity space by quadrature subtraction; the "
+        "CPU class used to deconvolve and was 8.5% (mock) / 10.0% (fit) away")
 
     # 9. FINDING: the two components are exchangeable -- swapping them (and the
     #    amplitudes/widths that go with them) is the same function
@@ -477,7 +478,8 @@ def unit_checks():
     unit = {"cpu": np.asarray(iron_cpu), "pixel": iron_pixel,
             "velocity": iron_velocity, "jax": iron_jax,
             "rel_pixel": rel_pixel, "rel_velocity": rel_velocity, "rel_cpu": rel_cpu,
-            "vchan_blue": float(vchan[0]), "vchan_red": float(vchan[-1])}
+            "vchan": float(np.mean(vchan)),
+            "vchan_spread": float(vchan.max() - vchan.min())}
     return checks, unit
 
 
@@ -578,14 +580,15 @@ def fig_iron_models(wave, irons):
     fig, (ax, axr) = plt.subplots(2, 1, figsize=(9.2, 5.0), sharex=True,
                                   gridspec_kw={"height_ratios": [3, 1.3], "hspace": 0.08})
     colours = {"cpu": "#c53030", "pixel": "#2f855a", "velocity": "#805ad5", "jax": "#2b6cb0"}
-    labels = {"cpu": "CPU IronTemplate_tied (FFT deconvolution + Wiener)",
+    labels = {"cpu": "CPU IronTemplate_tied",
               "pixel": "independent pixel-space convolution",
               "velocity": "exact velocity-space convolution",
               "jax": "JAX IronTemplate_tied"}
     for kind in ("cpu", "velocity", "pixel", "jax"):
         ax.plot(wave, irons[kind], color=colours[kind], lw=1.1, label=labels[kind])
     ax.set_ylabel(r"$F_\lambda$  [$10^{-14}$]")
-    ax.set_title("Four ways to broaden the same template with the same parameters",
+    ax.set_title("Four ways to broaden the same template with the same parameters:\n"
+                 "the CPU and JAX curves are the same operator now",
                  fontsize=10.5)
     ax.legend(frameon=False, fontsize=8.5, loc="upper right")
     peak = max(f.max() for f in irons.values())
@@ -717,16 +720,18 @@ def build_report(path: Path, payload: dict) -> None:
     verdict_class = "verdict" if not failed else "verdict warn"
     exact = ordered.get("jax", ordered.get("pixel", {}))
     pixel = ordered.get("pixel", exact)
+    recovery = max(value["median_error"] for value in ordered.values()) * 100
     verdict_text = (
         "The model and the fitter are correct. With an ordering prior (section 4.2) a "
         f"mock built by the JAX models comes back to {exact['worst_pull']:.1f}&sigma;, a "
         "mock built by an independent re-implementation of the same convolution to "
         f"{pixel['worst_pull']:.1f}&sigma;, and the two iron profiles agree to "
-        f"{unit['rel_pixel']:.1e}% of peak. Two things needed reporting rather than "
-        "fixing: the two broad components are <em>exactly</em> exchangeable, so their "
-        "labels must be pinned by the prior, and the CPU "
-        "<code>IronTemplate_tied</code> is a different function from the JAX one "
-        f"({unit['rel_cpu']:.1f}% of peak), so it cannot serve as the truth standard."
+        f"{unit['rel_pixel']:.1e}% of peak. All four generators recover the input "
+        f"equally well (worst parameter {recovery:.2f}%), and the CPU "
+        "<code>IronTemplate_tied</code> now agrees with the JAX one to "
+        f"{unit['rel_cpu']:.1e}% of peak, so the two backends are interchangeable. One "
+        "thing needs reporting rather than fixing: the two broad components are "
+        "<em>exactly</em> exchangeable, so their labels must be pinned by the prior."
         if not failed else f"{len(failed)} check(s) failed &mdash; see section 2."
     )
 
@@ -879,7 +884,7 @@ JNesty (<code>nlive={payload['nlive']}, dlogz={payload['dlogz']}</code>). Peak h
 are log-uniform from 1e-3 to 3x the brightest pixel, shifts &plusmn;2000 and
 &plusmn;8000 km/s &mdash; nothing is seeded near the answer. The generators differ only
 in how the iron was built:</p>
-<pre>cpu       galspec.IronTemplate_tied + galspec.Line_MultiGauss     (what was asked for)
+<pre>cpu       galspec.IronTemplate_tied + galspec.Line_MultiGauss     (the request: CPU classes)
 pixel     independent re-implementation of the JAX convention      (same maths, other code)
 velocity  exact convolution in velocity space                      (same physics, other convention)
 jax       jxm.IronTemplate_tied + jxm.Line_MultiGauss               (self-consistency)
@@ -912,17 +917,19 @@ that moves when the iron shape does.</p>
 <p class="cap">&chi;&sup2;/dof is well below 1 for the noiseless mocks because the 1%
 error is larger than the model&minus;data difference; that is deliberate, it is the
 error budget of a real spectrum and it keeps the likelihood smooth enough for the
-sampler. The <code>cpu</code> row cannot reach zero: its iron is a different function
-from the one being fitted -- the CPU class deconvolves by a 200 km/s intrinsic width
-where the template measured 340, cuts its kernel at &plusmn;10 000 km/s and filters
-the result, which puts it 7-23% from an exact velocity-space convolution
-(<code>io_test/cpu_vs_jax.html</code>). The <code>velocity</code>, <code>pixel</code>
-and <code>jax</code> rows now do reach zero, because since the template is resampled
-onto a log-even grid at load they are all the same operator.</p>
+sampler. All four rows now land in the same place &mdash; the same worst pull, the same
+{max(v["median_error"] for v in ordered.values())*100:.3f}% worst parameter error &mdash;
+because every generator now builds the same operator. That was not true before this
+revision: the CPU class used to deconvolve the template by a 200 km/s intrinsic width
+where the template measured 340, cut its kernel at &plusmn;10 000 km/s and filter the
+result, so the <code>cpu</code> iron was a different function from the one being fitted
+&mdash; 8.5% (mock) and 10.0% (fit) from an exact velocity-space convolution, and its row
+could not reach zero (<code>io_test/cpu_vs_jax.html</code>). It now agrees with the JAX
+iron to {checks[7]['measured']} (check 8).</p>
 <img src="data:image/png;base64,{images['fits']}" alt="best fits">
 <p class="cap">Data, best fit and its two components, with the residual in units of the
-error. <code>pixel</code> and <code>jax</code> are flat; <code>cpu</code> keeps an
-iron-shaped pattern of about the size of the difference between the two constructions.</p>
+error. All five are flat: the <code>cpu</code> panel used to keep an iron-shaped
+pattern the size of the difference between the old deconvolution and the others.</p>
 
 <h3>4.2 The two components are exchangeable</h3>
 <p>With the production (wide) priors the posterior is <em>bimodal</em>: this was the one
@@ -963,48 +970,54 @@ table in 4.1 shows.</p>
 """)
 
     parts.append(f"""
-<h2>5. The two ion-shape differences, explained</h2>
+<h2>5. The ion shape, construction by construction</h2>
 <img src="data:image/png;base64,{images['iron']}" alt="iron constructions">
 <p class="cap">Same six parameters, four constructions of the same iron. Lower panel:
 each curve minus the JAX model, in percent of the peak.</p>
 
-<h3>5.1 The CPU <code>IronTemplate_tied</code> is a different function
-({unit['rel_cpu']:.1f}%)</h3>
+<h3>5.1 The CPU <code>IronTemplate_tied</code> is now the same function
+({unit['rel_cpu']:.1e}%)</h3>
+<p>The CPU class used to take a different route and it was visibly wrong; this test is
+what caught it, and the fix is the subject of the companion page
+<code>io_test/cpu_vs_jax.html</code>. What it does now, component by component, is what
+the JAX model does:</p>
 <ul>
-<li>It <strong>deconvolves</strong> the template by a Gaussian of
-<code>ls_km/1500 &asymp; 200 km/s</code> with an FFT division, then smooths the result
-with <code>scipy.signal.wiener</code>, then convolves with the kernel.</li>
-<li>The JAX model never deconvolves: for a Gaussian component, smoothing by
-<code>sqrt(&sigma;&sup2; &minus; &sigma;<sub>intr</sub>&sup2;)</code> turns a profile of
-width <code>&sigma;<sub>intr</sub></code> into one of width <code>&sigma;</code>
-exactly. Check 2 measures that identity: 2498.7 km/s recovered from a 2500 km/s
-request.</li>
-<li>The two classes also disagree about the template's own intrinsic width:
-<code>ls_km/1500 &asymp; 200 km/s</code> there, <code>800/2.3548 &asymp; 340 km/s</code>
-in <code>IronTemplate_new</code> and in the JAX models. And scipy's
-<code>wiener(arr, 3)</code> is a local smoothing filter, not a Wiener deconvolution, so
-it removes part of the structure the deconvolution was meant to restore.</li>
+<li><strong>No deconvolution.</strong> Blurring twice with &sigma;<sub>1</sub> and
+&sigma;<sub>2</sub> is one blur with the two in quadrature, so a kernel component of
+width &sigma; is applied to the template as a Gaussian of
+<code>sqrt(&sigma;&sup2; &minus; &sigma;<sub>intr</sub>&sup2;)</code>. Check 2 measures
+that identity: 2498.7 km/s recovered from a 2500 km/s request.</li>
+<li><strong>One smoothing per component.</strong> Each component is smoothed on the
+template grid, projected onto the data grid at its own shift, and added with the line's
+own relative weight &mdash; so a one-component kernel reproduces
+<code>IronTemplate</code> exactly (check 1).</li>
+<li><strong>The same intrinsic width.</strong> 340 km/s (800 km/s FWHM, what the template
+was measured at) on both sides, as in <code>IronTemplate_new</code>.</li>
 </ul>
-<p>Consequence: the CPU mock recovers the <em>line</em> exactly and the iron
-<em>scale</em> to {num(ordered, 'cpu', 'iron_shift')*100:+.1f}%, but its iron
-<em>shape</em> leaves a {num(ordered, 'cpu', 'rms'):.2f}&sigma; rms residual that no tie can
-absorb. Nothing here is a JAX error &mdash; the same fit to a mock built by the JAX
-construction returns the input.</p>
+<p>What it <em>used to</em> do, and why it was 8.5% (mock) / 10.0% (fit) from an exact
+velocity-space convolution: an FFT division by a 200 km/s Gaussian
+(<code>ls_km/1500</code>, the old &ldquo;R ~ 1500&rdquo; guess), then
+<code>scipy.signal.wiener(arr, 3)</code> &mdash; a local smoothing filter, not a Wiener
+deconvolution, so it removed part of the structure the division was meant to restore
+&mdash; then a convolution with a kernel sampled on a fixed &plusmn;10 000 km/s window.
+The consequence was visible here: a CPU mock recovered the <em>line</em> exactly and the
+iron <em>scale</em> to {num(ordered, 'cpu', 'iron_shift')*100:+.1f}%, but its iron
+<em>shape</em> left a residual no tie could absorb. The old algorithm is kept, clearly
+labelled, as <code>legacy_iron()</code> in <code>iron_cpu_vs_jax.py</code>.</p>
 
-<h3>5.2 Where the model itself is approximate ({unit['rel_velocity']:.1f}%)</h3>
-<p>The template is sampled <em>linearly in wavelength</em> (2 &Aring; over
-4000&ndash;5600 &Aring;), so one channel is {unit['vchan_blue']:.0f} km/s in velocity at
-the blue end and {unit['vchan_red']:.0f} km/s at the red end. The model smooths with a
-constant <em>pixel</em> width, so the velocity width it actually applies is
-{(unit['vchan_red']/unit['vchan_blue']-1)*100:+.0f}% smaller at the red end than the
-one that was asked for. Both the CPU <code>IronTemplate_new</code> and the JAX models do
-this, which is exactly why their parity is 1e-16: the convention is shared, not
-ported.</p>
-<p>The <code>velocity</code> row quantifies it: an exact velocity-space convolution
-differs from the JAX iron by {unit['rel_velocity']:.1f}% of peak and pulls the iron
-amplitude by {num(ordered, 'velocity', 'iron_shift')*100:+.1f}%. If the iron width is ever
-quoted in km/s, resampling the template onto a logarithmic wavelength grid (uniform in
-velocity) would make the two agree; the models are otherwise identical.</p>
+<h3>5.2 The one approximation left: 126 km/s sampling
+({unit['rel_velocity']:.2f}%)</h3>
+<p>The template is resampled onto a grid even in <code>ln(wavelength)</code> when it is
+loaded, so one channel is {unit['vchan']:.0f} km/s of velocity everywhere (the spacing
+varies by {unit['vchan_spread']:.0e} km/s across the range). Smoothing in pixels is
+therefore smoothing in velocity, which is why the <code>velocity</code> row &mdash; an
+exact convolution on a 10 km/s grid &mdash; agrees with the JAX iron to
+{unit['rel_velocity']:.2f}% of peak and pulls the iron amplitude by
+{num(ordered, 'velocity', 'iron_shift')*100:+.2f}%. The residue is the sampling itself: a
+{unit['vchan']:.0f} km/s grid can only describe a narrow kernel as a few samples of it
+(0.47% at &sigma; = 400 km/s, 0.02% at &sigma; = 1500 km/s and above), and the exact
+reference has the mirror-image discretisation. Both backends share it, so it is a
+property of the template file, not of either implementation.</p>
 
 <h3>5.3 One bug this test found, now fixed</h3>
 <p>The static convolution kernel is sized from the widest width the model may be asked
@@ -1041,12 +1054,12 @@ construction: the profile cannot tell "core" from "wind". Any fit that reports t
 labelled widths needs an ordering prior, otherwise the numbers are a coin flip between
 two identical solutions. This affects the science numbers of the production fit, not
 just this test.</li>
-<li><strong>The CPU tied model cannot serve as the truth standard.</strong>
-{unit['rel_cpu']:.1f}% of peak apart, for the reasons in 5.1. If the two are ever
-compared as a parity test, that construction has to be reconciled first.</li>
-<li><strong>One model-level approximation is now on record</strong> (5.2): a
-constant-pixel kernel on a linear-wavelength template makes the applied velocity width
-drift by {(unit['vchan_red']/unit['vchan_blue']-1)*100:+.0f}% across the template.</li>
+<li><strong>The CPU tied model is the same function.</strong>
+{unit['rel_cpu']:.1e}% of peak apart at the same parameters (check 8), so either backend
+can serve as the truth standard; before this revision they were 8.5&ndash;10% apart and
+this test is what found it.</li>
+<li><strong>One approximation is on record</strong> (5.2): the 126 km/s sampling of the
+template, which no implementation can remove and both share.</li>
 </ul>
 <p class="cap">Reproduce with <code>python develop/dev_jax/iron_tied_io_test.py</code>;
 all numbers in <code>io_test_results.json</code>, figures as <code>mock.png</code>,
@@ -1189,7 +1202,7 @@ def main() -> int:
         "iron_share": float(components["iron"].max() / components["line"].max() * 100),
         "rel_pixel": irons["rel_pixel"], "rel_velocity": irons["rel_velocity"],
         "rel_cpu": irons["rel_cpu"],
-        "vchan_blue": irons["vchan_blue"], "vchan_red": irons["vchan_red"],
+        "vchan": irons["vchan"], "vchan_spread": irons["vchan_spread"],
     }
 
     def strip(mode_store):

@@ -1235,9 +1235,11 @@ apart) and the residual panel.
 
 It needs an *astropy* compound model, so the fitted JAX model is mirrored into its
 astropy equivalent first -- every component except the iron, which enters as the
-curve the JAX model produces (the CPU tied-iron convolves with an explicit kernel
-array, a different construction). The two are then compared: if they did not
-agree, the plot would be a lie.
+curve the JAX model produces. That is plumbing rather than physics: the two tied
+irons broaden the template the same way and agree to 1e-15, but the astropy one
+takes the broad line as a *kernel object* where the JAX one takes `n_components`
+plus five parameters, so there is no parameter-by-parameter copy to make. The two
+are then compared: if they did not agree, the plot would be a lie.
 
 Two details of the figure are deliberate. The residual panel is drawn in **units
 of sigma** (`residual_in_sigma=True`), so a residual of 3 means three error bars and

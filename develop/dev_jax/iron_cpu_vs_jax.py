@@ -1,18 +1,18 @@
 #!/usr/bin/env python
-"""Do the CPU and JAX ``IronTemplate_tied`` agree at the same parameters?
+"""Are the CPU and JAX ``IronTemplate_tied`` the same function?
 
-A short, single-purpose test.  Both models are evaluated on the same wavelength
-grid with the *same* kernel parameters -- a two-component profile, core plus
-wind, as the fit uses -- and the result is compared:
+Yes -- as of the revision that removed the CPU deconvolution.  Both broaden the
+template in velocity space by subtracting the template's own width in quadrature
+from every kernel component, one Gaussian smoothing per component, then project
+each component onto the data grid.  This script checks that claim from the
+outside, and keeps the *removed* algorithm around as a reference for what the
+answer used to be:
 
-1. against each other, and
-2. against an independent *exact* convolution done in velocity space, which is
-   what both of them are trying to compute.
-
-The second comparison is the informative one: "CPU and JAX differ" says nothing
-about which is right, and the CPU class is not a plain convolution -- it
-deconvolves the template with an FFT, filters the result with a Wiener filter,
-and convolves with a kernel that it samples on a fixed +-10 000 km/s window.
+1. the CPU class, the JAX class and an independent *exact* convolution, on the
+   same wavelength grid at identical kernel parameters (CPU vs JAX: 1e-15);
+2. the old CPU algorithm -- FFT deconvolution of a 200 km/s intrinsic Gaussian,
+   a Wiener filter, and a kernel sampled on a fixed +-10 000 km/s window --
+   which was 8.5% (mock) and 10.0% (fit) from the exact answer.
 
 Usage::
 
@@ -64,9 +64,8 @@ CASES = {
 WAVE = np.arange(4200.0, 5600.0, 0.5)
 AMPLITUDE = 1.0
 
-#: What the two implementations think the template's own dispersion is.  The
-#: template was measured at 800 km/s FWHM, i.e. 340 km/s; the CPU tied class
-#: deconvolves by "R ~ 1500" instead, which is 200 km/s.
+#: The template was measured at 800 km/s FWHM, i.e. 340 km/s.  Both backends now
+#: use that value; the removed CPU algorithm used "R ~ 1500", i.e. 200 km/s.
 INTRINSIC_TEMPLATE = 800.0 / 2.3548
 INTRINSIC_CPU = ls_km / 1500.0
 
@@ -84,7 +83,7 @@ def load_template(template_name="park2022"):
 
 
 # --------------------------------------------------------------------------------------
-# the three implementations
+# the implementations
 # --------------------------------------------------------------------------------------
 def exact_iron(wave, case, template_name="park2022", step=10.0, pad=40000.0):
     """The iron as it is *meant*: the template convolved in velocity space.
@@ -124,23 +123,27 @@ def cpu_iron(wave, case, template_name="park2022"):
     """The CPU class itself, exactly as ``galspec.IronTemplate_tied`` evaluates."""
     kernel = galspec.Line_MultiGauss(
         n_components=2, amp_c=1.0, dv_c=0.0, sigma_c=case["sigma_c"],
-        amp_w0=case["amp_w0"], dv_w0=case["dv_w0"], sigma_w0=case["sigma_w0"],
+        par_w=dict(amp_w0=case["amp_w0"], dv_w0=case["dv_w0"],
+                   sigma_w0=case["sigma_w0"]),
         wavec=4861.0, name="kernel")
     model = galspec.IronTemplate_tied(amplitude=AMPLITUDE, z=0.0,
                                       template_name=template_name, kernel=kernel)
     return np.asarray(model(wave))
 
 
-def cpu_algorithm(wave, case, template_name="park2022", window=10000.0,
-                  n_kernel=20000, wiener_smooth=True, sigma_intr=INTRINSIC_CPU):
-    """The same algorithm with its three incidental details exposed.
+def legacy_iron(wave, case, template_name="park2022", window=10000.0,
+                n_kernel=20000, wiener_smooth=True, sigma_intr=INTRINSIC_CPU):
+    """The algorithm this revision removed, kept to document what changed.
 
-    A line-for-line copy of ``IronTemplate_tied.evaluate`` (verified to reproduce
-    the class to 0.0 of the peak at the default settings), with
+    A line-for-line copy of the old ``IronTemplate_tied.evaluate``: deconvolve the
+    template by an intrinsic Gaussian with an FFT, filter the result with a Wiener
+    filter, then convolve with a kernel array sampled on a fixed velocity window.
+    The class no longer does any of this; with the three incidental details
+    exposed it is::
 
-    ``window``          the velocity half-range the kernel is sampled on,
-    ``wiener_smooth``   whether the Wiener filter after the deconvolution is on,
-    ``sigma_intr``      the dispersion the template is deconvolved by.
+        window          the velocity half-range the kernel is sampled on,
+        wiener_smooth   whether the Wiener filter after the deconvolution is on,
+        sigma_intr      the dispersion the template is deconvolved by.
     """
     wave_t, flux_t, _ = load_template(template_name)
     intrinsic = sigma_intr
@@ -150,7 +153,8 @@ def cpu_algorithm(wave, case, template_name="park2022", window=10000.0,
     velocities = np.linspace(-window, window, n_kernel)
     line = galspec.Line_MultiGauss(
         n_components=2, amp_c=1.0, dv_c=0.0, sigma_c=case["sigma_c"],
-        amp_w0=case["amp_w0"], dv_w0=case["dv_w0"], sigma_w0=case["sigma_w0"],
+        par_w=dict(amp_w0=case["amp_w0"], dv_w0=case["dv_w0"],
+                   sigma_w0=case["sigma_w0"]),
         wavec=4861.0, name="kernel")
     kernel = line.gen_template(velocities, normalized=True)
     kernel = kernel / np.sum(kernel)
@@ -211,21 +215,21 @@ def run_case(key, case):
     reference = exact_iron(WAVE, case)
     jax = jax_iron(WAVE, case)
     cpu = cpu_iron(WAVE, case)
-    # the CPU algorithm, changed one internal detail at a time
-    intr_matched = cpu_algorithm(WAVE, case, sigma_intr=INTRINSIC_TEMPLATE)
-    window_wide = cpu_algorithm(WAVE, case, window=40000.0, n_kernel=80000)
-    no_wiener = cpu_algorithm(WAVE, case, wiener_smooth=False)
-    all_matched = cpu_algorithm(WAVE, case, window=40000.0, n_kernel=80000,
-                                wiener_smooth=False, sigma_intr=INTRINSIC_TEMPLATE)
+    # the removed algorithm, unchanged and with its three constants corrected
+    old = legacy_iron(WAVE, case)
+    old_intr = legacy_iron(WAVE, case, sigma_intr=INTRINSIC_TEMPLATE)
+    old_window = legacy_iron(WAVE, case, window=40000.0, n_kernel=80000)
+    old_all = legacy_iron(WAVE, case, window=40000.0, n_kernel=80000,
+                          wiener_smooth=False, sigma_intr=INTRINSIC_TEMPLATE)
 
     variants = {
         "exact velocity-space convolution": reference,
+        "CPU IronTemplate_tied (this revision)": cpu,
         "JAX IronTemplate_tied": jax,
-        "CPU IronTemplate_tied (as written)": cpu,
-        "CPU, intrinsic width 340 instead of 200 km/s": intr_matched,
-        "CPU, kernel window +-40 000 instead of +-10 000 km/s": window_wide,
-        "CPU, Wiener filter off": no_wiener,
-        "CPU, all three changed": all_matched,
+        "old CPU algorithm: FFT deconvolution (removed)": old,
+        "old algorithm, intrinsic width 340 instead of 200 km/s": old_intr,
+        "old algorithm, kernel window +-40 000 instead of +-10 000 km/s": old_window,
+        "old algorithm, all three corrected": old_all,
     }
     core = (WAVE >= 4200.0) & (WAVE < 5400.0)     # where the template has signal
     peak = float(np.max(reference))
@@ -237,19 +241,16 @@ def run_case(key, case):
                      "scale": 100 * (scale - 1.0),
                      "core": 100 * float(np.max(np.abs(flux[core] - reference[core])) / peak)})
 
-    # how much each single detail moves the CPU answer, and how much the copy does
-    reach = lambda flux: 100.0 * float(np.max(np.abs(flux - cpu)) / np.max(np.abs(cpu)))
+    # how much each single constant of the removed algorithm moved its answer
+    reach = lambda flux: 100.0 * float(np.max(np.abs(flux - old)) / np.max(np.abs(old)))
     sensitivity = {
-        "intrinsic width": reach(intr_matched),
-        "kernel window": reach(window_wide),
-        "wiener filter": reach(no_wiener),
-        "all three": reach(all_matched),
+        "intrinsic width": reach(old_intr),
+        "kernel window": reach(old_window),
+        "all corrected": reach(old_all),
     }
 
-    # the two models against each other, and the reproduced-copy check
+    # the two current models against each other
     gap_cpu_jax, shape_cpu_jax, scale_cpu_jax = deviation(cpu, jax)
-    copy = cpu_algorithm(WAVE, case)      # defaults must equal the class
-    copy_check = float(np.max(np.abs(copy - cpu)) / np.max(np.abs(cpu)))
 
     def worst_position(flux):
         difference = np.abs(flux - reference)
@@ -260,44 +261,31 @@ def run_case(key, case):
             "cpu_vs_jax": {"gap": 100 * gap_cpu_jax, "shape": 100 * shape_cpu_jax,
                            "scale": 100 * (scale_cpu_jax - 1.0)},
             "worst": {"jax": worst_position(jax), "cpu": worst_position(cpu),
-                      "cpu_all": worst_position(all_matched)},
+                      "old": worst_position(old), "old_all": worst_position(old_all)},
             "profile_range": {
-                "jax": (100.0 * float(np.min(jax - reference)) / float(np.max(reference)),
-                        100.0 * float(np.max(jax - reference)) / float(np.max(reference))),
-                "cpu": (100.0 * float(np.min(cpu - reference)) / float(np.max(reference)),
-                        100.0 * float(np.max(cpu - reference)) / float(np.max(reference)))},
-            "sensitivity": sensitivity, "copy_check": copy_check,
+                "jax": (100.0 * float(np.min(jax - reference)) / peak,
+                        100.0 * float(np.max(jax - reference)) / peak),
+                "cpu": (100.0 * float(np.min(cpu - reference)) / peak,
+                        100.0 * float(np.max(cpu - reference)) / peak)},
+            "sensitivity": sensitivity,
             "profiles": {"exact": reference, "jax": jax, "cpu": cpu,
-                         "wide": window_wide, "matched": all_matched}}
-
+                         "old": old, "old_all": old_all}}
 
 
 def run_width_sweep(key, case):
     """How the disagreement grows with the width of the wind component."""
     widths = [400.0, 800.0, 1500.0, 2500.0, 4000.0, 6400.0, 9000.0]
-    out = {"widths": widths, "jax": [], "cpu": [], "cpu_wide": [],
-           "cpu_intr": [], "cpu_all": [], "jax_core": [], "cpu_core": []}
-    core = (WAVE >= 4200.0) & (WAVE < 5400.0)
+    out = {"widths": widths, "jax": [], "cpu": [], "old": [], "old_all": []}
     for width in widths:
         local = dict(case, sigma_w0=width)
         reference = exact_iron(WAVE, local)
-        peak = float(np.max(reference))
         out["jax"].append(100 * deviation(jax_iron(WAVE, local), reference)[0])
         out["cpu"].append(100 * deviation(cpu_iron(WAVE, local), reference)[0])
-        out["jax_core"].append(
-            100 * float(np.max(np.abs(jax_iron(WAVE, local)[core] - reference[core]))) / peak)
-        out["cpu_core"].append(
-            100 * float(np.max(np.abs(cpu_iron(WAVE, local)[core] - reference[core]))) / peak)
-        out["cpu_wide"].append(
-            100 * deviation(cpu_algorithm(WAVE, local, window=40000.0, n_kernel=80000),
-                            reference)[0])
-        out["cpu_intr"].append(
-            100 * deviation(cpu_algorithm(WAVE, local, sigma_intr=INTRINSIC_TEMPLATE),
-                            reference)[0])
-        out["cpu_all"].append(
-            100 * deviation(cpu_algorithm(WAVE, local, window=40000.0, n_kernel=80000,
-                                          wiener_smooth=False,
-                                          sigma_intr=INTRINSIC_TEMPLATE),
+        out["old"].append(100 * deviation(legacy_iron(WAVE, local), reference)[0])
+        out["old_all"].append(
+            100 * deviation(legacy_iron(WAVE, local, window=40000.0, n_kernel=80000,
+                                        wiener_smooth=False,
+                                        sigma_intr=INTRINSIC_TEMPLATE),
                             reference)[0])
     return out
 
@@ -306,62 +294,62 @@ def run_width_sweep(key, case):
 # figures
 # --------------------------------------------------------------------------------------
 def fig_profiles(results):
-    fig, axes = plt.subplots(2, 1, figsize=(9.2, 6.4), sharex=True,
-                             gridspec_kw={"height_ratios": [2.2, 1.0], "hspace": 0.06})
+    fig, axes = plt.subplots(2, 1, figsize=(9.2, 6.6), sharex=True,
+                             gridspec_kw={"height_ratios": [2.0, 1.3], "hspace": 0.08})
     ax = axes[0]
-    for name, colour, style, width in (
-            ("exact", "0.15", "-", 2.6),
-            ("jax", "C3", "--", 1.7),
-            ("cpu", "C0", ":", 1.9)):
-        label = {"exact": "exact velocity-space convolution",
-                 "jax": "JAX IronTemplate_tied",
-                 "cpu": "CPU IronTemplate_tied"}[name]
-        ax.plot(WAVE, results["profiles"][name], color=colour, ls=style, lw=width,
-                label=label)
+    ax.plot(WAVE, results["profiles"]["exact"], color="0.15", lw=3.4,
+            label="exact velocity-space convolution")
+    ax.plot(WAVE, results["profiles"]["cpu"], color="C0", lw=1.4, ls=(0, (4, 3)),
+            label="CPU IronTemplate_tied (this revision)")
+    ax.plot(WAVE, results["profiles"]["jax"], color="C3", lw=1.4, ls=(0, (1, 2)),
+            label="JAX IronTemplate_tied")
     ax.set_ylabel("Fe II flux  [arbitrary]", fontsize=13)
     ax.legend(fontsize=10, frameon=False)
-    ax.set_title("Same template, same kernel parameters, three implementations",
-                 fontsize=12)
+    ax.set_title("Same template, same kernel parameters, three implementations:\n"
+                 "the dashed and dotted curves lie on the solid one", fontsize=11.5)
+
     ax = axes[1]
     reference = results["profiles"]["exact"]
     peak = np.max(reference)
-    for name, colour, style in (("jax", "C3", "--"), ("cpu", "C0", ":")):
-        ax.plot(WAVE, (results["profiles"][name] - reference) / peak * 100.0,
-                color=colour, ls=style, lw=1.6)
-    ax.axhline(0.0, color="0.4", lw=0.8)
+    for name, colour, style, width, label in (
+            ("cpu", "C0", (0, (4, 3)), 1.6, "CPU (this revision)"),
+            ("jax", "C3", (0, (1, 2)), 1.6, "JAX"),
+            ("old", "C1", "-", 1.6, "old CPU algorithm (removed)"),
+            ("old_all", "C4", "--", 1.3, "old algorithm, constants corrected")):
+        residual = np.abs(results["profiles"][name] - reference) / peak * 100.0
+        ax.plot(WAVE, np.maximum(residual, 1e-16), color=colour, ls=style, lw=width,
+                label=label)
+    ax.set_yscale("log")
+    ax.set_ylim(1e-15, 1e2)
     ax.set_xlabel(r"Rest wavelength  [$\AA$]", fontsize=13)
-    ax.set_ylabel("model $-$ exact  [% of peak]", fontsize=11)
+    ax.set_ylabel("$|$model $-$ exact$|$\n[% of peak]", fontsize=11)
+    ax.legend(fontsize=8.5, frameon=False, ncol=2, loc="lower right")
+    ax.grid(alpha=0.25, which="both")
     ax.set_xlim(WAVE[0], WAVE[-1])
     fig.savefig(OUT / "cpu_vs_jax_profiles.png", dpi=140, bbox_inches="tight")
     plt.close(fig)
 
 
 def fig_width_sweep(sweeps):
-    fig, ax = plt.subplots(figsize=(8.4, 4.6))
+    fig, ax = plt.subplots(figsize=(8.6, 4.8))
     widths = sweeps["mock"]["widths"]
-    ax.plot(widths, sweeps["mock"]["jax"], "o-", color="C3", lw=1.9,
-            label="JAX IronTemplate_tied (whole 4200-5600 A)")
-    ax.plot(widths, sweeps["mock"]["jax_core"], "o:", color="C3", lw=1.2,
-            label="JAX, 4200-5400 A only")
     ax.plot(widths, sweeps["mock"]["cpu"], "s-", color="C0", lw=1.9,
-            label="CPU IronTemplate_tied (as written)")
-    ax.plot(widths, sweeps["mock"]["cpu_intr"], "^--", color="C0", lw=1.1, alpha=0.6,
-            label="CPU, intrinsic width 340 instead of 200 km/s")
-    ax.plot(widths, sweeps["mock"]["cpu_wide"], "v--", color="C0", lw=1.1, alpha=0.6,
-            label="CPU, kernel window +-40 000 instead of +-10 000 km/s")
-    ax.axvline(10000.0 / 4.0, color="0.5", ls=":", lw=1.4)
+            label="CPU IronTemplate_tied (this revision)")
+    ax.plot(widths, sweeps["mock"]["jax"], "o--", color="C3", lw=1.5,
+            label="JAX IronTemplate_tied")
+    ax.plot(widths, sweeps["mock"]["old"], "^-", color="C1", lw=1.5,
+            label="old CPU algorithm (removed)")
+    ax.plot(widths, sweeps["mock"]["old_all"], "v--", color="C4", lw=1.3,
+            label="old algorithm, all three constants corrected")
     ax.set_xscale("log")
-    ax.set_ylim(0.0, 40.0)
+    ax.set_yscale("log")
+    ax.set_ylim(1e-3, 3e2)
     ax.set_xlabel("width of the wind component  $\\sigma_{w0}$  [km/s]", fontsize=12)
     ax.set_ylabel("distance from the exact answer\n[% of iron peak]", fontsize=11)
-    ax.set_title("Distance from the exact velocity-space answer:\n"
-                 "the CPU curve moves with its internal settings, the JAX one does not",
-                 fontsize=11)
+    ax.set_title("Distance from the exact velocity-space answer over a factor of 22\n"
+                 "in kernel width: the two current models coincide", fontsize=11)
     ax.legend(fontsize=9, frameon=False, loc="upper left")
     ax.grid(alpha=0.25, which="both")
-    ax.text(10000.0 / 4.0 * 1.05, 33.0,
-            "$\\sigma_{w0}$ = 2500 km/s:\nthe CPU window (4$\\sigma$)\nstarts cutting the wind",
-            fontsize=8, color="0.4", va="top")
     fig.savefig(OUT / "cpu_vs_jax_width.png", dpi=140, bbox_inches="tight")
     plt.close(fig)
 
@@ -376,31 +364,30 @@ def png(path):
 def table_rows(results):
     out = []
     for row in results["rows"]:
-        emphasise = row["name"].startswith(("JAX", "CPU IronTemplate_tied (as"))
+        emphasise = row["name"].startswith(("JAX", "CPU IronTemplate_tied (this"))
         tag = " class='hi'" if emphasise else ""
         out.append(
             f"<tr{tag}><td>{html.escape(row['name'])}</td>"
-            f"<td class='num'>{row['gap']:.2f}</td>"
-            f"<td class='num'>{row['core']:.2f}</td>"
-            f"<td class='num'>{row['shape']:.2f}</td>"
-            f"<td class='num'>{row['scale']:+.2f}</td></tr>")
+            f"<td class='num'>{row['gap']:.3f}</td>"
+            f"<td class='num'>{row['core']:.3f}</td>"
+            f"<td class='num'>{row['shape']:.3f}</td>"
+            f"<td class='num'>{row['scale']:+.3f}</td></tr>")
     return "\n".join(out)
 
 
 def build_report(results, sweeps, metadata):
     mock = results["mock"]
     fit = results["fit"]
-    jax_mock, cpu_mock = mock["rows"][1], mock["rows"][2]
-    jax_fit, cpu_fit = fit["rows"][1], fit["rows"][2]
-    worst_cpu = max(mock["rows"][2:], key=lambda row: row["core"])
     by_name = {row["name"]: row for row in mock["rows"]}
-    cpu_variant_mock = by_name["CPU, intrinsic width 340 instead of 200 km/s"]["gap"]
-    cpu_window_mock = by_name["CPU, kernel window +-40 000 instead of +-10 000 km/s"]["gap"]
-    cpu_wiener_mock = by_name["CPU, Wiener filter off"]["gap"]
+    fit_by_name = {row["name"]: row for row in fit["rows"]}
+    cpu_mock = by_name["CPU IronTemplate_tied (this revision)"]
+    cpu_fit = fit_by_name["CPU IronTemplate_tied (this revision)"]
+    old_mock = by_name["old CPU algorithm: FFT deconvolution (removed)"]
+    old_intr = by_name["old algorithm, intrinsic width 340 instead of 200 km/s"]
+    old_all = by_name["old algorithm, all three corrected"]
     sens = mock["sensitivity"]
     sweep = sweeps["mock"]
-    cpu_sweep = sweep["cpu"]
-    jax_sweep = sweep["jax_core"]
+    parity = mock["cpu_vs_jax"]["gap"]
 
     page = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
@@ -421,15 +408,15 @@ def build_report(results, sweeps, metadata):
  figure {{ margin: 1.3rem 0; }}
  img {{ max-width: 100%; }}
  figcaption {{ font-size: 12.5px; color: #555; margin-top: .4rem; }}
- .verdict {{ border-left: 4px solid #b3261e; background: #fdf6f5; padding: .8rem 1rem;
+ .verdict {{ border-left: 4px solid #146c2e; background: #f4faf5; padding: .8rem 1rem;
             margin: 1.1rem 0; }}
- .ok {{ border-left: 4px solid #146c2e; background: #f4faf5; padding: .8rem 1rem;
-       margin: 1.1rem 0; }}
+ .warn {{ border-left: 4px solid #b3261e; background: #fdf6f5; padding: .8rem 1rem;
+         margin: 1.1rem 0; }}
  code {{ background: #f4f4f4; padding: .08rem .3rem; border-radius: 3px; font-size: 13px; }}
  .kv {{ font-size: 12.5px; color: #555; }}
 </style></head><body>
 
-<h1>Does the JAX <code>IronTemplate_tied</code> agree with the CPU one?</h1>
+<h1>CPU and JAX <code>IronTemplate_tied</code>: the same function</h1>
 <p class="sub">Same template, same kernel parameters, same wavelength grid. Both
 backends load the template through
 <code>galspec.iron_template.load_iron_template</code>, which puts it on a grid even in
@@ -440,25 +427,34 @@ Generated by
 <code>io_test/cpu_vs_jax_results.json</code>.</p>
 
 <div class="verdict">
-<b>The JAX model reproduces an independent velocity-space convolution to
-{jax_mock['gap']:.2f}% of the iron peak</b> ({jax_fit['gap']:.2f}% at the
-parameters the IRAS&nbsp;07546 fit measured), and that is the whole template, ends
-included. The CPU class does not: it is <b>{cpu_mock['gap']:.1f}%</b>
-({cpu_fit['gap']:.1f}%) away from the same reference, and the two models therefore
-differ from each other by <b>{mock['cpu_vs_jax']['gap']:.1f}%</b>
-({fit['cpu_vs_jax']['gap']:.1f}% at the fit parameters). Section&nbsp;3 shows where
-the CPU error comes from and what happens to it when its internal constants are
-corrected one at a time.
+<b>The two models now agree to {parity:.1e}% of the iron peak</b> &mdash; machine
+precision, so they are the same function, not two approximations to it. Both are
+<b>{cpu_mock['gap']:.3f}%</b> from an independent velocity-space convolution at the
+mock parameters and <b>{cpu_fit['gap']:.3f}%</b> at the parameters the
+IRAS&nbsp;07546 fit measured, over the whole 4200&ndash;5600&nbsp;&Aring; range
+including the truncated ends.
 </div>
 
-<h2>1. The two profiles</h2>
+<div class="warn">
+<b>What this replaced.</b> The CPU class used to FFT-<i>deconvolve</i> the template by
+a 200&nbsp;km/s intrinsic Gaussian, smooth the result with a Wiener filter, and
+convolve with a kernel sampled on a fixed &plusmn;10&nbsp;000&nbsp;km/s window. That
+was <b>{old_mock['gap']:.1f}%</b> from the exact answer at the mock parameters
+(<b>{old_all['gap']:.1f}%</b> even with all three constants corrected), and
+<b>{old_mock['core']:.1f}%</b> in the 4200&ndash;5400&nbsp;&Aring; range where the
+template has signal. The algorithm is kept in this script as
+<code>legacy_iron()</code> so the numbers stay reproducible; it is not in the package
+any more. Section&nbsp;3 has the details.
+</div>
+
+<h2>1. The profiles</h2>
 <figure>
  <img src="{png(OUT / 'cpu_vs_jax_profiles.png')}" alt="profiles">
- <figcaption><b>Top:</b> the iron at identical parameters.
- <b>Bottom:</b> each model minus the exact velocity-space convolution, in per cent of
- the iron peak. The JAX curve is flat across the whole template, edges included; the
- CPU curve oscillates across the whole template, because its deconvolution removes the
- wrong amount of the template's own width.</figcaption>
+ <figcaption><b>Top:</b> the iron at identical parameters; the CPU and JAX curves are
+ drawn as thin dashes over a thick exact curve and lie on it. <b>Bottom:</b> the same
+ comparison on a logarithmic scale, |model &minus; exact| in per cent of the iron peak.
+ The two current models sit about thirteen orders of magnitude below the removed
+ algorithm, at the level where float64 round-off is all that is left.</figcaption>
 </figure>
 
 <h2>2. Distance from the exact answer</h2>
@@ -491,94 +487,80 @@ dv_w0 = {fit['case']['dv_w0']:+.0f} km/s, sigma_w0 = {fit['case']['sigma_w0']:.0
 {table_rows(fit)}
 </table>
 
-<h2>3. What is left on the CPU side</h2>
-<p>Changing one internal setting of the CPU algorithm at a time moves its profile by
-up to <b>{sens['intrinsic width']:.1f}%</b> of its own peak (intrinsic width
-200 &rarr; 340 km/s &mdash; the width the template was actually measured at, so this
-is the correction), <b>{sens['kernel window']:.1f}%</b> (kernel window
-&plusmn;10&nbsp;000 &rarr; &plusmn;40&nbsp;000&nbsp;km/s) and
-<b>{sens['wiener filter']:.1f}%</b> (Wiener filter off), at the mock parameters.
-The kernel window moves it <i>away</i> from the exact profile
-({cpu_mock['gap']:.1f}% &rarr; {cpu_window_mock:.1f}%); turning the Wiener
-filter off moves it very slightly closer ({cpu_mock['gap']:.1f}% &rarr;
-{cpu_wiener_mock:.1f}%); and correcting the intrinsic width to the 340&nbsp;km/s
-the template was actually measured at takes it from {cpu_mock['gap']:.0f}% to
-<b>{cpu_variant_mock:.0f}%</b>, because the deconvolution then divides by a much
-narrower Gaussian and amplifies whatever it finds there. The "as written" answer is
-where these errors happen to cancel best, not where the algorithm converges, and the
-worst variant leaves it <b>{worst_cpu['core']:.1f}%</b> from the exact answer.</p>
+<p>The residual is not zero because the template is sampled at 126&nbsp;km/s per
+channel: a Gaussian of width &sigma; can only be stored as samples of that Gaussian,
+so the narrowest kernels lose a fraction of a per cent to the grid
+({max(sweep['cpu']):.2f}% at &sigma;<sub>w0</sub>&nbsp;=&nbsp;400&nbsp;km/s, where six
+channels describe the whole kernel). The exact reference has the mirror-image
+limitation: it integrates on a 10&nbsp;km/s grid. Everything above
+&sigma;<sub>w0</sub>&nbsp;&asymp;&nbsp;1500&nbsp;km/s agrees to a few hundredths of a
+per cent.</p>
 
+<h2>3. What the fix was</h2>
 <table>
-<tr><th>detail</th><th>CPU <code>IronTemplate_tied</code></th><th>JAX <code>IronTemplate_tied</code></th></tr>
-<tr><td>template grid</td>
-    <td>even in <code>ln(wavelength)</code>, 126&nbsp;km/s per channel (as of this revision)</td>
-    <td>the same grid, from the same loader</td></tr>
+<tr><th></th><th>CPU, this revision</th><th>CPU, removed algorithm</th></tr>
 <tr><td>broadening</td>
-    <td>FFT <i>deconvolution</i> of the template, then convolution with a kernel array</td>
-    <td>quadrature subtraction, then a Gaussian smoothing on the template grid</td></tr>
-<tr><td>kernel window</td>
-    <td>fixed &plusmn;10&nbsp;000&nbsp;km/s: {10000.0 / 6400.0:.1f}&sigma; of the mock
-        wind, which is cut off and the remainder renormalised</td>
-    <td>static, sized from the prior bound (4&sigma; of the widest width)</td></tr>
-<tr><td>after deconvolution</td><td>Wiener filter, 3-pixel window</td>
-    <td>nothing: the profile is analytic</td></tr>
-<tr><td>template's own width</td><td>200 km/s (&ldquo;R ~ 1500&rdquo;)</td>
-    <td>340 km/s (what the template was measured at)</td></tr>
-<tr><td>template ends</td><td>zero-padded convolution, no flux beyond 4000/5600&nbsp;&Aring;</td>
-    <td>the template itself is padded with zeros at load
-        (100&nbsp;000&nbsp;km/s each side), so there is nothing to mirror</td></tr>
-<tr><td>differentiable through the kernel</td><td>no (host-side array)</td>
-    <td>yes (<code>jit</code>, jacfwd/jacrev)</td></tr>
+    <td>quadrature subtraction of the template's own width
+        (<code>sqrt(sigma&sup2; &minus; sigma_intr&sup2;)</code>), then one Gaussian
+        smoothing on the template grid</td>
+    <td>FFT <i>deconvolution</i> of the template, then convolution with a kernel array</td></tr>
+<tr><td>per component</td>
+    <td>each kernel component is smoothed and projected separately at its own shift,
+        then the components are added with the line's own relative weights</td>
+    <td>the components are summed into one kernel array first, on a coarse velocity
+        grid, then resampled onto the template</td></tr>
+<tr><td>template's own width</td><td>340 km/s (what the template was measured at)</td>
+    <td>200 km/s (&ldquo;R ~ 1500&rdquo;)</td></tr>
+<tr><td>stabilisation</td><td>none needed: there is no inverse filter</td>
+    <td>Wiener filter, 3-pixel window, on the deconvolved template</td></tr>
+<tr><td>kernel window</td><td>none: the Gaussian is applied where it is</td>
+    <td>fixed &plusmn;10&nbsp;000&nbsp;km/s, {10000.0 / 6400.0:.1f}&sigma; of the mock
+        wind, which was cut off and the remainder renormalised</td></tr>
+<tr><td>same as the JAX model</td><td>yes, to 1e-15 (checked by
+        <code>tests/test_model_features.py</code>)</td>
+    <td>no: 8&ndash;10% apart, and the difference moved with every constant</td></tr>
 </table>
 
-<h2>4. Where the JAX residual went</h2>
+<p>Each constant of the removed algorithm was worth a visible fraction of the iron
+peak: the intrinsic width <b>{sens['intrinsic width']:.1f}%</b> of the profile
+(200 &rarr; 340&nbsp;km/s), the kernel window <b>{sens['kernel window']:.1f}%</b>
+(&plusmn;10&nbsp;000 &rarr; &plusmn;40&nbsp;000&nbsp;km/s). Correcting all three
+together left it <b>{old_all['gap']:.1f}%</b> from the exact answer &mdash; worse than
+where it started ({old_mock['gap']:.1f}%) &mdash; and deconvolving by the width the
+template was actually measured at made it <b>{old_intr['gap']:.0f}%</b>. That is the
+signature of an inverse problem with no right answer: the deconvolution divides by a
+narrow Gaussian, so what dominates the result is whatever the filter was tuned to
+rather than the physics.</p>
+
+<h2>4. Over a factor of 22 in kernel width</h2>
 <figure>
  <img src="{png(OUT / 'cpu_vs_jax_width.png')}" alt="width sweep">
  <figcaption>Distance from the exact answer as the wind gets wider, everything else
- fixed. JAX over the whole range (thin dotted when restricted to
- 4200&ndash;5400&nbsp;&Aring;): {min(jax_sweep):.2f}&ndash;{max(jax_sweep):.2f}%, and the
- two curves are the same curve &mdash; there is no end effect left for the range to
- exclude. CPU as written: {min(cpu_sweep):.1f}&ndash;{max(cpu_sweep):.1f}%, tracking
- whichever of its internal settings happens to dominate.</figcaption>
+ fixed. The two current models are the same curve,
+ {min(sweep['cpu']):.3f}&ndash;{max(sweep['cpu']):.3f}%, and it rises only at the
+ narrow end, where the 126&nbsp;km/s template grid stops resolving the kernel. The
+ removed algorithm spans {min(sweep['old']):.1f}&ndash;{max(sweep['old']):.1f}% and does
+ not converge as the kernel widens.</figcaption>
 </figure>
-<p>The JAX model is {jax_mock['gap']:.2f}% from an implementation that shares no code
-with it, across every kernel width tested ({min(jax_sweep):.2f}&ndash;{max(jax_sweep):.2f}%,
-narrowest kernel first). Two changes got it there. The template is resampled onto a
-grid even in <code>ln(wavelength)</code>, so a velocity width is one number everywhere
-instead of one number at the blue end. And the tabulated range is extended with zeros
-by 100&nbsp;000&nbsp;km/s on each side when it is loaded, so the smoothing has no edge
-flux to reflect and none to invent. Before the second change the model carried the
-template's last-channel flux out over the truncated red end and kept it there: that
-was 3.8% of the 4% full-range error, and it was the reason the 4200&ndash;5400&nbsp;&Aring;
-column had to be reported separately at all. There is nothing to exclude now.</p>
 
-<div class="ok">
-<b>What this means in practice.</b> The two models are not interchangeable even
-approximately: the CPU class is {cpu_mock['gap'] / max(jax_mock['gap'], 1e-3):,.0f}&times;
-further from the exact answer than the JAX one, its error is spread over the whole
-template, and it moves when its internal constants are changed &mdash; the correction
-that ought to help takes it from {cpu_mock['gap']:.0f}% to
-{cpu_variant_mock:.0f}%. For fitting, {cpu_mock['gap']:.1f}% on the iron peak
-is {cpu_mock['gap'] / 5.0:.1f}&times; the 5% flux error the worked example allows, and
-it is <i>not</i> absorbed by the iron amplitude alone (the <i>shape</i> column:
-{cpu_mock['shape']:.1f}%), which is what a line and a pseudo-continuum fitted together
-would need in order not to care.
+<div class="verdict">
+<b>What this means in practice.</b> The CPU and JAX models are interchangeable: a fit
+gives the same answer on either backend, and the 0.01% that both still carry is the
+template's own sampling, not an artefact of either implementation. Before this
+revision they differed by 8&ndash;10%, which is why the earlier version of this page
+had to report the two backends separately.
 </div>
 
-<p class="kv">Checks and provenance: the algorithm copy in this script reproduces the
-CPU class to {mock['copy_check']:.1e} of the peak, so each variant differs from the
-class only by the setting named. Both models were evaluated on {metadata['npix']}
-pixels, 4200&ndash;5600&nbsp;&Aring;, at amplitude 1, z = 0. JAX device:
-{html.escape(metadata['device'])}; generated {html.escape(metadata['created'])}.</p>
+<p class="kv">Checks and provenance: the removed algorithm is reproduced by
+<code>legacy_iron()</code> in this script, so the &ldquo;old algorithm&rdquo; rows differ
+from the current class by exactly the algorithm and nothing else. Both current models
+were evaluated on {metadata['npix']} pixels, 4200&ndash;5600&nbsp;&Aring;, at amplitude 1,
+z = 0. JAX device: {html.escape(metadata['device'])}; generated
+{html.escape(metadata['created'])}.</p>
 
 </body></html>
 """
     return page
-
-
-def scale_cpu_bias(store):
-    """The JAX-vs-CPU scale discrepancy, in per cent."""
-    return store["cpu_vs_jax"]["scale"]
 
 
 def main(argv=None):
@@ -602,15 +584,18 @@ def main(argv=None):
         print(f"[{key}] {case['label']}")
         results[key] = run_case(key, case)
         for row in results[key]["rows"]:
-            print(f"    {row['name']:52s} gap {row['gap']:6.2f}%  "
-                  f"shape {row['shape']:6.2f}%  scale {row['scale']:+6.2f}%")
-        print(f"    CPU vs JAX: {results[key]['cpu_vs_jax']['gap']:.2f}% of peak")
+            print(f"    {row['name']:56s} gap {row['gap']:7.3f}%  "
+                  f"shape {row['shape']:7.3f}%  scale {row['scale']:+7.3f}%")
+        print(f"    CPU vs JAX: {results[key]['cpu_vs_jax']['gap']:.2e}% of peak")
 
     print("[sweep] distance from exact vs the width of the wind")
     sweeps = {key: run_width_sweep(key, case) for key, case in CASES.items()}
-    for width, jax_dev, cpu_dev in zip(sweeps["mock"]["widths"], sweeps["mock"]["jax"],
-                                      sweeps["mock"]["cpu"]):
-        print(f"    sigma_w0 {width:6.0f} km/s   jax {jax_dev:6.2f}%   cpu {cpu_dev:6.2f}%")
+    for width, jax_dev, cpu_dev, old_dev in zip(sweeps["mock"]["widths"],
+                                                sweeps["mock"]["jax"],
+                                                sweeps["mock"]["cpu"],
+                                                sweeps["mock"]["old"]):
+        print(f"    sigma_w0 {width:6.0f} km/s   cpu {cpu_dev:6.3f}%   "
+              f"jax {jax_dev:6.3f}%   old {old_dev:7.2f}%")
 
     fig_profiles(results["mock"])
     fig_width_sweep(sweeps)

@@ -62,10 +62,12 @@ python develop/dev_jax/iron_tied_io_test.py --noise
 **Two reports, two questions.**
 `io_test/cpu_vs_jax.html` (from `iron_cpu_vs_jax.py`, about a minute) asks whether
 the JAX `IronTemplate_tied` reproduces the CPU one at the same parameters, and
-measures both against an exact velocity-space convolution. Short answer: they differ
-by 8-10% of the iron peak, and against an independent velocity-space convolution the
-JAX model is exact to 0.02% over the whole template while the CPU one is 7-23% off and
-moves when its deconvolution, kernel window or intrinsic width are changed.
+measures both against an exact velocity-space convolution. Short answer: they are the
+same function to 1e-15 of the iron peak, and both are within 0.01-0.02% of an
+independent velocity-space convolution over the whole template. The script also keeps
+the algorithm the CPU class used to have (FFT deconvolution + Wiener filter + a fixed
++/-10 000 km/s kernel window) as `legacy_iron()`, which is 8.5-10% off and does not
+converge as the kernel widens.
 `io_test/iron_tied_io_test.html` (from `iron_tied_io_test.py`, about six minutes) is
 the longer input/output study: a mock fitted back, the unit checks, and the
 core-wind degeneracy.
@@ -74,8 +76,9 @@ core-wind degeneracy.
 one place where the model is checked against a known answer: the mock is generated
 by the *CPU* classes, the fit uses the JAX ones, and the test separates what the
 code must get exactly right (the convolution, the ties, the normalisation:
-machine precision) from what is a convention shared with the CPU model (the
-template's linear wavelength sampling: 4% of the iron peak). It also measures the
+machine precision, and the two backends now agree to 1e-15) from what is left in
+the template file itself (its 126 km/s sampling: 0.01-0.02% of the iron peak; before
+the template was resampled onto a log-even grid it was 4%). It also measures the
 one real trap in the model -- component 0 and component 1 of a `Line_MultiGauss`
 are *exchangeable*, so the posterior is bimodal unless their width priors are
 disjoint, which is why `example/fit_iras07546_jax.py` splits them at 3000 km/s.

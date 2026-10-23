@@ -323,9 +323,12 @@ def build_model(backend=jxm, include_iron=None):
 
     ``include_iron`` defaults to "yes for the JAX model, no for the astropy twin":
     the twin is used for plotting, and there the iron enters as a curve evaluated
-    from the JAX model itself (the CPU ``IronTemplate_tied`` convolves with an
-    explicit kernel array, which is a different construction).  See
-    :func:`cpu_model_with_values`.
+    from the JAX model itself.  That is not because the two constructions disagree
+    -- they agree to 1e-15 (``io_test/cpu_vs_jax.html``) -- but because the astropy
+    ``IronTemplate_tied`` takes the line profile as a *kernel object* and exposes
+    only ``amplitude``/``stddev``, where the JAX one takes ``n_components`` and the
+    five kernel parameters, so the parameter-by-parameter copy in
+    :func:`cpu_model_with_values` has nothing to set.  See there.
 
     ``backend`` is either :mod:`galspec.jax_models` -- the models the fit uses --
     or :mod:`galspec` itself, the astropy equivalents.  Both expose the same
@@ -824,13 +827,14 @@ def report_quality(fit, wave, flux, error):
 class _TabulatedCurve(Fittable1DModel):
     """A curve already evaluated on a grid, presented as an astropy component.
 
-    The iron is the one component whose astropy equivalent is *not* the same
-    construction: the CPU ``IronTemplate_tied`` broadens the template with an
-    explicit kernel array (an FFT deconvolution, then a convolution with a kernel
-    tabulated in velocity), while the JAX model subtracts the intrinsic width in
-    quadrature component by component.  Rather than plot a slightly different
-    iron, this wrapper carries the flux the fitted JAX model actually produces, so
-    the figure and the fit agree exactly.
+    The iron is the one component without a parameter-for-parameter astropy twin:
+    ``galspec.IronTemplate_tied`` takes the broad line as a *kernel object* and
+    exposes only ``amplitude``/``stddev``, while ``jxm.IronTemplate_tied`` takes
+    ``n_components`` plus the five kernel parameters.  The two broaden the template
+    the same way and agree to 1e-15 (``io_test/cpu_vs_jax.html``), so this is a
+    plumbing difference, not a modelling one; even so, the wrapper carries the flux
+    the fitted JAX model actually produces, so the figure and the fit agree bit for
+    bit rather than to 1e-15.
     """
 
     n_inputs = 1

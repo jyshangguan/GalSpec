@@ -262,6 +262,46 @@ def test_iron_template_and_stellar_match_cpu():
         assert _rel_diff(cpu(wave), compiled(jnp.asarray(theta))) < RTOL
 
 
+def test_iron_template_tied_matches_cpu():
+    """The tied iron is the same function on both backends, kernel included.
+
+    Both broaden the template by subtracting its own width in quadrature from every
+    kernel component and smoothing once -- no deconvolution on either side -- so the
+    agreement is float64 rounding, not a tuned tolerance.  The CPU class used to
+    FFT-deconvolve the template instead and was 8-10% away.
+    """
+    wave = np.linspace(4200, 6800, 1300)
+    cases = [
+        (1, dict(amp_c=1.0, dv_c=180.0, sigma_c=1460.0), {}),
+        (2, dict(amp_c=1.0, dv_c=180.0, sigma_c=1460.0),
+         dict(amp_w0=0.09, dv_w0=-900.0, sigma_w0=6900.0)),
+        (2, dict(amp_c=1.0, dv_c=-120.0, sigma_c=780.0),
+         dict(amp_w0=0.62, dv_w0=430.0, sigma_w0=2600.0)),
+        (3, dict(amp_c=1.0, dv_c=0.0, sigma_c=1200.0),
+         dict(amp_w0=0.3, dv_w0=-600.0, sigma_w0=3000.0,
+              amp_w1=0.2, dv_w1=900.0, sigma_w1=8000.0)),
+    ]
+    for n, core, winds in cases:
+        kernel = galspec.Line_MultiGauss(n_components=n, wavec=6563.0,
+                                         par_w=dict(winds), **core)
+        cpu = galspec.IronTemplate_tied(amplitude=0.2, z=0.0, kernel=kernel)
+        jax_model = jxm.IronTemplate_tied(n_components=n, amplitude=0.2, z=0.0,
+                                          dv_c=core["dv_c"], sigma_c=core["sigma_c"],
+                                          **winds)
+        jax_model.prepare(wave)
+        assert _rel_diff(cpu(wave), jax_model(wave)) < RTOL, f"{n} components"
+
+    # a width below the template's own must fall back to the unsmoothed template on
+    # both sides, and a very wide one must still be the same convolution
+    for sigma in (300.0, 700.0, 2500.0, 12000.0):
+        kernel = galspec.Line_MultiGauss(n_components=1, amp_c=1.0, dv_c=0.0,
+                                         sigma_c=sigma, wavec=6563.0)
+        cpu = galspec.IronTemplate_tied(amplitude=1.0, z=0.0, kernel=kernel)
+        jax_model = jxm.IronTemplate_tied(n_components=1, amplitude=1.0, sigma_c=sigma)
+        jax_model.prepare(wave)
+        assert _rel_diff(cpu(wave), jax_model(wave)) < RTOL, f"sigma_c={sigma}"
+
+
 def test_line_template_matches_cpu():
     wave = np.linspace(6400, 6720, 400)
     vel = np.linspace(-7000.0, 7000.0, 701)

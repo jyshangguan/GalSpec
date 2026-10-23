@@ -206,6 +206,31 @@ def test_tied_iron_kernel_radius_covers_wide_widths():
     print(f"  kernel radius tracks the widest width (max radius {wide._radius} px)")
 
 
+def test_cpu_tied_iron_is_a_velocity_space_convolution():
+    """The CPU tied iron is an exact convolution on a uniform velocity grid.
+
+    The reference shares no code with either backend: the template is placed on a
+    uniform velocity grid, convolved there, and interpolated back.  The CPU class
+    used to be 8-50% off this reference depending on its internal settings.
+    """
+    from galspec.iron_template import flux_park2022, wave_park2022
+
+    wave = np.arange(4200.0, 6800.0, 1.0)
+    window = (wave_park2022 > 4500) & (wave_park2022 < 5500)
+    flux = flux_park2022 / np.max(flux_park2022[window])
+    for sigma in (700.0, 1500.0, 6900.0):
+        kernel = galspec.Line_MultiGauss(n_components=1, amp_c=1.0, dv_c=0.0,
+                                         sigma_c=sigma, wavec=6563.0)
+        got = galspec.IronTemplate_tied(amplitude=1.0, z=0.0, kernel=kernel)(wave)
+        want = np.interp(wave, wave_park2022,
+                         _smooth_in_velocity_space(wave_park2022, flux, sigma, 800 / 2.3548))
+        relative = np.max(np.abs(got - want)) / np.max(want)
+        # 2e-3 rather than 1e-3: at 700 km/s the 126 km/s template grid resolves the
+        # narrowest kernel with only ~6 channels, and that sampling is the floor.
+        assert relative < 2e-3, (sigma, relative)
+    print("  CPU tied iron is within 0.2% of an exact velocity-space convolution")
+
+
 def test_multigauss_components_are_exchangeable():
     """The core and the wind are the same two numbers under a label swap.
 

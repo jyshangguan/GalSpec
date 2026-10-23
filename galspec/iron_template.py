@@ -283,9 +283,15 @@ class IronTemplate_tied(Fittable1DModel):
         The name of the template.
         park2022 : Based on Mrk 493 from Park et al. (2022).
         boroson1992 : Based on I Zw 1 from Boroson & Green (1992).
-    kernel : array like, optional
-        Convolution kernel to use.
-        If provided, will override the Gaussian convolution.
+    kernel : model, optional
+        The line profile the iron is tied to, e.g.
+        ``galspec.Line_MultiGauss(n_components=2)``.  Its components give the
+        kernel: every component is applied to the template separately, at its own
+        shift and with its own width, after subtracting the template's own width in
+        quadrature (``sqrt(sigma**2 - stddev_intr**2)``) -- a convolution in velocity
+        space, with no deconvolution, exactly as the JAX
+        ``jax_models.IronTemplate_tied`` does.  If omitted, ``stddev`` sets a single
+        Gaussian width instead.
 
     Returns
     -------
@@ -303,7 +309,7 @@ class IronTemplate_tied(Fittable1DModel):
         if template_name == 'park2022':
             wave_temp = wave_park2022
             flux_temp = flux_park2022
-            self._stddev_intr = ls_km / 1500 # R~1500
+            self._stddev_intr = 800 / 2.3548  # Velocity dispersion of Mrk 493.
         elif template_name == 'boroson1992':
             wave_temp = wave_boroson1992
             flux_temp = flux_boroson1992
@@ -323,92 +329,87 @@ class IronTemplate_tied(Fittable1DModel):
         # Store the broad emission line template
         self.kernel = kernel
     
+    def _kernel_terms(self):
+        """(weight, shift, width) of every component of the tied line profile.
+
+        The kernel is a :class:`galspec.Line_MultiGauss` (or anything carrying the
+        same parameters), so the components are read straight off it: component 0 is
+        the core at ``dv_c``, component ``i`` sits at ``dv_c + dv_w{i}``.  The
+        weights are the line's own amplitudes, normalised to sum to one -- only the
+        *shape* of the line reaches the iron, so the core amplitude cancels.
+        """
+        kernel = self.kernel
+        # ``_param_names`` is per instance (``_parameters_`` is shared by every model
+        # of the class and keeps parameters of previously built ones), so it is the
+        # reliable list of what this kernel actually has.
+        names = list(getattr(kernel, '_param_names', None)
+                     or getattr(kernel, 'param_names', ()) or ())
+
+        def value(name, default=None):
+            if name in names:
+                return float(getattr(kernel, name).value)
+            return default
+
+        if value('sigma_c') is None:
+            raise TypeError(
+                'the kernel of IronTemplate_tied must be a line-profile model with '
+                'dv_c/sigma_c/amp_w{i}/dv_w{i}/sigma_w{i} parameters (e.g. '
+                'galspec.Line_MultiGauss), not {!r}: the template\'s own width has '
+                'to be subtracted in quadrature from each component'
+                .format(type(kernel).__name__))
+
+        weights = [1.0]
+        shifts = [value('dv_c', 0.0)]
+        widths = [value('sigma_c')]
+        for index in range(sum(1 for name in names if name.startswith('amp_w'))):
+            weights.append(value('amp_w{}'.format(index)))
+            shifts.append(value('dv_c', 0.0) + value('dv_w{}'.format(index), 0.0))
+            widths.append(value('sigma_w{}'.format(index)))
+        total = float(np.sum(weights))
+        total = total if total > 0.0 else 1.0
+        return [(w / total, shift, width)
+                for w, shift, width in zip(weights, shifts, widths)]
+
+    def _broadened_template(self, width):
+        """The template broadened to a *total* dispersion ``width`` [km/s].
+
+        The template already carries its own width, and blurring twice with sigma_1
+        and sigma_2 is one blur with them in quadrature, so the extra width to apply
+        is ``sqrt(width**2 - stddev_intr**2)``.  No deconvolution: an inverse filter
+        amplifies whatever it divides by, and with a 2400-channel template and a
+        340 km/s intrinsic width that is not a small effect.
+        """
+        if width <= self._stddev_intr:
+            return self._flux_temp
+        sig = np.sqrt(width ** 2 - self._stddev_intr ** 2) / self._vchan
+        return gaussian_filter1d(self._flux_temp, sig)
+
     def evaluate(self, x, amplitude, stddev, z):
         """
         Model function with either Gaussian or custom convolution kernel.
         """
+        x = np.asarray(x, dtype=float)
         if self.kernel is not None:
-            # Check if kernel is a Line_MultiGauss object and extract the template
-            if hasattr(self.kernel, 'gen_template'):
-                # Generate template from Line_MultiGauss object
-                velc_range = np.linspace(-10000, 10000, 20000)  # Default velocity range
-                kernel_template = self.kernel.gen_template(velc_range, normalized=True)
-                # Normalize the kernel
-                kernel = kernel_template / np.sum(kernel_template)
-            else:
-                # Assume kernel is already a numpy array
-                kernel = np.asarray(self.kernel)
-                kernel = kernel / np.sum(kernel)
-            
-            # Convert velocity-space kernel to wavelength-space kernel using interpolation
-            from scipy.interpolate import interp1d
-            from scipy.signal import convolve
-            
-            # Calculate velocity offsets for each wavelength point
-            center_wave = self._wave_temp[len(self._wave_temp)//2]
-            # exact velocity offset; on the log-even grid this is a uniform ladder
-            vel_offsets = np.log(self._wave_temp / center_wave) * ls_km
-            
-            # Create interpolator for the kernel
-            kernel_interp = interp1d(velc_range, kernel, bounds_error=False, fill_value=0)
-            
-            # Interpolate kernel values at velocity offsets
-            wave_kernel = kernel_interp(vel_offsets)
-            
-            # Normalize the wavelength-space kernel
-            wave_kernel = wave_kernel / np.sum(wave_kernel)
-            
-            # Step 1: Remove intrinsic broadening effect
-            # Calculate the intrinsic sigma in pixel units
-            sig_intr_pix = self._stddev_intr / self._vchan
-            
-            # Create a Gaussian kernel for the intrinsic broadening
-            kernel_size = max(3, int(3 * sig_intr_pix))
-            x_kernel = np.arange(-kernel_size, kernel_size + 1)
-            gaussian_kernel = np.exp(-0.5 * (x_kernel / sig_intr_pix)**2)
-            gaussian_kernel = gaussian_kernel / np.sum(gaussian_kernel)
-            
-            # Use frequency domain deconvolution for better stability
-            from scipy.fft import fft, ifft
-            from scipy.signal import wiener
-            
-            # Pad both template and kernel to avoid edge effects
-            pad_size = kernel_size
-            flux_padded = np.pad(self._flux_temp, (pad_size, pad_size), mode='edge')
-            
-            # Pad kernel to match padded template length
-            kernel_padded = np.pad(gaussian_kernel, (0, len(flux_padded) - len(gaussian_kernel)), mode='constant')
-            
-            # Convert to frequency domain
-            flux_fft = fft(flux_padded)
-            kernel_fft = fft(kernel_padded)
-    
-            # Perform deconvolution with regularization
-            # Add small constant to avoid division by zero
-            epsilon = 1e-12
-            flux_deconv_fft = flux_fft / (kernel_fft + epsilon)
-            
-            # Convert back to time domain
-            flux_deconv = np.real(ifft(flux_deconv_fft))
-            
-            # Remove padding
-            flux_deconv = flux_deconv[pad_size:pad_size + len(self._flux_temp)]
-            
-            # Apply Wiener filter to smooth out noise
-            flux_deconv = wiener(flux_deconv, (3,))
-            
-            # Step 2: Apply the custom kernel (b_hb) to the deconvolved template
-            # This will add the broadening effect of the custom kernel
-            flux_conv = convolve(flux_deconv, wave_kernel, mode='same')
-            
-        else:
-            # Use original Gaussian convolution
-            if stddev < self._stddev_intr:
-                stddev = ls_km / 1500
+            # One broadened template per kernel component, each projected onto the
+            # data grid at its own shift and added with its own weight.  Projecting
+            # the components separately (rather than convolving once with a composite
+            # kernel) keeps a one-component kernel identical to IronTemplate -- which
+            # is what the JAX model does as well.
+            flux = np.zeros(np.shape(x))
+            for weight, shift, width in self._kernel_terms():
+                template = self._broadened_template(width)
+                wave_k = self._wave_temp * (1.0 + z + shift / ls_km)
+                flux += weight * np.interp(x, wave_k, template)
+            return amplitude * flux
 
+        # -- no kernel: one Gaussian of the requested width ----------------------
+        # same convention as IronTemplate/IronTemplate_new: a width narrower than
+        # the template's own cannot be represented, so the template is returned as
+        # it is (which is also what the JAX model does)
+        if stddev < self._stddev_intr:
+            flux_conv = self._flux_temp
+        else:
             sig = np.sqrt(stddev**2 - self._stddev_intr**2) / self._vchan
             flux_conv = gaussian_filter1d(self._flux_temp, sig)
 
-        f = amplitude * np.interp(x, self._wave_temp * (1 + z), flux_conv)
-
-        return f
+        return amplitude * np.interp(x, self._wave_temp * (1 + z), flux_conv)

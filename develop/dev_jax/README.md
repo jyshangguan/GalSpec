@@ -63,11 +63,12 @@ python develop/dev_jax/iron_tied_io_test.py --noise
 `io_test/cpu_vs_jax.html` (from `iron_cpu_vs_jax.py`, about a minute) asks whether
 the JAX `IronTemplate_tied` reproduces the CPU one at the same parameters, and
 measures both against an exact velocity-space convolution. Short answer: they differ
-by 10% of the iron peak, the JAX model is the closer of the two (4.5% vs 8.5%), and
-the CPU answer moves when its deconvolution, kernel window or intrinsic width are
-changed. `io_test/iron_tied_io_test.html` (from `iron_tied_io_test.py`, about six
-minutes) is the longer input/output study: a mock fitted back, the unit checks, and
-the core-wind degeneracy.
+by 15% of the iron peak, and against an independent velocity-space convolution the
+JAX model is exact to 0.1% over 4200-5400 A while the CPU one is 11-50% off and moves
+when its deconvolution, kernel window or intrinsic width are changed.
+`io_test/iron_tied_io_test.html` (from `iron_tied_io_test.py`, about six minutes) is
+the longer input/output study: a mock fitted back, the unit checks, and the
+core-wind degeneracy.
 
 **Read `io_test/cpu_vs_jax.html` before trusting either tied iron.** It is the
 one place where the model is checked against a known answer: the mock is generated

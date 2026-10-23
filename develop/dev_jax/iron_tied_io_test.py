@@ -912,8 +912,13 @@ that moves when the iron shape does.</p>
 <p class="cap">&chi;&sup2;/dof is well below 1 for the noiseless mocks because the 1%
 error is larger than the model&minus;data difference; that is deliberate, it is the
 error budget of a real spectrum and it keeps the likelihood smooth enough for the
-sampler. The <code>cpu</code> and <code>velocity</code> rows cannot reach zero: their
-iron is a different function from the one being fitted.</p>
+sampler. The <code>cpu</code> row cannot reach zero: its iron is a different function
+from the one being fitted -- the CPU class deconvolves by a 200 km/s intrinsic width
+where the template measured 340, cuts its kernel at &plusmn;10 000 km/s and filters
+the result, which puts it 11-50% from an exact velocity-space convolution
+(<code>io_test/cpu_vs_jax.html</code>). The <code>velocity</code>, <code>pixel</code>
+and <code>jax</code> rows now do reach zero, because since the template is resampled
+onto a log-even grid at load they are all the same operator.</p>
 <img src="data:image/png;base64,{images['fits']}" alt="best fits">
 <p class="cap">Data, best fit and its two components, with the residual in units of the
 error. <code>pixel</code> and <code>jax</code> are flat; <code>cpu</code> keeps an

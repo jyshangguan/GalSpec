@@ -75,16 +75,10 @@ INTRINSIC_CPU = ls_km / 1500.0
 # the template
 # --------------------------------------------------------------------------------------
 def load_template(template_name="park2022"):
-    """The Park et al. (2022) iron template, normalised exactly as the models do."""
-    from astropy.table import Table
+    """The iron template as both models load it: even in ln(wave), normalised as they do."""
+    from galspec.iron_template import load_iron_template
 
-    from galspec.utils import package_path, splitter
-
-    table = Table.read(f"{package_path}{splitter}data{splitter}irontemplate_{template_name}.dat",
-                       format="cds")
-    wave = np.asarray(table["Wave"].data, dtype=float)
-    flux = np.asarray(table["Flux"].data, dtype=float)
-    flux = flux / np.max(flux)
+    wave, flux = load_iron_template(template_name)
     window = (wave > 4500) & (wave < 5500)
     return wave, flux / np.max(flux[window]), 800.0 / 2.3548
 
@@ -162,7 +156,8 @@ def cpu_algorithm(wave, case, template_name="park2022", window=10000.0,
     kernel = kernel / np.sum(kernel)
 
     centre = wave_t[len(wave_t) // 2]
-    offsets = (wave_t - centre) / centre * ls_km
+    offsets = np.log(wave_t / centre) * ls_km        # exact on a log-even grid
+
     wave_kernel = interp1d(velocities, kernel, bounds_error=False, fill_value=0.0)(offsets)
     wave_kernel = wave_kernel / np.sum(wave_kernel)
 
@@ -232,11 +227,15 @@ def run_case(key, case):
         "CPU, Wiener filter off": no_wiener,
         "CPU, all three changed": all_matched,
     }
+    core = (WAVE >= 4200.0) & (WAVE < 5400.0)     # where the template has signal
+    peak = float(np.max(reference))
+
     rows = []
     for name, flux in variants.items():
         gap, shape, scale = deviation(flux, reference)
         rows.append({"name": name, "gap": 100 * gap, "shape": 100 * shape,
-                     "scale": 100 * (scale - 1.0)})
+                     "scale": 100 * (scale - 1.0),
+                     "core": 100 * float(np.max(np.abs(flux[core] - reference[core])) / peak)})
 
     # how much each single detail moves the CPU answer, and how much the copy does
     reach = lambda flux: 100.0 * float(np.max(np.abs(flux - cpu)) / np.max(np.abs(cpu)))
@@ -277,12 +276,18 @@ def run_width_sweep(key, case):
     """How the disagreement grows with the width of the wind component."""
     widths = [400.0, 800.0, 1500.0, 2500.0, 4000.0, 6400.0, 9000.0]
     out = {"widths": widths, "jax": [], "cpu": [], "cpu_wide": [],
-           "cpu_intr": [], "cpu_all": []}
+           "cpu_intr": [], "cpu_all": [], "jax_core": [], "cpu_core": []}
+    core = (WAVE >= 4200.0) & (WAVE < 5400.0)
     for width in widths:
         local = dict(case, sigma_w0=width)
         reference = exact_iron(WAVE, local)
+        peak = float(np.max(reference))
         out["jax"].append(100 * deviation(jax_iron(WAVE, local), reference)[0])
         out["cpu"].append(100 * deviation(cpu_iron(WAVE, local), reference)[0])
+        out["jax_core"].append(
+            100 * float(np.max(np.abs(jax_iron(WAVE, local)[core] - reference[core]))) / peak)
+        out["cpu_core"].append(
+            100 * float(np.max(np.abs(cpu_iron(WAVE, local)[core] - reference[core]))) / peak)
         out["cpu_wide"].append(
             100 * deviation(cpu_algorithm(WAVE, local, window=40000.0, n_kernel=80000),
                             reference)[0])
@@ -335,7 +340,9 @@ def fig_width_sweep(sweeps):
     fig, ax = plt.subplots(figsize=(8.4, 4.6))
     widths = sweeps["mock"]["widths"]
     ax.plot(widths, sweeps["mock"]["jax"], "o-", color="C3", lw=1.9,
-            label="JAX IronTemplate_tied")
+            label="JAX IronTemplate_tied (whole 4200-5600 A)")
+    ax.plot(widths, sweeps["mock"]["jax_core"], "o:", color="C3", lw=1.2,
+            label="JAX, 4200-5400 A only")
     ax.plot(widths, sweeps["mock"]["cpu"], "s-", color="C0", lw=1.9,
             label="CPU IronTemplate_tied (as written)")
     ax.plot(widths, sweeps["mock"]["cpu_intr"], "^--", color="C0", lw=1.1, alpha=0.6,
@@ -374,6 +381,7 @@ def table_rows(results):
         out.append(
             f"<tr{tag}><td>{html.escape(row['name'])}</td>"
             f"<td class='num'>{row['gap']:.2f}</td>"
+            f"<td class='num'>{row['core']:.2f}</td>"
             f"<td class='num'>{row['shape']:.2f}</td>"
             f"<td class='num'>{row['scale']:+.2f}</td></tr>")
     return "\n".join(out)
@@ -384,11 +392,11 @@ def build_report(results, sweeps, metadata):
     fit = results["fit"]
     jax_mock, cpu_mock = mock["rows"][1], mock["rows"][2]
     jax_fit, cpu_fit = fit["rows"][1], fit["rows"][2]
-    worst_cpu = max(mock["rows"][2:], key=lambda row: row["gap"])
+    worst_cpu = max(mock["rows"][2:], key=lambda row: row["core"])
     sens = mock["sensitivity"]
     sweep = sweeps["mock"]
     cpu_sweep = sweep["cpu"]
-    jax_sweep = sweep["jax"]
+    jax_sweep = sweep["jax_core"]
 
     page = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
@@ -418,22 +426,25 @@ def build_report(results, sweeps, metadata):
 </style></head><body>
 
 <h1>Does the JAX <code>IronTemplate_tied</code> agree with the CPU one?</h1>
-<p class="sub">Same template, same kernel parameters, same wavelength grid.
-Generated by <code>develop/dev_jax/iron_cpu_vs_jax.py</code>; figures and numbers in
+<p class="sub">Same template, same kernel parameters, same wavelength grid. Both
+backends now resample the template onto a grid even in <code>ln(wavelength)</code> at
+load time (<code>galspec.iron_template.load_iron_template</code>), so a velocity width
+is one number everywhere. Generated by
+<code>develop/dev_jax/iron_cpu_vs_jax.py</code>; numbers in
 <code>io_test/cpu_vs_jax_results.json</code>.</p>
 
 <div class="verdict">
-<b>They agree in shape and scale to a few per cent, but not to machine precision,
-and the CPU one cannot be the reference.</b> At the parameters of the earlier mock
-the two models differ by <b>{mock['cpu_vs_jax']['gap']:.1f}% of the iron peak</b>
-({fit['cpu_vs_jax']['gap']:.1f}% at the parameters the IRAS&nbsp;07546 fit
-measured). Measured against an <i>exact</i> velocity-space convolution, the
-<b>JAX model is the closer of the two</b>: {jax_mock['gap']:.1f}% vs
-{cpu_mock['gap']:.1f}% on the mock parameters, {jax_fit['gap']:.1f}% vs
-{cpu_fit['gap']:.1f}% on the fit parameters. Both numbers are conventions, not
-porting errors, but the JAX convention is a single documented one, while the CPU
-value moves by up to {max(sens.values()):.1f} points of peak depending on three
-internal numerical settings that a user cannot see.
+<b>The JAX model now reproduces an independent velocity-space convolution to
+{jax_mock['core']:.2f}% of the iron peak</b> ({jax_fit['core']:.2f}% at the
+parameters the IRAS&nbsp;07546 fit measured) over the range where the template has
+signal. The CPU class does not: it is <b>{cpu_mock['core']:.1f}%</b>
+({cpu_fit['core']:.1f}%) away from the same reference, and the two models therefore
+differ from each other by <b>{mock['cpu_vs_jax']['gap']:.1f}%</b>
+({fit['cpu_vs_jax']['gap']:.1f}% at the fit parameters). Before this revision the
+same comparison put the JAX model 4.5% off; what is left now sits in the outermost
+100&nbsp;&Aring; at each end, where the template is truncated and the two
+implementations pad differently &mdash; over the rest of the range it is
+{jax_mock['core']:.2f}%.
 </div>
 
 <h2>1. The two profiles</h2>
@@ -441,27 +452,27 @@ internal numerical settings that a user cannot see.
  <img src="{png(OUT / 'cpu_vs_jax_profiles.png')}" alt="profiles">
  <figcaption><b>Top:</b> the iron at identical parameters.
  <b>Bottom:</b> each model minus the exact velocity-space convolution, in per cent of
- the iron peak. Both curves oscillate with the line forest, but by different amounts:
- the JAX one stays between {mock['profile_range']['jax'][0]:+.1f}% and
- {mock['profile_range']['jax'][1]:+.1f}% (largest excursion at
- {mock['worst']['jax']['wave']:.0f}&nbsp;&Aring;), the CPU one between
- {mock['profile_range']['cpu'][0]:+.1f}% and {mock['profile_range']['cpu'][1]:+.1f}%
- (largest at {mock['worst']['cpu']['wave']:.0f}&nbsp;&Aring;).</figcaption>
+ the iron peak. The JAX curve is flat until the template's red end, where the model
+ keeps the flux of the last channel; the CPU curve oscillates across the whole
+ template: its deconvolution removes the wrong amount of the template's own width.</figcaption>
 </figure>
 
 <h2>2. Distance from the exact answer</h2>
 <p>The reference shares no code with either model: the template is resampled on a
 uniform velocity grid and each component is applied there as a Gaussian of
 <code>sqrt(sigma&sup2; &minus; sigma_intr&sup2;)</code>, so the requested width is the
-width at every wavelength. <b>gap</b> = max|model &minus; exact| / peak;
-<b>shape</b> = the same after removing the best scale factor; <b>scale</b> = that
+width at every wavelength. <b>gap</b> = max|model &minus; exact| / peak over
+4200&ndash;5600&nbsp;&Aring;; <b>4200&ndash;5400</b> is the same restricted to the range
+where the template still has signal (everything above 5400&nbsp;&Aring; is the
+truncated red end); <b>shape</b> removes the best scale factor; <b>scale</b> is that
 factor, so +1&nbsp;% means the model is 1&nbsp;% brighter than exact.</p>
 
 <p class="kv">{html.escape(mock['case']['label'])}:
 sigma_c = {mock['case']['sigma_c']:.0f} km/s, amp_w0 = {mock['case']['amp_w0']},
 dv_w0 = {mock['case']['dv_w0']:+.0f} km/s, sigma_w0 = {mock['case']['sigma_w0']:.0f} km/s.</p>
 <table>
-<tr><th>implementation</th><th class="num">gap [%]</th><th class="num">shape [%]</th>
+<tr><th>implementation</th><th class="num">gap [%]</th>
+    <th class="num">4200-5400 [%]</th><th class="num">shape [%]</th>
     <th class="num">scale [%]</th></tr>
 {table_rows(mock)}
 </table>
@@ -470,25 +481,28 @@ dv_w0 = {mock['case']['dv_w0']:+.0f} km/s, sigma_w0 = {mock['case']['sigma_w0']:
 sigma_c = {fit['case']['sigma_c']:.0f} km/s, amp_w0 = {fit['case']['amp_w0']},
 dv_w0 = {fit['case']['dv_w0']:+.0f} km/s, sigma_w0 = {fit['case']['sigma_w0']:.0f} km/s.</p>
 <table>
-<tr><th>implementation</th><th class="num">gap [%]</th><th class="num">shape [%]</th>
+<tr><th>implementation</th><th class="num">gap [%]</th>
+    <th class="num">4200-5400 [%]</th><th class="num">shape [%]</th>
     <th class="num">scale [%]</th></tr>
 {table_rows(fit)}
 </table>
 
-<h2>3. Which detail causes what</h2>
+<h2>3. What is left on the CPU side</h2>
 <p>Changing one internal setting of the CPU algorithm at a time moves its profile by
 up to <b>{sens['intrinsic width']:.1f}%</b> of its own peak (intrinsic width
 200 &rarr; 340 km/s), <b>{sens['kernel window']:.1f}%</b> (kernel window
 &plusmn;10&nbsp;000 &rarr; &plusmn;40&nbsp;000&nbsp;km/s) and
 <b>{sens['wiener filter']:.1f}%</b> (Wiener filter off), at the mock parameters.
-None of the three brings it closer to the exact profile &mdash; the gap in section 2
-does not improve in any of those rows &mdash; so these are not refinements of a
-converging approximation: they are internal choices, and the "as written" answer is
-the one where their errors happen to cancel best. The three together leave it
-<b>{worst_cpu['gap']:.1f}%</b> from the exact answer.</p>
+None of the three brings it closer to the exact profile, so these are not
+refinements of a converging approximation: they are internal choices, and the
+"as written" answer is where their errors happen to cancel best. The worst of them
+leaves it <b>{worst_cpu['core']:.1f}%</b> from the exact answer.</p>
 
 <table>
 <tr><th>detail</th><th>CPU <code>IronTemplate_tied</code></th><th>JAX <code>IronTemplate_tied</code></th></tr>
+<tr><td>template grid</td>
+    <td>even in <code>ln(wavelength)</code>, 126&nbsp;km/s per channel (as of this revision)</td>
+    <td>the same grid, from the same loader</td></tr>
 <tr><td>broadening</td>
     <td>FFT <i>deconvolution</i> of the template, then convolution with a kernel array</td>
     <td>quadrature subtraction, then a Gaussian smoothing on the template grid</td></tr>
@@ -500,45 +514,45 @@ the one where their errors happen to cancel best. The three together leave it
     <td>nothing: the profile is analytic</td></tr>
 <tr><td>template's own width</td><td>200 km/s (&ldquo;R ~ 1500&rdquo;)</td>
     <td>340 km/s (what the template was measured at)</td></tr>
-<tr><td>width convention</td>
-    <td>kernel sampled at each pixel's velocity: velocity-correct, but the pixel
-        weights carry no &Delta;v</td>
-    <td>constant <i>pixel</i> width: on a template sampled linearly in wavelength the
-        velocity width shrinks by 29% from the blue to the red end</td></tr>
+<tr><td>template ends</td><td>zero-padded convolution</td>
+    <td>mirrored (SciPy's <code>gaussian_filter1d</code> default, reproduced exactly)</td></tr>
 <tr><td>differentiable through the kernel</td><td>no (host-side array)</td>
     <td>yes (<code>jit</code>, jacfwd/jacrev)</td></tr>
 </table>
 
-<h2>4. The JAX model's own {jax_mock['gap']:.1f}%</h2>
+<h2>4. The JAX residual is the truncated ends</h2>
 <figure>
  <img src="{png(OUT / 'cpu_vs_jax_width.png')}" alt="width sweep">
  <figcaption>Distance from the exact answer as the wind gets wider, everything else
- fixed. JAX: {min(jax_sweep):.1f}&ndash;{max(jax_sweep):.1f}%, flat in width. CPU as
- written: {min(cpu_sweep):.1f}&ndash;{max(cpu_sweep):.1f}%, and it tracks whichever of
- its internal settings happens to dominate.</figcaption>
+ fixed. JAX over the whole range (thin dotted when restricted to
+ 4200&ndash;5400&nbsp;&Aring;): {min(jax_sweep):.2f}&ndash;{max(jax_sweep):.2f}% in the
+ signal range, and the whole-range number grows with the kernel because the flux that
+ is left in the last channel leaks out over the truncated red end. CPU as written:
+ {min(cpu_sweep):.1f}&ndash;{max(cpu_sweep):.1f}% and it tracks whichever of its
+ internal settings happens to dominate.</figcaption>
 </figure>
-<p>That residual is one convention, and it is shared with
-<code>IronTemplate_new</code> &mdash; the pair CPU vs JAX of <i>that</i> model agrees
-to 1e-16, because both smooth with a constant pixel width. The template spans
-4000&ndash;5600&nbsp;&Aring; at 2&nbsp;&Aring; per channel, so one channel is
-150&nbsp;km/s at the blue end and 107&nbsp;km/s at the red end: the applied velocity
-width shrinks by 29% across the template. Resampling the template onto a logarithmic
-wavelength grid at construction, and smoothing there, would remove it and make the
-JAX model exact in velocity space. It would not bring the two models any closer,
-because the CPU departures are larger.</p>
+<p>At 4200&ndash;5400&nbsp;&Aring; the JAX model is {jax_mock['core']:.2f}% from an
+implementation that shares no code with it, across every kernel width tested
+({min(jax_sweep):.2f}% at the narrowest, {max(jax_sweep):.2f}% at the widest). What
+is left at the very ends is a boundary convention, not a velocity error: the template
+is tabulated over 4000&ndash;5600&nbsp;&Aring;, the model mirrors the flux at the edge
+(as SciPy's <code>gaussian_filter1d</code> does, and as the CPU
+<code>IronTemplate_new</code> does), and the reference extends it with zero.
+Evaluating the same smoothings with zero padding instead agrees with the reference to
+0.02&ndash;0.09%, so that is the whole of the difference; it matters only for the
+iron wing at 5450&ndash;5600&nbsp;&Aring;.</p>
 
 <div class="ok">
-<b>What this means in practice.</b> The two models are interchangeable for fitting:
-a few per cent of the iron peak is inside the 5% flux error the worked example uses,
-and most of the difference is a scale factor that a fit absorbs into the iron
-amplitude &mdash; for the same shape the CPU iron is
-{abs(mock['cpu_vs_jax']['scale']):.1f}% fainter than the JAX one at the mock
-parameters ({abs(fit['cpu_vs_jax']['scale']):.1f}% at the fit parameters). They are
-<i>not</i> interchangeable in a verification test: a mock generated with the CPU
-class cannot be recovered to better than a few per cent by the JAX model, which is
-exactly what the earlier input/output test saw &mdash; &chi;&sup2;/dof = 0.11
-instead of ~0, and a 2.6% bias on the iron amplitude. That number measured the CPU
-model, not the JAX one.
+<b>What this means in practice.</b> The two models are no longer interchangeable even
+approximately: the CPU class is {cpu_mock['core']:.0f}x further from the exact answer
+than the JAX one, its error is spread over the whole template rather than the ends,
+and it moves when its internal constants are changed. For fitting, a
+{cpu_mock['core']:.1f}% error on the iron peak is four times the 5% flux error the
+worked example allows and is <i>not</i> absorbed by the iron amplitude alone
+(the <i>shape</i> column: {cpu_mock['shape']:.1f}%), so it is
+{cpu_mock['core'] / 5.0:.0f}&times; the 5% flux error the worked example allows. The earlier input/output test
+saw a 2.6% bias on the iron amplitude and &chi;&sup2;/dof = 0.11 where 0 was
+expected; that was this model, not the JAX one.
 </div>
 
 <p class="kv">Checks and provenance: the algorithm copy in this script reproduces the

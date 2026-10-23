@@ -387,9 +387,11 @@ through every kernel parameter.  (The CPU ``IronTemplate_tied`` takes the other
 route -- FFT deconvolution plus a Wiener filter, then a convolution with an
 explicit array -- which is stable but cannot be differentiated through ``dv`` and
 ``sigma``.  It is *not* the same function: at the same parameters the two differ by
-about 10% of the iron peak, measured in
-``develop/dev_jax/io_test/iron_tied_io_test.html``, so it cannot be used as the
-reference for a parity test of this model.)
+15% of the iron peak, and against an independent velocity-space convolution the CPU
+class is 11-50% off (it deconvolves by a 200 km/s intrinsic width where the template
+measured 340, cuts its kernel at +/-10 000 km/s and filters the result), while this
+model is exact to 0.14% -- measured in ``develop/dev_jax/io_test/cpu_vs_jax.html``.
+So the CPU class cannot be the reference for a parity test of this model.)
 
 **Cost.**  The convolution runs on the template grid (801 channels for
 ``park2022``), not on the 80 000-pixel spectrum, and only the sum is interpolated
@@ -404,15 +406,21 @@ than on the spectrum, and the kernel radius is static ``jnp`` data sized from th
 widest width the model can be asked for (the prior bound inside a fit, the widest
 constructor value outside one), so nothing re-traces when a sample moves.
 
-**One caveat about the widths.**  The template is sampled linearly in wavelength
-(2 A over 4000-5600 A), so one channel is 150 km/s in velocity at the blue end and
-107 km/s at the red end, while the model smooths with a constant *pixel* width.
-The velocity width actually applied at 5600 A is therefore 29% smaller than the one
-asked for.  Both the CPU ``IronTemplate_new`` and the JAX models share this
-convention -- which is why their parity is exact -- but do not quote a single
-velocity dispersion for the iron without knowing it.  Resampling the template onto
-a logarithmic wavelength grid would remove the approximation; the test report
-above quantifies it at 4.3% of the iron peak.
+**The template grid is even in the logarithm of wavelength.**  As tabulated, both
+templates are even in *wavelength* (``park2022``: exactly 2 A over 4000-5600 A), so
+one channel would be 150 km/s at the blue end and 107 km/s at the red end and a
+Gaussian of a given ``sigma`` would be a different number of channels at each end --
+29% narrower where the template is red.  Both backends therefore resample at load
+time, through :func:`galspec.iron_template.load_iron_template` (which calls
+:func:`galspec.stellar_continuum.log_rebin`), onto a grid with constant
+``dln(lambda)``: 126 km/s per channel, 801 channels, the same range.  Every model
+built on the template -- the CPU and JAX ``IronTemplate``, ``IronTemplate_new`` and
+``IronTemplate_tied`` -- broadens it in velocity space by construction, and the CPU
+and JAX versions still agree to 1e-16 because they share the grid.  Against an
+independent convolution on a uniform velocity grid the JAX tied iron is then
+0.04-0.14% of the iron peak over 4200-5400 A, where the template has signal; only
+the outermost 100 A at each end differ, and that is a padding convention, not a
+velocity error.  ``tests/test_model_features.py`` pins both properties.
 
 LaTeX labels for parameters
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~

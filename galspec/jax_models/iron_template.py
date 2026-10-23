@@ -50,7 +50,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..constants import ls_km
-from ..utils import package_path, splitter
 from .core import JaxModel, ParamSpec
 from .functional import gaussian_smooth1d
 
@@ -64,26 +63,26 @@ _DEFAULT_SIGMA_MAX = 5000.0
 _MIN_SIGMA = 1e-6
 
 
+#: Intrinsic dispersion of each template [km/s], i.e. the broadening already
+#: present in the reference object before any AGN width is applied.
+_INTRINSIC_DISPERSION = {
+    "park2022": 800.0 / 2.3548,      # Mrk 493
+    "boroson1992": 900.0 / 2.3548,   # I Zw 1
+}
+
+
 def _load_template(template_name: str):
-    """Read the Fe II template exactly as the CPU model does (normalised to 1)."""
-    from astropy.table import Table
+    """Read the Fe II template exactly as the CPU model does.
 
-    if template_name == "park2022":
-        table = Table.read(f"{package_path}{splitter}data{splitter}irontemplate_park2022.dat",
-                           format="cds")
-        wave = np.asarray(table["Wave"].data, dtype=float)
-        flux = np.asarray(table["Flux"].data, dtype=float)
-        stddev_intr = 800.0 / 2.3548          # Mrk 493 intrinsic dispersion
-    elif template_name == "boroson1992":
-        table = Table.read(
-            f"{package_path}{splitter}data{splitter}irontemplate_boroson1992.ipac", format="ipac")
-        wave = np.asarray(table["Spectral_axis"].data, dtype=float)
-        flux = np.asarray(table["Intensity"].data, dtype=float)
-        stddev_intr = 900.0 / 2.3548          # I Zw 1 intrinsic dispersion
-    else:
-        raise KeyError(f"Cannot recognize the iron template model ({template_name})!")
+    The grid comes from :func:`galspec.iron_template.load_iron_template`, so the
+    template is *even in ln(wavelength)* -- constant velocity per channel -- for
+    both backends.  Smoothing on it is therefore a convolution in velocity space,
+    which is what the model means.
+    """
+    from ..iron_template import load_iron_template
 
-    flux = flux / np.max(flux)
+    wave, flux = load_iron_template(template_name)
+    stddev_intr = _INTRINSIC_DISPERSION[template_name]
     # CPU normalises by the maximum inside 4500 < wave < 5500; keep identical.
     window = (wave > 4500) & (wave < 5500)
     flux = flux / np.max(flux[window])
@@ -120,7 +119,8 @@ class _IronBase(JaxModel):
         self._wave_temp = jnp.asarray(wave)
         self._flux_temp = jnp.asarray(flux)
         self._stddev_intr = float(stddev_intr)
-        self._vchan = float((wave[1] - wave[0]) / wave[0] * ls_km)
+        # constant across a log-even grid, hence one number for the whole template
+        self._vchan = float((np.log(wave[1]) - np.log(wave[0])) * ls_km)
 
         upper = bounds.get("sigma", (None, None))[1] if bounds else None
         if sigma_max is None:

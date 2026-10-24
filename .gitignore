@@ -199,3 +199,6 @@ example/output/
 
 # the last executed copy of the example notebook, kept by _build_notebook.py
 example/*.executed.ipynb
+
+# re-renderable fit output (see develop/dev_jax/broad_line_components.py --rebuild)
+develop/dev_jax/io_test/*.pkl

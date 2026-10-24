@@ -887,9 +887,10 @@ the toggles) and its output lands in ``example/output/iras07546_jax_toggle_*``.
 The answer for IRAS 07546+3928
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The run asked for at most four broad components and returned **four**: in every
-one of the 228 281 equally weighted samples all three wings are on, and at the 3%
-floor ``P(N = 3) = 1.000``.  The three Bayes factors are unbounded above (no sample
+The run asked for at most four broad components and returned **four** -- a core
+plus three wings: in every one of the 228 281 equally weighted samples all three
+wings are on, so at the 3% floor the posterior on the *wing* count is
+``P(3 wings) = 1.000``.  The three Bayes factors are unbounded above (no sample
 in the run switched any of the wings off), so this is not a marginal call.  Sorted
 by width, broad H-alpha comes out as:
 
@@ -954,8 +955,8 @@ their posteriors are perfectly well constrained (the [S II] doublet comes back a
 *width*; the amplitude entries are the diagnostic's tolerance, not the data.
 
 This is a single object, and the point of the recipe is that the answer is measured
-rather than assumed: on the mocks the same code stops at two wings where two are
-enough, and here it does not stop until four components are in.
+rather than assumed: on the mocks the same code stops at three components where
+three are enough, and here it does not stop until four are in.
 
 Reading the answer
 ~~~~~~~~~~~~~~~~~~
@@ -965,7 +966,7 @@ Two numbers need care.
 * **Labels are not identified.**  Two components of similar width can swap index
   from sample to sample, and the sampler is not asked which one is "the" wind.
   Only the *count* and the *width-sorted* set of components are meaningful: on
-  the two-wing mock the two real wings come back at their true widths under
+  the 3-component mock the two real wings come back at their true widths under
   whatever index the sampler happens to give them, and the same physical component
   is wing 0 in one sample and wing 2 in the next.  The study script therefore
   reports the count, the per-index probabilities, *and* a width-sorted table; the
@@ -989,66 +990,71 @@ Calibration on mocks
 
 ``develop/dev_jax/broad_line_components.py`` asks the question of data whose answer
 is known: four mocks (2401 pixels around H-beta, 1% noise) built from the example's
-own truth, with 0, 1, 2 and 3 wings, each fitted with three configurations.  It
+own truth, with 1, 2, 3 and 4 components, each fitted with three configurations.  It
 writes ``develop/dev_jax/io_test/component_selection.html`` (figures, per-component
 posteriors and the Bayes factors) and a JSON file with the same numbers.
 
-The column is the mode of the floored count -- the number of wings reported -- with
+Each mock is named by the number of Gaussians it was built from (a core plus extra
+wings, so ``2 components`` means one wing).  A cell is the mode of the floored count
+-- the number of *wings* reported, so the number of components is one more -- with
 its posterior probability in brackets:
 
 .. list-table::
    :header-rows: 1
 
-   * - mock
-     - generated wings
+   * - mock (components)
+     - wings when on
      - linear slab, nlive 400
      - linear slab, nlive 1000
      - log slab, nlive 1000
-   * - 0 wings
+   * - 1 component
      - 0
      - 0 (1.00)
      - 0 (1.00)
-     - 0 (0.90)
-   * - 1 wing
+     - 0 (0.98)
+   * - 2 components
      - 1
-     - 1 (0.99)
-     - 1 (1.00)
-     - 1 (0.63)
-   * - 2 similar wings
+     - 2 (0.91)
+     - 1 (0.96)
+     - 1 (0.64)
+   * - 3 similar components
      - 2
      - 2 (1.00)
      - 2 (1.00)
-     - 2 (1.00)
-   * - 3 overlapping wings
+     - 2 (0.91)
+   * - 4 overlapping components
      - 3
      - 2 (1.00)
      - 2 (1.00)
-     - 2 (0.83)
+     - 2 (1.00)
 
 Three things are worth reading off this table.
 
 * **The count is the minimum the data need, not the count that generated them.**
-  For 0, 1 and 2 wings it is exactly the generating number.  For the three-wing
-  mock it is 2 -- and that is the right answer to the question as asked: a
-  three-component model (core plus two wings) fits that mock at chi2/dof = 1.013,
-  and adding the third wing buys ``dchi2 = 1.1`` for three extra parameters
-  (p = 0.78).  Three overlapping wings that differ only in width are not separately
-  required by 1%-noise data, so two is the minimum sufficient count.  A mock whose
-  components *are* separable cannot be made by piling on overlapping Gaussians --
-  the family is too flexible -- which is itself the main result for real data: the
-  number of components saturates at what the profile shape and the noise support.
+  For 1, 2 and 3 components it is exactly the generating number.  For the mock made
+  with four components it is 3 -- and that is the right answer to the question as
+  asked: a three-component model (core plus two wings) fits that mock at
+  chi2/dof = 1.016, and dropping to two components costs ``dchi2 = 49`` for three
+  parameters (p = 3e-10), so three is the minimum.  Three overlapping wings that
+  differ only in width are not separately required by 1%-noise data: two wings are
+  enough.  A mock whose components *are* separable cannot be made by piling on
+  overlapping Gaussians -- the family is too flexible -- which is itself the main
+  result for real data: the number of components saturates at what the profile shape
+  and the noise support allow.
 * **The linear slab is the recommended one.**  The log-uniform slab puts a second
-  wing above the 3% floor in 0.37 of the posterior on the one-wing mock (0.52
+  wing above the 3% floor in 0.35 of the posterior on the 2-component mock (0.46
   before the floor), against 0.00 for the linear slab, by concentrating density at
   the small amplitudes where an extra Gaussian can hide in the noise.  The floor is
-  what stops that wing from being reported; the slab shape is what lets it exist.
-* **Use 1000 live points when the count is the answer.**  In the run tabulated
-  above, 400 and 1000 agree on all four mocks; but a repeat of the one-wing mock at
-  400 live points put 0.91 of the posterior on a spurious second wing, which is
-  exactly the failure mode the floor and the linear slab are there to suppress.  At
-  1000 live points the answer was 1 (0.99) in both runs.  400 is marginal for a
-  40-parameter model with gated amplitudes; the cost is a factor of a few in wall
-  time, and the count is the number the run exists to produce.
+  what keeps that wing out of the reported count, but it costs confidence: 0.64
+  against 0.96 for the linear slab.  A slab that hides mass in the noise is not a
+  slab to build an answer on.
+* **Use 1000 live points when the count is the answer.**  400 gets three of the four
+  mocks right and the 2-component one wrong: it puts 0.91 of the posterior on a
+  spurious second wing, reproducibly, where 1000 live points give the right count at
+  P = 0.96.  That is exactly the failure mode the floor and the linear slab exist to
+  suppress, and it is why the recipe is not a four-hundred-point recipe.  400 is
+  marginal for a 40-parameter model with gated amplitudes; 1000 costs a factor of a
+  few in wall time, and the count is the number the run exists to produce.
 
 What it does not do
 ~~~~~~~~~~~~~~~~~~~

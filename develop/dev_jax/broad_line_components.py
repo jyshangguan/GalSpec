@@ -83,6 +83,17 @@ SIGMA_RANGE = (300.0, 8000.0)
 DV_RANGE = 6000.0
 #: a wing has to reach this fraction of the core peak to count as needed
 MIN_WING_FRACTION = 0.03
+#: components -> bar colour, shared by every bar chart here, so the same count is the
+#: same colour wherever it appears
+COUNT_COLOURS = {1: "#a0aec0", 2: "#2b6cb0", 3: "#2f855a", 4: "#c05621", 5: "#553c9a"}
+
+
+def _ink(colour):
+    """Black or white, whichever reads better on ``colour`` (WCAG relative luminance)."""
+    rgb = [int(colour[i:i + 2], 16) / 255.0 for i in (1, 3, 5)]
+    lin = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in rgb]
+    luminance = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+    return "black" if luminance > 0.18 else "white"
 
 CORE = {k: v for k, v in io.TRUTH.items() if "_w" not in k}
 WING0 = {k: v for k, v in io.TRUTH.items() if "_w0" in k}
@@ -383,8 +394,8 @@ def fig_toggle(payload):
                 lo, mid, hi = np.percentile(values[on], [16, 50, 84])
                 ax.plot([lo, hi], [i, i], color=colours[i], lw=8, alpha=0.4,
                         solid_capstyle="butt")
-                ax.plot([mid], [i], "o", color=colours[i], ms=6)
-            labels.append(f"wing {i}\nzero in {1 - on.mean():.0%}")
+                ax.plot([mid], [i], "o", color=colours[i], ms=4.5)
+            labels.append(f"wing {i}\nzero in {1 - on.mean():.1%}")
         ax.axvline(MIN_WING_FRACTION, color="0.45", ls=":", lw=1.0, zorder=0)
         ax.set_xscale("log")
         ax.set_xlim(0.008, 1.15)
@@ -407,15 +418,15 @@ def fig_counts(payload):
     truths = [t for t in CASES if t in rows]
     fig, axes = plt.subplots(1, max(len(truths), 1), figsize=(2.9 * max(len(truths), 1), 2.8),
                              sharey=True, squeeze=False)
-    colours = {0: "#a0aec0", 1: "#2b6cb0", 2: "#2f855a", 3: "#c05621"}
     for ax, truth in zip(axes[0], truths):
         n = np.arange(N_WINGS + 1) + 1          # components = core + wings
         p = np.asarray(rows[truth]["p_count_floor"])
         mode = int(np.argmax(p))
-        ax.bar(n, p, 0.72, color=[colours.get(i, "0.6") for i in range(len(n))])
+        ax.bar(n, p, 0.72, color=[COUNT_COLOURS.get(int(k), "0.6") for k in n])
         if p[mode] > 0.35:
             ax.text(n[mode], p[mode] / 2, str(n[mode]), ha="center", va="center",
-                    color="white", fontsize=10, fontweight="bold")
+                    color=_ink(COUNT_COLOURS.get(int(n[mode]), "0.6")),
+                    fontsize=10, fontweight="bold")
         n_true = n_true_wings(CASES[truth]) + 1
         ax.plot([n_true], [1.03], marker="v", ms=7, color="#c53030", clip_on=False)
         ax.text(n_true, 1.06, "in the mock", ha="center", va="bottom",
@@ -513,10 +524,10 @@ def fig_real(payload):
     p = np.asarray(real["p_count_floor"])
     n = np.arange(len(p)) + 1                   # components = core + wings
     reported = int(np.argmax(p))
-    colours = {0: "#a0aec0", 1: "#2b6cb0", 2: "#2f855a", 3: "#c05621", 4: "#553c9a"}
-    axp.bar(n, p, 0.7, color=[colours.get(i, "0.6") for i in n])
+    axp.bar(n, p, 0.7, color=[COUNT_COLOURS.get(int(k), "0.6") for k in n])
     axp.text(n[reported], float(p[reported]) / 2, str(n[reported]), ha="center",
-             va="center", color="white", fontsize=10, fontweight="bold")
+             va="center", color=_ink(COUNT_COLOURS.get(int(n[reported]), "0.6")),
+             fontsize=10, fontweight="bold")
     axp.set_xticks(n)
     axp.set_xlabel("components (core + wings)")
     axp.set_ylabel("posterior probability")

@@ -838,8 +838,9 @@ are conservative -- and it is what the real object below shows.</li>
 wing across the posterior samples.  A wing either sits at exactly zero -- which a log
 axis cannot show, so the share of samples is written on the row -- or takes a real
 value.  In the mock made with 2 components one wing is on and two are at zero; in the
-mock made with 3 components, two are on.  The dotted line is the 3% floor of step
-1.</p>
+mock made with 3 components, two are on.  The dotted line is the 3% floor of step 1:
+a wing whose dot sits far below it is on in the sampler but not a component the data
+need, which is exactly the distinction the count uses.</p>
 
 <h2>2. The answer for each mock</h2>
 <p>Four mocks &mdash; a core plus 0, 1, 2 and 3 extra components &mdash; were fitted

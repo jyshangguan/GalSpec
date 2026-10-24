@@ -147,10 +147,11 @@ fitted in its `IronTemplate_tied` form: the iron is broadened by the profile of
 the broad H-alpha component, tied component by component -- the core to the broad
 core, the wind to the wind -- so its only free parameter is its amplitude. It
 carries no weights of its own (a `Line_MultiGauss` is already a weighted sum, and
-the convolution renormalises it). The two width ranges of the broad line do not
-overlap, because the components are exchangeable and the posterior would otherwise
-be bimodal; `develop/dev_jax/io_test/iron_tied_io_test.html` measures that and
-shows a mock recovered with it. (`IronTemplate_new` -- one velocity dispersion
+the convolution renormalises it). The core and the wind are exchangeable, so the
+wind amplitude is bounded by its own core; that alone removes the mirror branch,
+and the widths are left free to overlap.
+`develop/dev_jax/io_test/iron_tied_io_test.html` measures the degeneracy and
+shows a mock recovered with the bound in place. (`IronTemplate_new` -- one velocity dispersion
 and a velocity shift -- remains available, and the two agree exactly for a
 one-component kernel.) The error bar on every pixel is the measured pixel-to-pixel
 scatter plus **5% of the flux** in quadrature, which stands for the photon noise
@@ -164,6 +165,17 @@ the whole run is written to a FITS file that
 `galspec.jnesty_fit_io.load_jnesty_fit_from_fits` turns back into a working fit.
 Parameter labels come from `galspec.param_labels`, so plots print
 `BH$\alpha$:$\sigma_{w0}$` instead of `Halpha.sigma_w0`.
+
+How many broad-line components the data actually need is the question of
+`example/fit_iras07546_jax_toggle.py`: the three Balmer lines get a core plus
+**three** wings, each wing amplitude carries a toggle prior that puts a fixed
+fraction of the prior volume at exactly zero (`galspec.priors`), and one run then
+returns a posterior on the number of components. It is calibrated on mocks with a known
+answer by `develop/dev_jax/broad_line_components.py`, whose write-up is
+`docs/source/jax_gpu.rst` (section "How many components do the broad lines
+need?"). On IRAS 07546+3928 that run reports **four** components -- the count has
+posterior probability 1.000 at the 3%-of-core amplitude floor -- and improves
+chi2/dof from 0.321 (the published two-component fit) to 0.195.
 
 ## Example Notebooks
 

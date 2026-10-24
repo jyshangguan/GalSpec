@@ -269,6 +269,24 @@ class _TieFrom:
         return getattr(model[self.submodel], self.parameter)
 
 
+def broad_wing_count(fit):
+    """Wings of the broad-Balmer ``Line_MultiGauss``: 1 for the published fit.
+
+    The number lives in the model (``n_components``), not in the priors, so a
+    script that builds a four-component model gets a four-component astropy twin
+    and a four-row derived-quantities table without passing anything else around.
+    """
+    model = getattr(fit, "model", fit)
+    try:
+        return int(model["b_halpha"].n_components) - 1
+    except Exception:                                     # noqa: BLE001
+        names = set(getattr(fit, "full_param_names", ()))
+        count = 0
+        while f"b_halpha.sigma_w{count}" in names:
+            count += 1
+        return count
+
+
 def _tie_fn(backend, name):
     """``tie`` helpers of either backend (``jxm.tie.*`` or ``galspec.*``)."""
     return getattr(getattr(backend, "tie", backend), name)
@@ -318,7 +336,7 @@ def apply_model_labels(model, labels=None):
     return model
 
 
-def build_model(backend=jxm, include_iron=None):
+def build_model(backend=jxm, include_iron=None, n_balmer_wings=1):
     """The full model: two models per line, narrow and broad.
 
     ``include_iron`` defaults to "yes for the JAX model, no for the astropy twin":
@@ -351,6 +369,12 @@ def build_model(backend=jxm, include_iron=None):
     are written, so the Balmer decrement and the broad/narrow ratio both fall out
     of the fit.
 
+    ``n_balmer_wings`` sets how many wind components follow the core (so
+    ``n_components = 1 + n_balmer_wings``).  The published fit uses one; the
+    component-count study in ``example/fit_iras07546_jax_toggle.py`` asks the
+    sampler for up to three and switches them on and off.  He I 5876 and He II
+    4686 keep a single broad Gaussian either way.
+
     No convolution is applied: see the module docstring.
     """
     if include_iron is None:
@@ -381,10 +405,14 @@ def build_model(backend=jxm, include_iron=None):
     # broad H-alpha's.
     iron = None
     if include_iron:
-        iron = backend.IronTemplate_tied(n_components=2, amplitude=0.2, z=0.0,
-                                         dv_c=0.0, sigma_c=1500.0,
-                                         amp_w0=0.10, dv_w0=0.0, sigma_w0=6000.0,
-                                         name="FeII")
+        par_w = {}
+        if n_balmer_wings >= 1:
+            par_w.update(amp_w0=0.10, dv_w0=0.0, sigma_w0=6000.0)
+        for i in range(1, n_balmer_wings):
+            par_w.update({f"amp_w{i}": 0.05, f"dv_w{i}": 0.0, f"sigma_w{i}": 9000.0})
+        iron = backend.IronTemplate_tied(n_components=1 + n_balmer_wings,
+                                         amplitude=0.2, z=0.0, dv_c=0.0,
+                                         sigma_c=1500.0, name="FeII", **par_w)
         iron.z.fixed = True
 
     # -- narrow components: one Gaussian per line, one kinematics for all --------
@@ -393,14 +421,15 @@ def build_model(backend=jxm, include_iron=None):
                                      wavec=wavec, name=model_name)
 
     # -- broad components: a Line_MultiGauss, component 0 = broad core -----------
-    def broad(model_name, wavec, amp_c, amp_w0=0.2, amp_w1=None):
-        kwargs = {"n_components": 2 if amp_w1 is None else 3,
-                  "amp_c": amp_c, "dv_c": 0.0, "sigma_c": 1500.0, "wavec": wavec,
-                  "name": model_name, "amp_w0": amp_w0, "dv_w0": 0.0,
-                  "sigma_w0": 6000.0}
-        if amp_w1 is not None:
-            kwargs.update(amp_w1=amp_w1, dv_w1=0.0, sigma_w1=9000.0)
-        return backend.Line_MultiGauss(**kwargs)
+    def broad(model_name, wavec, amp_c, amp_w0=0.2):
+        par_w = {}
+        if n_balmer_wings >= 1:
+            par_w.update(amp_w0=amp_w0, dv_w0=0.0, sigma_w0=6000.0)
+        for i in range(1, n_balmer_wings):
+            par_w.update({f"amp_w{i}": 0.05, f"dv_w{i}": 0.0, f"sigma_w{i}": 9000.0})
+        return backend.Line_MultiGauss(n_components=1 + n_balmer_wings, amp_c=amp_c,
+                                       dv_c=0.0, sigma_c=1500.0, wavec=wavec,
+                                       name=model_name, **par_w)
 
     n_halpha = narrow("Halpha", LINE_WAVE["Halpha"], 2.2, "n_halpha")
     n_hbeta = narrow("Hbeta", LINE_WAVE["Hbeta"], 0.8, "n_hbeta")
@@ -478,8 +507,11 @@ def build_model(backend=jxm, include_iron=None):
     for line in (b_hbeta, b_hgamma):
         line.dv_c.tied = _tie_fn(backend, "tie_MultiGauss_dv_c")("b_halpha")
         line.sigma_c.tied = _tie_fn(backend, "tie_MultiGauss_sigma_c")("b_halpha")
-        line.dv_w0.tied = _tie_fn(backend, "tie_MultiGauss_dv_w0")("b_halpha")
-        line.sigma_w0.tied = _tie_fn(backend, "tie_MultiGauss_sigma_w0")("b_halpha")
+        for i in range(n_balmer_wings):
+            getattr(line, f"dv_w{i}").tied = _tie_fn(
+                backend, f"tie_MultiGauss_dv_w{i}")("b_halpha")
+            getattr(line, f"sigma_w{i}").tied = _tie_fn(
+                backend, f"tie_MultiGauss_sigma_w{i}")("b_halpha")
     for line in (b_hei, b_heii):
         line.dv_c.tied = _tie_fn(backend, "tie_MultiGauss_dv_c")("b_halpha")
         line.sigma_c.tied = _tie_fn(backend, "tie_MultiGauss_sigma_c")("b_halpha")
@@ -493,9 +525,10 @@ def build_model(backend=jxm, include_iron=None):
     if iron is not None:
         iron.dv_c.tied = _tie_fn(backend, "tie_MultiGauss_dv_c")("b_halpha")
         iron.sigma_c.tied = _tie_fn(backend, "tie_MultiGauss_sigma_c")("b_halpha")
-        iron.amp_w0.tied = _tie_fn(backend, "tie_MultiGauss_amp_w0")("b_halpha")
-        iron.dv_w0.tied = _tie_fn(backend, "tie_MultiGauss_dv_w0")("b_halpha")
-        iron.sigma_w0.tied = _tie_fn(backend, "tie_MultiGauss_sigma_w0")("b_halpha")
+        for i in range(n_balmer_wings):
+            for stem in ("amp_w", "dv_w", "sigma_w"):
+                getattr(iron, f"{stem}{i}").tied = _tie_fn(
+                    backend, f"tie_MultiGauss_{stem}{i}")("b_halpha")
 
     # -- doublet ratios fixed by atomic physics --------------------------------
     # (not [S II]: its ratio is density-sensitive and stays a free parameter)
@@ -526,7 +559,7 @@ def log_uniform(lower: float, upper: float):
     return transform
 
 
-def make_priors(flux):
+def make_priors(flux, n_balmer_wings=1):
     """Return ``(bounds, custom_priors, notes)`` for the whole model.
 
     Everything is derived from the spectrum itself, so the recipe transfers to
@@ -547,7 +580,11 @@ def make_priors(flux):
     * broad core (``b_halpha.sigma_c``): 300-8000 km/s, shifted by up to
       +-2500 km/s;
     * broad wind (``b_halpha.sigma_w0``): 800-25000 km/s (FWHM up to 59000 km/s),
-      shifted by up to +-6000 km/s.
+      shifted by up to +-6000 km/s;
+    * any further wings (``n_balmer_wings > 1``) reuse exactly those two priors, so
+      a wing is free to be narrower than the core and the ladder of components does
+      not smuggle in a width ordering.  Switching a wing *off* is a different prior,
+      applied by the study script through ``custom_priors``.
 
     ``develop/dev_jax/iron_tied_io_test.py`` measures the degeneracy with and
     without the amplitude limit.
@@ -582,6 +619,10 @@ def make_priors(flux):
         "b_halpha.dv_w0": (-6000.0, 6000.0),
         "b_halpha.sigma_w0": (800.0, 25000.0),
     }
+    for i in range(1, n_balmer_wings):        # extra wings: same priors as the first
+        bounds[f"b_halpha.amp_w{i}"] = wind
+        bounds[f"b_halpha.dv_w{i}"] = (-6000.0, 6000.0)
+        bounds[f"b_halpha.sigma_w{i}"] = (800.0, 25000.0)
     # narrow peaks, one per line
     for name in BALMER_NAMES:
         bounds[f"n_{name.lower()}.amplitude"] = amp
@@ -590,6 +631,8 @@ def make_priors(flux):
     for name in BALMER_NAMES:
         bounds[f"b_{name.lower()}.amp_c"] = amp
         bounds[f"b_{name.lower()}.amp_w0"] = wind
+        for i in range(1, n_balmer_wings):
+            bounds[f"b_{name.lower()}.amp_w{i}"] = wind
     bounds["b_hei.amp_c"] = amp
     bounds["b_heii.amp_c"] = amp
     for name in SINGLE_LINES:
@@ -609,7 +652,9 @@ def make_priors(flux):
                             "the bound breaks the core-wind exchange"),
         ("narrow lines", "30-800 km/s, one width for all, set by [O III]"),
         ("broad core", "300-8000 km/s, one width and shift for all broad lines"),
-        ("broad wind", "800-25000 km/s, its own width and shift"),
+        ("broad wind", "800-25000 km/s, its own width and shift"
+                       + (f"; {n_balmer_wings} wings, same priors"
+                          if n_balmer_wings > 1 else "")),
         ("iron template", "amplitude only: the broadening is broad H-alpha"),
         ("He I 5876", "narrow Gaussian + one broad component, same ratio prior"),
         ("[S II] 6716/6731", "both peaks free: the ratio is a density diagnostic"),
@@ -621,13 +666,18 @@ def make_priors(flux):
 # 5. Run the fit
 # --------------------------------------------------------------------------------------
 def run_fit(wave, flux, error, bounds, custom_priors, nlive=NLIVE, dlogz=DLOGZ,
-            max_iterations=200_000, device="auto", progress=None):
-    """Sample the posterior with JNesty.  No optimiser is involved anywhere."""
+            max_iterations=200_000, device="auto", progress=None, n_balmer_wings=1):
+    """Sample the posterior with JNesty.  No optimiser is involved anywhere.
+
+    ``n_balmer_wings`` must match the ``make_priors`` call that produced
+    ``bounds``: it decides how many components the model has.
+    """
     if progress is None:
         # Only draw the bar when someone is watching: in a batch job it would be
         # thousands of carriage-return updates in the log.
         progress = sys.stdout.isatty()
-    model = apply_model_labels(build_model(jxm))   # so the fit carries plot labels
+    model = apply_model_labels(build_model(jxm,     # so the fit carries plot labels
+                                          n_balmer_wings=n_balmer_wings))
     fit = JNesty_Fit(model, wave, flux, error,
                      bounds_dict=bounds, custom_priors=custom_priors,
                      nlive=nlive, bound="multi", device=device)
@@ -655,6 +705,9 @@ PARAM_UNITS = {
     ".alpha": "", ".dv_c": "km/s", ".sigma_c": "km/s", ".dv_w0": "km/s",
     ".sigma_w0": "km/s", ".dv_w1": "km/s", ".sigma_w1": "km/s",
     ".sigma": "km/s", ".dv": "km/s",
+    ".amp_w2": "(ratio to core)", ".amp_w3": "(ratio to core)",
+    ".dv_w2": "km/s", ".sigma_w2": "km/s",
+    ".dv_w3": "km/s", ".sigma_w3": "km/s",
 }
 
 PARAM_NOTES = {
@@ -677,11 +730,19 @@ PARAM_NOTES = {
     "b_halpha.dv_w0": "shift of the wind, relative to the core",
     "b_halpha.sigma_w0": "width of the wind (all broad lines)",
 }
+for _i in range(1, 4):
+    PARAM_NOTES.setdefault(f"b_halpha.dv_w{_i}",
+                           f"shift of wing {_i}, relative to the core")
+    PARAM_NOTES.setdefault(f"b_halpha.sigma_w{_i}",
+                           f"width of wing {_i} (all broad lines)")
 for _name in BALMER_NAMES:
     _low = _name.lower()
     PARAM_NOTES.setdefault(f"n_{_low}.amplitude", f"narrow {_name} peak")
     PARAM_NOTES.setdefault(f"b_{_low}.amp_c", f"broad core of {_name}")
     PARAM_NOTES.setdefault(f"b_{_low}.amp_w0", f"wind / broad core of {_name}")
+    for _i in range(1, 4):
+        PARAM_NOTES.setdefault(f"b_{_low}.amp_w{_i}",
+                               f"wing {_i} / broad core of {_name}")
 PARAM_NOTES.setdefault("n_hei.amplitude", "narrow He I 5876 peak")
 PARAM_NOTES.setdefault("b_hei.amp_c", "broad core of He I 5876")
 PARAM_NOTES.setdefault("b_heii.amp_c", "broad He II 4686 (single Gaussian)")
@@ -721,6 +782,7 @@ def derived_quantities(fit):
     samples = fit.samples_equal_weight
     index = {q: i for i, q in enumerate(fit.full_param_names)}
     fwhm = 2.0 * np.sqrt(2.0 * np.log(2.0))       # sigma -> FWHM, 2.3548
+    n_wings = broad_wing_count(fit)
 
     def get(sample, key):
         return sample[..., index[key]]
@@ -731,15 +793,19 @@ def derived_quantities(fit):
         wavec = LINE_WAVE[line]
         block = {}
         # the narrow Gaussian and the broad MultiGauss are separate models, so each
-        # component is read from the model it actually lives in
-        for label, amplitude, sigma in (
-                ("narrow", get(samples, f"n_{low}.amplitude"),
-                 get(samples, "OIII.sigma_c")),
-                ("broad core", get(samples, f"b_{low}.amp_c"),
-                 get(samples, "b_halpha.sigma_c")),
-                ("broad wind",
-                 get(samples, f"b_{low}.amp_c") * get(samples, f"b_{low}.amp_w0"),
-                 get(samples, "b_halpha.sigma_w0"))):
+        # component is read from the model it actually lives in.  One wing keeps the
+        # name it has always had in the tables; more wings are numbered, and each
+        # line's own ratio pairs with the *shared* width of that wing.
+        components = [("narrow", get(samples, f"n_{low}.amplitude"),
+                       get(samples, "OIII.sigma_c")),
+                      ("broad core", get(samples, f"b_{low}.amp_c"),
+                       get(samples, "b_halpha.sigma_c"))]
+        for i in range(n_wings):
+            label = "broad wind" if n_wings == 1 else f"broad wing {i}"
+            components.append((label,
+                               get(samples, f"b_{low}.amp_c") * get(samples, f"b_{low}.amp_w{i}"),
+                               get(samples, f"b_halpha.sigma_w{i}")))
+        for label, amplitude, sigma in components:
             # F = A sigma sqrt(2 pi) (lambda / c); A is in 1e-14 units and the
             # answer is quoted in 1e-17 erg/s/cm2, hence the 1e3.
             flux = amplitude * sigma * np.sqrt(2.0 * np.pi) * wavec / 299792.458 * 1e3
@@ -747,7 +813,9 @@ def derived_quantities(fit):
                 "fwhm": (np.median(fwhm * sigma), *np.percentile(fwhm * sigma, [16, 84])),
                 "flux": (np.median(flux), *np.percentile(flux, [16, 84])),
             }
-        broad = block["broad core"]["flux"][0] + block["broad wind"]["flux"][0]
+        broad = block["broad core"]["flux"][0] + sum(
+            block["broad wind" if n_wings == 1 else f"broad wing {i}"]["flux"][0]
+            for i in range(n_wings))
         block["broad/narrow"] = (broad / block["narrow"]["flux"][0], np.nan, np.nan)
         out[line] = block
 
@@ -887,7 +955,8 @@ def cpu_model_with_values(fit, wave):
                  - np.asarray(model_jax.flux(wave, theta_no_iron)))
 
     iron = _TabulatedCurve(wave, iron_flux, name="FeII")
-    parts = list(build_model(galspec))          # astropy leaves, no iron model
+    parts = list(build_model(galspec,                # astropy leaves, no iron model
+                             n_balmer_wings=broad_wing_count(fit)))
     parts.insert(1, iron)                       # right after the continuum
     model_cpu = parts[0]
     for part in parts[1:]:
@@ -994,7 +1063,9 @@ def plot_corner(fit, outfile, max_params=14):
     wanted = ("OIII.dv_c", "OIII.sigma_c", "b_halpha.dv_c", "b_halpha.sigma_c",
               "b_halpha.dv_w0", "b_halpha.sigma_w0", "Continuum.amplitude",
               "Continuum.alpha", "FeII.amplitude", "b_halpha.amp_c",
-              "b_halpha.amp_w0", "n_halpha.amplitude", "b_hei.amp_c",
+              "b_halpha.amp_w0", "b_halpha.amp_w1", "b_halpha.amp_w2",
+              "b_halpha.sigma_w1", "b_halpha.sigma_w2",
+              "n_halpha.amplitude", "b_hei.amp_c",
               "n_hei.amplitude", "b_heii.amp_c")
     keep = [i for i, name in enumerate(fit.full_param_names) if name in wanted][:max_params]
     # maths labels: "BH$\alpha$:$\sigma_{w0}$" instead of "b_halpha.sigma_w0"
@@ -1014,7 +1085,10 @@ HIST_PARAMS = ("b_halpha.amp_c", "b_halpha.amp_w0", "b_halpha.dv_c",
                "b_halpha.sigma_c", "b_halpha.dv_w0", "b_halpha.sigma_w0",
                "b_hbeta.amp_c", "b_hbeta.amp_w0", "n_halpha.amplitude",
                "OIII.sigma_c", "OIII.dv_c", "b_hei.amp_c", "n_hei.amplitude",
-               "b_heii.amp_c", "SII.amp_c0", "SII.amp_c1", "Continuum.alpha")
+               "b_heii.amp_c", "SII.amp_c0", "SII.amp_c1", "Continuum.alpha",
+               # present only when the model has more than one wing
+               "b_halpha.amp_w1", "b_halpha.sigma_w1", "b_halpha.dv_w1",
+               "b_halpha.amp_w2", "b_halpha.sigma_w2", "b_halpha.dv_w2")
 
 
 def plot_histograms(fit, outfile, params=HIST_PARAMS):
@@ -1054,6 +1128,8 @@ def parse_args(argv=None):
                         default=None, help="force the progress bar on")
     parser.add_argument("--no-progress", dest="progress", action="store_false",
                         help="never draw the progress bar")
+    parser.add_argument("--broad-wings", type=int, default=1,
+                        help="wind components after the broad core (default 1)")
     parser.add_argument("--quick", action="store_true",
                         help="rough answer in a few minutes (nlive=120, dlogz=0.5)")
     return parser.parse_args(argv)
@@ -1081,13 +1157,14 @@ def main(argv=None) -> int:
               f"median error {np.median(error[sel]):5.3f} "
               f"({100*np.median(error[sel]/flux[sel]):4.1f}%)")
 
-    model = apply_model_labels(build_model(jxm))
+    model = apply_model_labels(build_model(jxm, n_balmer_wings=args.broad_wings))
     submodels = sorted({q.split(".")[0] for q in model.qualified_param_names})
     print(f"\n[2/5] model: {len(submodels)} components, no LSF convolution, "
           f"{len(model.free_param_names)} free parameters")
     print("      " + ", ".join(submodels))
 
-    bounds, custom_priors, notes = make_priors(flux)
+    bounds, custom_priors, notes = make_priors(flux,
+                                               n_balmer_wings=args.broad_wings)
     print("\n[3/5] priors (no least-squares fit is used to set them):")
     for what, description in notes:
         print(f"      {what:20s} {description}")
@@ -1101,7 +1178,8 @@ def main(argv=None) -> int:
         warnings.simplefilter("ignore")
         fit = run_fit(wave, flux, error, bounds, custom_priors, nlive=args.nlive,
                       dlogz=args.dlogz, max_iterations=args.max_iterations,
-                      device=args.device, progress=args.progress)
+                      device=args.device, progress=args.progress,
+                      n_balmer_wings=args.broad_wings)
 
     print("\n[5/5] results")
     predicted, _ = report_quality(fit, wave, flux, error)

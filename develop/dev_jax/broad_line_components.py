@@ -35,6 +35,7 @@ broader than the core -- and a ladder of prior inclusion probabilities
 Outputs (default ``develop/dev_jax/io_test/``)
 ----------------------------------------------
 ``component_selection.html``    the report, with its figures embedded
+``component_selection_*.png``   the same four figures as files
 ``component_selection.json``    every number behind it (the figures are not repeated)
 """
 
@@ -1012,10 +1013,16 @@ def _render(payload: dict, out: Path, started: float | None = None) -> int:
     payload["checks"] = compute_checks(payload)
     payload["accepted"] = not [c for c in payload["checks"] if not c["ok"]]
     payload["images"] = {}
-    payload["images"]["toggle"] = io._b64(fig_toggle(payload))
-    payload["images"]["counts"] = io._b64(fig_counts(payload))
-    payload["images"]["mock_fits"] = io._b64(fig_mock_fits(payload))
-    payload["images"]["real"] = io._b64(fig_real(payload)) if payload.get("real") else ""
+    for name, build in (("toggle", fig_toggle), ("counts", fig_counts),
+                        ("mock_fits", fig_mock_fits), ("real", fig_real)):
+        if name == "real" and not payload.get("real"):
+            payload["images"][name] = ""
+            continue
+        encoded = io._b64(build(payload))
+        payload["images"][name] = encoded
+        # the same figure as a file: the report embeds it, this lets it be opened
+        (out / f"component_selection_{name}.png").write_bytes(
+            base64.b64decode(encoded))
 
     payload["notes"] = {
         "counts": ("mode, mode_floor, p_count, p_count_floor and wing_table counts "

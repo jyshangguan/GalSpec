@@ -746,3 +746,348 @@ spectral fitting, is produced by ``develop/dev_jax/make_report.py``.  It writes
 including in a sandboxed preview pane.  The same script also writes the four
 sections as separate pages (``index.html``, ``model.html``, ``results.html``,
 ``glossary.html``) for reading straight from a checkout.
+
+How many components do the broad lines need?
+--------------------------------------------
+
+``example/fit_iras07546_jax.py`` gives each broad Balmer line a core and one wind.
+That number was a modelling choice made before the fit; the fit then measured the
+widths of the components it was given.  The question this section answers is the
+one before it: **does the data need the second component at all, or a third?**
+
+The approach implemented here is to let the sampler decide.  A line is given
+``k_max`` components, and the amplitude of every component after the first carries
+a *toggle* prior: with some probability the amplitude is **exactly zero**, and that
+component contributes nothing.  The number of components then becomes a posterior
+-- one run reports how many Gaussians the profile needs, and how sure the data are.
+
+The same construction is available for any parameter, through
+:mod:`galspec.priors`.
+
+The model side: any number of components
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Nothing had to change in the models.  ``Line_MultiGauss(n_components=k)`` is a core
+(``amp_c``, ``dv_c``, ``sigma_c``) followed by ``k - 1`` wings, each with its own
+amplitude **ratio** to the core (``amp_w0``, ``amp_w1``, ...) and its own shift and
+width; ``IronTemplate_tied(n_components=k)`` takes the same kernel.  Both backends
+loop over ``n_components`` rather than over hard-coded indices, and
+``tests/test_jax_parity.py`` compares them for k up to 5 (flux agrees to 1e-16,
+i.e. to rounding, as for every other model).
+
+The tie helpers are generated for ``w0`` .. ``w4``
+(``tie_MultiGauss_amp_w2``, ``tie_MultiGauss_sigma_w3``, ...), so a component can
+be shared between lines as before: in the example the broad H-beta and H-gamma
+wings take H-alpha's shift and width component by component (they keep their own
+amplitudes -- each Balmer line has its own decrement), and the Fe II kernel follows
+H-alpha's profile.
+
+Extra components are cheap to evaluate and expensive to *sample*: on a 2401-pixel
+mock the batched forward model costs 57.2 ms per 400 parameter vectors at k = 2 and
+84.7 ms at k = 5, while the sampler's own cost grows with the dimension (each extra
+component adds 3 parameters per line).
+
+A prior that can switch a component off
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   import galspec
+
+   priors = {
+       # a spike at exactly zero (probability p_off), else a linear slab on (0, 1]
+       "b_halpha.amp_w0": galspec.uniform_toggle(p_off=0.2),
+       "b_hbeta.amp_w0": galspec.uniform_toggle(p_off=0.2),
+       "b_hgamma.amp_w0": galspec.uniform_toggle(p_off=0.2),
+   }
+   fit = JNesty_Fit(model, wave, flux, error, bounds_dict=bounds,
+                    custom_priors=priors, bound="multi", nlive=1000)
+
+   p = galspec.toggle_prior_odds(0.2)       # 0.2/0.8 = 0.25, for the Bayes factor
+
+The prior is applied as a *transform of the unit cube*: a uniform draw ``u`` with
+``u < p_off`` maps to ``0.0`` and everything else maps to the slab.  Two
+consequences matter.
+
+* The zero is **exact**, not small.  That is what makes it a spike-and-slab prior
+  in the statistical sense (George & McCulloch 1993; Kuo & Mallick 1998): a point
+  mass at zero, which has *finite* prior volume -- ``p_off`` of the cube -- as
+  opposed to a density on the reals, which has none.  A nested sampler can find a
+  region with finite volume; it could never find a point of measure zero.
+* Nothing couples the parameters.  ``JNesty_Fit`` applies each entry of
+  ``custom_priors`` to one cube coordinate, independently, so the transform cannot
+  enforce a hierarchical constraint among components.  All it does is allow a
+  component's amplitude to be zero.
+
+``galspec.priors`` also has ``log_uniform_toggle``: the same spike, but the slab is
+uniform *in the log*, which is the right shape when the gated quantity spans
+decades by itself -- an absolute amplitude in flux units, say, rather than a ratio
+to a core.  ``component_toggle`` is the general form both wrappers call (``slab=
+"linear"`` or ``"log"``), and a plain ``log_uniform`` is exported too, because the
+same file is the natural home for a fit's whole prior dictionary.
+
+For the wing *ratios* the linear slab is the honest choice: a ratio bounded by 1
+has no decade structure to be uniform in, and it is the same uniform prior the
+published fit already gives its wind.  On the mocks, a log slab actually did worse
+-- it concentrates density at the 1% amplitudes where an extra Gaussian hides in
+the noise (measured below).
+
+The Bayes factor of a component follows from the prior odds it was given:
+
+.. math::
+
+   \mathrm{BF} = \frac{P(\text{on})/P(\text{off})}{p_{\rm on}/p_{\rm off}}
+               = \frac{P(\text{on})/P(\text{off})}{(1 - p_{\rm off})/p_{\rm off}}.
+
+Dividing the prior odds out matters here: with a ladder of ``p_off``, the higher
+components are *a priori* unlikely, and would otherwise look rejected for that
+reason alone.
+
+...and an amplitude floor
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A switched-off component is unambiguous (``amp_w = 0`` exactly).  A component that
+is barely on is not: at 1% noise an unneeded Gaussian can sit at 1% of the core
+peak and buy a little chi-square from the noise, with a Bayes factor of ~400 in
+favour.  Measured on the mock in ``develop/dev_jax/broad_line_components.py``
+(2401 pixels, 1% noise, a line whose true profile has two components): a
+log-uniform slab produces exactly that false positive, at amplitudes of
+0.012-0.015 and BF = 391, and one sample of the run failed to converge.  The
+linear slab is better behaved, but the conclusion is not a property of the slab
+shape.
+
+So the *count* is defined with a floor: a component counts as needed when its peak
+exceeds a fixed fraction of the core peak (3% in the worked example).  The floor is
+part of the definition of "needed", not a hidden extra prior -- the fit still puts
+posterior mass between zero and the floor, and the study reports the count at
+several floors (1%, 3%, 5%, 10%) so that a stable answer can be recognised.
+
+The recipe that works
+~~~~~~~~~~~~~~~~~~~~~
+
+Applied to IRAS 07546+3928 (``example/fit_iras07546_jax_toggle.py``):
+
+* **only the three Balmer lines** get four components; He I 5876 and He II 4686
+  keep one broad Gaussian, and the Fe II kernel follows broad H-alpha, k = 4;
+  40 free parameters in total;
+* **one width prior for everything**: the core and all three wings span
+  300-8000 km/s.  A wing is *not* required to be broader than the core -- a
+  narrower component is a legitimate second structure, and the sampler is free to
+  find one, but the ladder of ``p_off`` already discourages higher components
+  without also constraining their widths;
+* **a ladder of prior probabilities**: ``p_off = 0.2, 0.5, 0.7`` for wings 0, 1, 2.
+  The likelihood *cannot* tell two wings apart -- exchanging them leaves the
+  spectrum bit-identical -- so the prior is the only place an asymmetry can live;
+* **decide by the mode of the floored count**, then refit at that ``k`` with plain
+  priors if an evidence is wanted.
+
+That run is set up (``--broad-wings 3`` on the example gives the same model without
+the toggles) and its output lands in ``example/output/iras07546_jax_toggle_*``.
+
+The answer for IRAS 07546+3928
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The run asked for at most four broad components and returned **four**: in every
+one of the 228 281 equally weighted samples all three wings are on, and at the 3%
+floor ``P(N = 3) = 1.000``.  The three Bayes factors are unbounded above (no sample
+in the run switched any of the wings off), so this is not a marginal call.  Sorted
+by width, broad H-alpha comes out as:
+
+.. list-table::
+   :header-rows: 1
+
+   * - component
+     - peak / core peak
+     - FWHM [km/s]
+     - dv [km/s]
+     - share of the broad flux
+   * - core
+     - 1.000
+     - 2 066
+     - +294
+     - 46%
+   * - wing 1
+     - 0.085
+     - 2 484
+     - -919
+     - 4.7%
+   * - wing 2
+     - 0.283
+     - 5 050
+     - +4
+     - 31.9%
+   * - wing 3
+     - 0.041
+     - 18 830
+     - -2 617
+     - 17.3%
+
+The three extra components are not cosmetic.  Comparing the same data with the
+published two-component model, chi2/dof falls from 0.321 to 0.195
+(``dchi2 ~ 7200`` for ten extra parameters); and inside this one run the best
+three-component sample is worse than the best four-component one by ``dchi2 = 62``
+for the three parameters the fourth component costs.  The published two-component
+model put all of that excess into one wind at ``sigma ~ 6930`` km/s; here the same
+excess is three structures -- a near-core shoulder at 2 484 km/s, a 5 050 km/s
+component, and a pedestal broader than the adopted ceiling -- and forcing it back
+into one Gaussian is what costs the ``dchi2 ~ 7200``.
+
+Two caveats belong with that number, and both are visible in the same output.
+
+* **The pedestal sits on the width ceiling.**  ``b_halpha.sigma_w`` reaches
+  7 996 km/s against the 8 000 km/s upper bound and ``prior_dominated()`` flags it,
+  so the width of that component -- and possibly the number of components that
+  describe the base of the line -- is limited by the adopted range rather than by
+  the data.  Widen ``SIGMA_RANGE`` and the decomposition may merge the pedestal
+  into the 5 050 km/s component, or ask for one more.
+* **The count is floor-sensitive in the expected way.**  The pedestal peaks at
+  4.1% of the core, just above the 3% floor: at a 5% floor the count is 2 and at
+  10% it is 1.  The pedestal's Bayes factor is unbounded, so it is not noise -- a
+  floor of 5% would simply be a different, coarser definition of "a component".
+
+The run's ``prior_dominated()`` list needs reading with care too: it flags a
+parameter when its median is within 1% of the *prior width* of an edge, and that
+criterion also catches amplitudes that are small compared with their (deliberately
+wide) prior box -- the faint He I, He II and forbidden lines appear there although
+their posteriors are perfectly well constrained (the [S II] doublet comes back at
+0.054 and 0.071, a ratio of 0.76).  The genuine warning in that list is the flagged
+*width*; the amplitude entries are the diagnostic's tolerance, not the data.
+
+This is a single object, and the point of the recipe is that the answer is measured
+rather than assumed: on the mocks the same code stops at two wings where two are
+enough, and here it does not stop until four components are in.
+
+Reading the answer
+~~~~~~~~~~~~~~~~~~
+
+Two numbers need care.
+
+* **Labels are not identified.**  Two components of similar width can swap index
+  from sample to sample, and the sampler is not asked which one is "the" wind.
+  Only the *count* and the *width-sorted* set of components are meaningful: on
+  the two-wing mock the two real wings come back at their true widths under
+  whatever index the sampler happens to give them, and the same physical component
+  is wing 0 in one sample and wing 2 in the next.  The study script therefore
+  reports the count, the per-index probabilities, *and* a width-sorted table; the
+  width-sorted one is the table to quote.
+* **The evidence of a gated fit is not an evidence for a k-component model.**  A
+  toggled model is a *mixture* over subsets of components, so its log Z is not
+  comparable with a plain-prior fit at any one ``k``.  Quote the component count
+  from the gated run, and -- if you want an evidence ratio -- refit at that count
+  with plain priors and compare those runs.
+
+Nested sampling is what makes this affordable.  The spike owns ``p_off`` of that
+parameter's prior volume, so reaching either state costs a *bounded* amount of
+compression -- about ``ln(1/p_off)`` e-folds, i.e. 1.6, 0.7 and 0.4 for the ladder
+above -- and the sampler reports the volume it found on each side.  A point mass
+with no volume would instead be a state the sampler never visits, however long it
+runs (which is also why the amplitude inside the spike is exactly zero rather than
+"very small").
+
+Calibration on mocks
+~~~~~~~~~~~~~~~~~~~~
+
+``develop/dev_jax/broad_line_components.py`` asks the question of data whose answer
+is known: four mocks (2401 pixels around H-beta, 1% noise) built from the example's
+own truth, with 0, 1, 2 and 3 wings, each fitted with three configurations.  It
+writes ``develop/dev_jax/io_test/component_selection.html`` (figures, per-component
+posteriors and the Bayes factors) and a JSON file with the same numbers.
+
+The column is the mode of the floored count -- the number of wings reported -- with
+its posterior probability in brackets:
+
+.. list-table::
+   :header-rows: 1
+
+   * - mock
+     - generated wings
+     - linear slab, nlive 400
+     - linear slab, nlive 1000
+     - log slab, nlive 1000
+   * - 0 wings
+     - 0
+     - 0 (1.00)
+     - 0 (1.00)
+     - 0 (0.90)
+   * - 1 wing
+     - 1
+     - 1 (0.99)
+     - 1 (1.00)
+     - 1 (0.63)
+   * - 2 similar wings
+     - 2
+     - 2 (1.00)
+     - 2 (1.00)
+     - 2 (1.00)
+   * - 3 overlapping wings
+     - 3
+     - 2 (1.00)
+     - 2 (1.00)
+     - 2 (0.83)
+
+Three things are worth reading off this table.
+
+* **The count is the minimum the data need, not the count that generated them.**
+  For 0, 1 and 2 wings it is exactly the generating number.  For the three-wing
+  mock it is 2 -- and that is the right answer to the question as asked: a
+  three-component model (core plus two wings) fits that mock at chi2/dof = 1.013,
+  and adding the third wing buys ``dchi2 = 1.1`` for three extra parameters
+  (p = 0.78).  Three overlapping wings that differ only in width are not separately
+  required by 1%-noise data, so two is the minimum sufficient count.  A mock whose
+  components *are* separable cannot be made by piling on overlapping Gaussians --
+  the family is too flexible -- which is itself the main result for real data: the
+  number of components saturates at what the profile shape and the noise support.
+* **The linear slab is the recommended one.**  The log-uniform slab puts a second
+  wing above the 3% floor in 0.37 of the posterior on the one-wing mock (0.52
+  before the floor), against 0.00 for the linear slab, by concentrating density at
+  the small amplitudes where an extra Gaussian can hide in the noise.  The floor is
+  what stops that wing from being reported; the slab shape is what lets it exist.
+* **Use 1000 live points when the count is the answer.**  In the run tabulated
+  above, 400 and 1000 agree on all four mocks; but a repeat of the one-wing mock at
+  400 live points put 0.91 of the posterior on a spurious second wing, which is
+  exactly the failure mode the floor and the linear slab are there to suppress.  At
+  1000 live points the answer was 1 (0.99) in both runs.  400 is marginal for a
+  40-parameter model with gated amplitudes; the cost is a factor of a few in wall
+  time, and the count is the number the run exists to produce.
+
+What it does not do
+~~~~~~~~~~~~~~~~~~~
+
+* It does not make an extra Gaussian expensive.  The prior says a component is
+  unlikely *a priori*; the likelihood is still free to prefer one, and with 1%
+  noise it sometimes does.  The floor is what turns a continuum of small
+  amplitudes into a decision.
+* It does not identify which component is which, and it does not order them.
+* It does not fit a different number of components per line: one count is shared by
+  all the Balmer lines, which keeps the model self-consistent (they are the same
+  gas) and the answer readable.  Per-line counts would need one gate per line and a
+  rule for combining them.
+
+Where the idea comes from
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The statistics is standard: a spike-and-slab prior for variable selection goes back
+to George & McCulloch (1993, *JASA* 88, 881) and was given its Gibbs-sampling
+treatment by Kuo & Mallick (1998, *Biometrika* 85, 65).  The new part here is not
+the statistics but its use on emission-line decomposition, and a reader should know
+what the astronomy literature actually contains.  For line profiles the two
+established routes are
+
+* **fit separately and compare evidences** (what most AGN papers do: 1, 2 or 3
+  Gaussian components, ranked by log Z or by an information criterion), and
+* **trans-dimensional sampling**, which makes ``k`` itself a parameter: Green's
+  reversible-jump MCMC (1995) or, in a nested-sampling framework, the
+  birth/death moves of diffusive nested sampling (Brewer 2014,
+  arXiv:1411.3921), which samples models of different dimension with a uniform
+  prior on the number of components.
+
+I did not find a paper that applies a spike-and-slab toggle prior to the
+decomposition of emission lines, which is why the worked example also carries the
+mock calibration above.  The trans-dimensional route is the more general one and
+needs no floor: it samples ``k`` directly and gives a posterior on ``k`` that is a
+model comparison.  It was not used here because a changing parameter count defeats
+the static shapes that ``jit``/``vmap`` batching needs -- JNesty's throughput on
+the GPU comes from evaluating a fixed-size parameter vector -- and because the
+toggle needs no change to the sampler at all.  If a component count is the
+*scientific* question rather than a diagnostic, diffusive nested sampling is the
+better tool.

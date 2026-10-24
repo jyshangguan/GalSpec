@@ -10,16 +10,17 @@ from .utils import line_wave_dict
 line_funcs = ['Line_template', 'Line_GaussHermite', 'Line_GaussHermite_doublet', 
               'Line_Gaussian', 'Line_MultiGauss', 'Line_MultiGauss_doublet', 
               'Line_Absorption', 'Line_Absorption_doublet']
-tie_funcs = ['tie_MultiGauss_amp_c', 'tie_MultiGauss_dv_c', 'tie_MultiGauss_dv_w0', 
-             'tie_MultiGauss_dv_w1', 'tie_MultiGauss_dv_w2', 'tie_MultiGauss_dv_w3', 
-             'tie_MultiGauss_dv_w4',
-             'tie_MultiGauss_amp_w0', 'tie_MultiGauss_amp_w1', 
-             'tie_MultiGauss_sigma_c', 'tie_MultiGauss_sigma_w0', 'tie_MultiGauss_sigma_w1',
-             'tie_MultiGauss_doublet_ratio',
-             'tie_template_amplitude', 'tie_template_dv',
-             'tie_StarSpectrum_deltaz', 'tie_StarSpectrum_sigma',
-             'tie_Absorption_dv', 'tie_Absorption_sigma', 'tie_Absorption_Cf', 
-             'tie_Absorption_logtau0']
+# wind components carry parameters w0 .. w{MAX_MULTIGAUSS_WINGS-1}
+MAX_MULTIGAUSS_WINGS = 5
+
+tie_funcs = (['tie_MultiGauss_amp_c', 'tie_MultiGauss_dv_c', 'tie_MultiGauss_sigma_c']
+             + [f'tie_MultiGauss_{stem}_w{i}'
+                for i in range(MAX_MULTIGAUSS_WINGS) for stem in ('amp', 'dv', 'sigma')]
+             + ['tie_MultiGauss_doublet_ratio',
+                'tie_template_amplitude', 'tie_template_dv',
+                'tie_StarSpectrum_deltaz', 'tie_StarSpectrum_sigma',
+                'tie_Absorption_dv', 'tie_Absorption_sigma', 'tie_Absorption_Cf',
+                'tie_Absorption_logtau0'])
 other_funcs = ['find_line_peak', 'line_fwhm']
 __all__ = line_funcs + tie_funcs + other_funcs
 
@@ -688,6 +689,8 @@ class Line_Exponential(Fittable1DModel):
 # Tie parameters
 class tie_MultiGauss_amp_c(object):
     ''' Tie the amplitude of a MultiGauss line to another line's amplitude. '''
+    tied_param = 'amp_c'
+
     def __init__(self, ref_name, ratio=1):
         self.ref_name = ref_name
         self.ratio = ratio
@@ -696,92 +699,35 @@ class tie_MultiGauss_amp_c(object):
         return model[self.ref_name].amp_c / self.ratio
 
 
-class tie_MultiGauss_dv_c(object):
+def _multigauss_tie(param):
+    ''' Build a tie class that follows ``param`` of the reference line.
+
+    Every MultiGauss tie does the same thing -- read one parameter off another
+    line at call time -- so the classes are generated rather than written out
+    one by one.  A hand-written table of near-identical classes is what
+    produced the ``dv_w2``/``dv_w3``/``dv_w4`` ties that all returned ``dv_w1``.
+    '''
     def __init__(self, ref_name):
         self.ref_name = ref_name
 
     def __call__(self, model):
-        return model[self.ref_name].dv_c
+        return getattr(model[self.ref_name], param)
+
+    return type(f'tie_MultiGauss_{param}', (object,), {
+        '__init__': __init__,
+        '__call__': __call__,
+        '__module__': __name__,
+        '__doc__': f'Follow ``{param}`` of the reference MultiGauss line.',
+        'tied_param': param,
+    })
 
 
-class tie_MultiGauss_dv_w0(object):
-    def __init__(self, ref_name):
-        self.ref_name = ref_name
-
-    def __call__(self, model):
-        return model[self.ref_name].dv_w0
-
-
-class tie_MultiGauss_dv_w1(object):
-    def __init__(self, ref_name):
-        self.ref_name = ref_name
-
-    def __call__(self, model):
-        return model[self.ref_name].dv_w1
-
-
-class tie_MultiGauss_dv_w2(object):
-    def __init__(self, ref_name):
-        self.ref_name = ref_name
-
-    def __call__(self, model):
-        return model[self.ref_name].dv_w1
-
-
-class tie_MultiGauss_dv_w3(object):
-    def __init__(self, ref_name):
-        self.ref_name = ref_name
-
-    def __call__(self, model):
-        return model[self.ref_name].dv_w1
-
-
-class tie_MultiGauss_dv_w4(object):
-    def __init__(self, ref_name):
-        self.ref_name = ref_name
-
-    def __call__(self, model):
-        return model[self.ref_name].dv_w1
-
-
-class tie_MultiGauss_amp_w0(object):
-    def __init__(self, ref_name):
-        self.ref_name = ref_name
-
-    def __call__(self, model):
-        return model[self.ref_name].amp_w0
-
-
-class tie_MultiGauss_amp_w1(object):
-    def __init__(self, ref_name):
-        self.ref_name = ref_name
-
-    def __call__(self, model):
-        return model[self.ref_name].amp_w1
-
-
-class tie_MultiGauss_sigma_c(object):
-    def __init__(self, ref_name):
-        self.ref_name = ref_name
-
-    def __call__(self, model):
-        return model[self.ref_name].sigma_c
-
-
-class tie_MultiGauss_sigma_w0(object):
-    def __init__(self, ref_name):
-        self.ref_name = ref_name
-
-    def __call__(self, model):
-        return model[self.ref_name].sigma_w0
-
-
-class tie_MultiGauss_sigma_w1(object):
-    def __init__(self, ref_name):
-        self.ref_name = ref_name
-
-    def __call__(self, model):
-        return model[self.ref_name].sigma_w1
+tie_MultiGauss_dv_c = _multigauss_tie('dv_c')
+tie_MultiGauss_sigma_c = _multigauss_tie('sigma_c')
+for _i in range(MAX_MULTIGAUSS_WINGS):
+    for _stem in ('amp_w', 'dv_w', 'sigma_w'):
+        globals()[f'tie_MultiGauss_{_stem}{_i}'] = _multigauss_tie(f'{_stem}{_i}')
+del _i, _stem
 
 
 class tie_MultiGauss_doublet_ratio(object):

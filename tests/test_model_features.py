@@ -16,7 +16,12 @@ Covers the things that are easy to break silently:
 * parameter labels become mathtext (``BH$\\alpha$:$\\sigma_{w0}$``) and the fitters
   expose them;
 * ``plot_posterior_hist`` draws one panel per requested parameter and annotates
-  the median and the 16-84 band.
+  the median and the 16-84 band;
+* the generated ``tie_MultiGauss_*`` table follows the parameter it names (the
+  hand-written table had three winds tied to one shift);
+* the toggle prior puts a *finite* slice of the unit cube on exactly zero, so a
+  fixed-dimension sampler can explore how many components a profile needs, and
+  a toggled-off component is bit-for-bit the smaller model.
 
 Run with::
 
@@ -35,6 +40,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import jax                                                          # noqa: E402
+import jax.numpy as jnp                                             # noqa: E402
 jax.config.update("jax_enable_x64", True)
 
 import matplotlib                                                   # noqa: E402
@@ -471,6 +477,200 @@ def test_plot_posterior_hist_labels_and_file(tmp_path=None):
     assert out.is_file() and out.stat().st_size > 5000
     plt.close(fig)
     print(f"  wrote {out} ({out.stat().st_size // 1024} kB)")
+
+
+# --------------------------------------------------------------------------------------
+# 6. Broad lines with more components: the ties and the toggle prior
+# --------------------------------------------------------------------------------------
+def test_multigauss_tie_classes_follow_their_own_parameter():
+    """Every ``tie_MultiGauss_<param>_w<i>`` follows ``<param>_w<i>``, not a neighbour.
+
+    The hand-written tie table had ``dv_w2``, ``dv_w3`` and ``dv_w4`` all returning
+    ``dv_w1``, so a four-component fit would have tied three wings to one shift and
+    reported a perfect -- and meaningless -- agreement.  The classes are generated
+    now; this test pins the generated table down parameter by parameter.
+    """
+    line = galspec.Line_MultiGauss(
+        n_components=5, amp_c=1.0, dv_c=10.0, sigma_c=1100.0, wavec=6563.0,
+        par_w={"amp_w0": 0.31, "dv_w0": 120.0, "sigma_w0": 2200.0,
+               "amp_w1": 0.22, "dv_w1": 230.0, "sigma_w1": 3300.0,
+               "amp_w2": 0.13, "dv_w2": 340.0, "sigma_w2": 4400.0,
+               "amp_w3": 0.04, "dv_w3": 450.0, "sigma_w3": 5500.0})
+    model = {"ref": line}
+
+    names = ["amp_c", "dv_c", "sigma_c"] + [
+        f"{stem}_w{i}" for i in range(4) for stem in ("amp", "dv", "sigma")]
+    for name in names:
+        tie_class = getattr(galspec, f"tie_MultiGauss_{name}")
+        tie = tie_class(ref_name="ref")
+        expected = float(getattr(line, name).value)
+        # astropy ties return the Parameter itself (or a float, after arithmetic)
+        result = tie(model)
+        got = float(result.value if hasattr(result, "value") else result)
+        assert got == pytest.approx(expected), f"{name}: {got} != {expected}"
+        assert tie.tied_param == name, tie.tied_param
+
+    # the parameters really are distinct, so the assertion above is not vacuous
+    shifts = [float(getattr(line, f"dv_w{i}").value) for i in range(4)]
+    assert len(set(shifts)) == 4, shifts
+    print(f"  {len(names)} tie classes follow their own parameter")
+
+
+def test_component_toggle_gives_off_a_finite_slice_of_the_cube():
+    """``p_off`` of the unit interval maps to exactly zero, the rest onto the slab.
+
+    A component that can be switched off needs the "off" state to own real prior
+    volume -- a delta function at zero is a state the sampler never visits and a
+    nested sampling run cannot see.  The linear slab is the recommended one: it
+    does not concentrate density at the tiny amplitudes where an extra Gaussian
+    hides in the noise.
+    """
+    u = np.linspace(0.0, 1.0, 20001)
+    for p_off in (0.0, 0.2, 0.5, 0.9):
+        prior = galspec.uniform_toggle(p_off=p_off)
+        values = np.asarray(jax.vmap(prior)(jnp.asarray(u)), dtype=float)
+        assert np.all(values >= 0.0)
+        assert np.isclose(np.mean(values == 0.0), p_off, atol=1.5e-4), (
+            p_off, np.mean(values == 0.0))
+        on = u >= p_off
+        slab = (u[on] - p_off) / (1.0 - p_off)
+        assert np.allclose(values[on], slab, atol=1e-12), "slab is not linear"
+        assert np.isclose(values[-1], 1.0), values[-1]
+
+    # the log slab keeps its floor: "on" means "at least lower"
+    log_prior = galspec.log_uniform_toggle(p_off=0.5, lower=0.02)
+    values = np.asarray(jax.vmap(log_prior)(jnp.asarray(u)), dtype=float)
+    on = values[values > 0.0]
+    assert on.min() == pytest.approx(0.02, rel=1e-9), on.min()
+    assert on.max() == pytest.approx(1.0, rel=1e-9), on.max()
+    # ... and it is uniform in log: the middle of the slab is the geometric mean
+    assert on[on.size // 2] == pytest.approx(np.sqrt(0.02 * 1.0), rel=1e-3), \
+        on[on.size // 2]
+
+    with pytest.raises(ValueError):
+        galspec.log_uniform_toggle(lower=0.0)
+    with pytest.raises(ValueError):
+        galspec.component_toggle(p_off=1.0)
+    with pytest.raises(ValueError):
+        galspec.component_toggle(slab="cauchy")
+    print(f"  toggle puts a finite slice of the cube on zero for "
+          f"p_off = 0.0 .. 0.9; the log slab floors at its lower bound")
+
+
+def test_component_toggle_survives_jit_and_vmap():
+    """The transform is traced by the samplers, so it must not branch in Python."""
+    prior = galspec.uniform_toggle(p_off=0.3)
+    u = jnp.asarray([0.0, 0.1, 0.29, 0.3, 0.65, 1.0])
+    traced = np.asarray(jax.jit(jax.vmap(prior))(u), dtype=float)
+    plain = np.array([float(prior(float(x))) for x in np.asarray(u)])
+    assert np.allclose(traced, plain, atol=1e-15), (traced, plain)
+    assert traced[2] == 0.0, traced          # u <  p_off -> off
+    assert traced[4] == pytest.approx(0.5), traced   # slab, linear
+    assert traced[5] == 1.0, traced
+    print(f"  jit/vmap agree with the plain call: {traced}")
+
+
+def test_a_toggled_off_component_is_one_fewer_component():
+    """The semantic anchor of the whole scheme: ``amp = 0`` *is* the smaller model.
+
+    If switching a component off left any trace -- a normalisation, a padding, a
+    kernel radius -- then "the minimum number of components" would not mean what
+    the selection rule says it means.
+    """
+    wave = np.linspace(4300.0, 6800.0, 2000)
+    core = dict(amp_c=1.0, dv_c=50.0, sigma_c=1200.0, wavec=6563.0)
+    wind0 = dict(amp_w0=0.40, dv_w0=-400.0, sigma_w0=3000.0)
+    off_wind = dict(amp_w1=0.0, dv_w1=900.0, sigma_w1=7000.0)
+
+    two = galspec.Line_MultiGauss(n_components=2, par_w=dict(wind0), **core)
+    three = galspec.Line_MultiGauss(n_components=3, par_w=dict(wind0, **off_wind), **core)
+    peak = np.max(np.abs(np.asarray(two(wave))))
+    assert np.max(np.abs(np.asarray(three(wave)) - np.asarray(two(wave)))) < 1e-12 * peak
+
+    jax_two = jxm.Line_MultiGauss(n_components=2, par_w=dict(wind0), **core)
+    jax_three = jxm.Line_MultiGauss(n_components=3, par_w=dict(wind0, **off_wind), **core)
+    jax_peak = np.max(np.abs(np.asarray(jax_two.flux(wave, _values(jax_two)))))
+    diff = np.max(np.abs(np.asarray(jax_three.flux(wave, _values(jax_three)))
+                         - np.asarray(jax_two.flux(wave, _values(jax_two)))))
+    assert diff < 1e-12 * jax_peak, (diff, jax_peak)
+
+    # the iron follows: an off wing must not change the broadened template either
+    iron_two = galspec.IronTemplate_tied(amplitude=0.2, z=0.0, kernel=two)
+    iron_three = galspec.IronTemplate_tied(amplitude=0.2, z=0.0, kernel=three)
+    iron_peak = np.max(np.abs(np.asarray(iron_two(wave))))
+    iron_diff = np.max(np.abs(np.asarray(iron_three(wave)) - np.asarray(iron_two(wave))))
+    assert iron_diff < 1e-10 * iron_peak, (iron_diff, iron_peak)
+    print(f"  off wing: line {diff / jax_peak:.1e}, iron {iron_diff / iron_peak:.1e} "
+          f"relative")
+
+
+# --------------------------------------------------------------------------------------
+# 7. The worked example's component-count plumbing
+# --------------------------------------------------------------------------------------
+def _load_example():
+    """``example/fit_iras07546_jax.py`` as a module (it is a script, not a package)."""
+    import importlib.util
+    from pathlib import Path
+    path = Path(__file__).resolve().parents[1] / "example" / "fit_iras07546_jax.py"
+    spec = importlib.util.spec_from_file_location("_example_iras", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_example_grows_the_broad_lines_without_changing_the_published_fit():
+    """``n_balmer_wings`` adds components and nothing else.
+
+    The published fit has 30 free parameters and one wind per Balmer line.  Asking
+    for four components must add exactly 3 parameters per gated line (an amplitude,
+    a shift and a width each) and must leave the astropy twin and the priors
+    consistent with the JAX model -- the twin is built by
+    ``cpu_model_with_values`` from the same count, and every free parameter needs a
+    bound or the fit refuses to start.
+    """
+    example = _load_example()
+    flux = np.linspace(0.4, 2.2, 500)
+
+    default = example.build_model(jxm)
+    assert len(default.free_param_names) == 30, len(default.free_param_names)
+    assert default["b_halpha"].n_components == 2
+
+    wide = example.build_model(jxm, n_balmer_wings=3)
+    assert len(wide.free_param_names) == 40, len(wide.free_param_names)
+    for line in ("b_halpha", "b_hbeta", "b_hgamma"):
+        assert wide[line].n_components == 4, (line, wide[line].n_components)
+    # He I 5876 and He II 4686 keep a single broad Gaussian
+    assert wide["b_hei"].n_components == 1
+    assert wide["b_heii"].n_components == 1
+    # the extra wings are tied to broad H-alpha, component by component (astropy
+    # ties return the Parameter itself, so compare the numbers)
+    # (the amplitudes are *not* tied between lines: each keeps its own Balmer
+    # decrement.  Only the shifts and widths are shared.)
+    for line in ("b_hbeta", "b_hgamma"):
+        for stem in ("dv_w", "sigma_w"):
+            for i in (1, 2):
+                tie = getattr(wide[line], f"{stem}{i}").tied
+                assert tie is not None, (line, stem, i)
+                got = tie(wide)
+                got = float(got.value if hasattr(got, "value") else got)
+                expected = float(getattr(wide["b_halpha"], f"{stem}{i}").value)
+                assert got == expected, (line, stem, i, got, expected)
+
+    for count in (0, 1, 3):
+        model = example.build_model(jxm, n_balmer_wings=count)
+        bounds, custom, _notes = example.make_priors(flux, n_balmer_wings=count)
+        missing = [q for q in example.free_qualified_names(model) if q not in bounds]
+        assert not missing, (count, missing)
+        # each wing costs five free parameters: three on broad H-alpha and one
+        # amplitude per remaining Balmer line (their shifts and widths are tied)
+        assert len(model.free_param_names) == 25 + 5 * count, count
+        # the astropy twin is built from the same count
+        twin = example.build_model(galspec, n_balmer_wings=count)
+        assert twin["b_halpha"].n_components == 1 + count
+        assert twin["b_hei"].n_components == 1
+
+    print(f"  example: {len(default.free_param_names)} -> {len(wide.free_param_names)} "
+          f"free parameters for 1 -> 3 wings (5 per extra wing)")
 
 
 def main() -> int:

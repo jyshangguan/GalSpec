@@ -435,20 +435,26 @@ def _fit_row(wave, flux, error, curves, reported, title, ax, axr, units="flux [a
              labelled=True):
     """One data, model and residual row; ``reported`` is drawn solid."""
     ax.plot(wave, flux, color="0.62", lw=0.7, label="data")
+    low, high = float(np.min(flux)), float(np.max(flux))
+    pad = 0.06 * (high - low)
+    ax.set_ylim(low - pad, high + pad)
+    # a difference is worth drawing only if it would move the line by a few pixels:
+    # two Gaussians fitted to the same profile can differ by a fraction of a line width
+    # and still produce a legend entry that points at nothing visible
+    span = (high - low) + 2 * pad
     reference = curves.get(reported, {}).get("curve")
     drawn = 0
     for count in sorted(curves):
         entry = curves[count]
         best = count == reported
-        # an alternative earns a curve only if it differs by more than a line width;
-        # otherwise the legend would advertise something the eye cannot find
         if not best and reference is not None:
-            if np.max(np.abs(entry["curve"] - reference)) < 0.3 * float(np.median(error)):
+            if np.max(np.abs(entry["curve"] - reference)) < 3.0 * span / 250.0:
                 continue
         ax.plot(wave, entry["curve"],
                 color="#c53030" if best else "#2b6cb0",
                 lw=1.2 if best else 1.0, ls="-" if best else "--",
-                label=rf"{count + 1} components: $\chi^2$/dof {entry['chi2_dof']:.2f}")
+                label=rf"{count + 1} component{'s' if count else ''}: "
+                      rf"$\chi^2$/dof {entry['chi2_dof']:.2f}")
         drawn += 1
         if best:
             axr.plot(wave, (flux - entry["curve"]) / error, color="#c53030", lw=0.6)
@@ -848,11 +854,13 @@ bottom row of section 3 shows the fit is already at the noise level.</p>
 <h2>3. How well the fit matches the data</h2>
 <p>For each mock: the simulated spectrum (grey) and the best fit the rule accepts
 (solid), with the residual in units of the noise underneath.  A switched-off component
-costs nothing, so one run contains a fit at every count it visits and no extra fitting
-is needed; where such a fit differs from the accepted one by more than a line width it
-is drawn dashed, with its chi2/dof in the legend.  Where it does not, it is left out
-rather than drawn on top of the accepted curve &mdash; an invisible line in the legend
-is worse than no line at all.</p>
+costs nothing, so the same run also contains a fit at every lower count; where such a
+fit differs visibly from the accepted one it is drawn dashed, with its chi2/dof in the
+legend.  On these mocks it never does, and that is the point worth seeing: one more
+Gaussian changes each pixel by a fraction of the noise (chi2 differs by tens over
+thousands of pixels, or 0.1&ndash;0.2&sigma; per pixel), so the curves coincide while the
+evidence does not.  That is why the count is decided from chi2 and the posterior, not
+from looking at the fit.</p>
 <img src="data:image/png;base64,{png['mock_fits']}" alt="best fits and residuals">
 <table>
 <tr><th>mock</th><th>components in the mock</th><th>components the rule reports</th>

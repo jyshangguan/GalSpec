@@ -375,6 +375,7 @@ def fig_toggle(payload):
     colours = ["#2b6cb0", "#2f855a", "#c05621"]
     for ax, truth in zip(axes[0], picks):
         amps = payload["amp_samples"][truth]
+        labels = []
         for i in range(N_WINGS):
             values = amps[:, i]
             on = values > 0.0
@@ -383,16 +384,14 @@ def fig_toggle(payload):
                 ax.plot([lo, hi], [i, i], color=colours[i], lw=8, alpha=0.4,
                         solid_capstyle="butt")
                 ax.plot([mid], [i], "o", color=colours[i], ms=6)
-            ax.text(0.010, i, f"exactly zero in {1 - on.mean():.0%} of the samples",
-                    fontsize=7.5, color="0.35", va="center", zorder=3,
-                    bbox={"facecolor": "white", "edgecolor": "none", "pad": 0.8})
+            labels.append(f"wing {i}\nzero in {1 - on.mean():.0%}")
         ax.axvline(MIN_WING_FRACTION, color="0.45", ls=":", lw=1.0, zorder=0)
         ax.set_xscale("log")
         ax.set_xlim(0.008, 1.15)
         ax.set_ylim(-0.6, N_WINGS - 0.4)
         ax.invert_yaxis()
         ax.set_yticks(range(N_WINGS))
-        ax.set_yticklabels([f"wing {i}" for i in range(N_WINGS)])
+        ax.set_yticklabels(labels, fontsize=7)
         ax.set_xlabel("amplitude / core peak (when it is on)")
         ax.set_title(f"mock made with {n_true_wings(CASES[truth])} wing(s)", fontsize=9.5)
     fig.suptitle("A component is either off (exactly zero) or on with a real amplitude "
@@ -432,19 +431,29 @@ def fig_counts(payload):
     return fig
 
 
-def _fit_row(wave, flux, error, curves, reported, title, ax, axr, units="flux [arbitrary]"):
+def _fit_row(wave, flux, error, curves, reported, title, ax, axr, units="flux [arbitrary]",
+             labelled=True):
     """One data, model and residual row; ``reported`` is drawn solid."""
     ax.plot(wave, flux, color="0.62", lw=0.7, label="data")
+    reference = curves.get(reported, {}).get("curve")
+    drawn = 0
     for count in sorted(curves):
         entry = curves[count]
         best = count == reported
+        # an alternative earns a curve only if it differs by more than a line width;
+        # otherwise the legend would advertise something the eye cannot find
+        if not best and reference is not None:
+            if np.max(np.abs(entry["curve"] - reference)) < 0.3 * float(np.median(error)):
+                continue
         ax.plot(wave, entry["curve"],
                 color="#c53030" if best else "#2b6cb0",
                 lw=1.2 if best else 1.0, ls="-" if best else "--",
                 label=rf"{count + 1} components: $\chi^2$/dof {entry['chi2_dof']:.2f}")
+        drawn += 1
         if best:
             axr.plot(wave, (flux - entry["curve"]) / error, color="#c53030", lw=0.6)
-    ax.set_title(title, fontsize=9)
+    ax.set_title(title + ("" if drawn < 2
+                          else " (dashed: the other counts this run contains)"), fontsize=9)
     ax.set_ylabel(units, fontsize=8)
     ax.legend(frameon=False, fontsize=7.5, loc="upper left")
     ax.tick_params(labelbottom=False)
@@ -453,9 +462,15 @@ def _fit_row(wave, flux, error, curves, reported, title, ax, axr, units="flux [a
     for value in (-2, 2):
         axr.axhline(value, color="0.8", lw=0.6, ls=":")
     axr.set_ylim(-4.5, 4.5)
+    # three ticks, small enough for a panel this short: -2/+2 are drawn as guide lines
+    axr.set_yticks([-3, 0, 3])
+    axr.tick_params(labelsize=7)
     axr.set_xlim(wave.min(), wave.max())
-    axr.set_ylabel(r"residual [$\sigma$]", fontsize=8)
-    axr.set_xlabel(r"rest wavelength [$\AA$]", fontsize=8)
+    if labelled:            # only the bottom pair carries the axis labels
+        axr.set_ylabel(r"residual [$\sigma$]", fontsize=8)
+        axr.set_xlabel(r"rest wavelength [$\AA$]", fontsize=8)
+    else:
+        axr.tick_params(labelbottom=False)
 
 
 def fig_mock_fits(payload):
@@ -464,18 +479,16 @@ def fig_mock_fits(payload):
     rows = payload["primary"]
     truths = [t for t in CASES if t in rows and t in payload["mock_fits"]]
     n = max(len(truths), 1)
-    fig, axes = plt.subplots(2 * n, 1, figsize=(9.4, 2.2 * n + 0.7),
-                             gridspec_kw={"height_ratios": [3, 1] * n,
-                                          "hspace": 0.14}, squeeze=False)
+    fig, axes = plt.subplots(2 * n, 1, figsize=(9.4, 2.55 * n + 0.7),
+                             gridspec_kw={"height_ratios": [2.7, 1.15] * n,
+                                          "hspace": 0.52}, squeeze=False)
     for row, truth in enumerate(truths):
         fit_payload = payload["mock_fits"][truth]
         reported = int(rows[truth]["mode_floor"])
         curves = fit_payload["counts"]
         _fit_row(io.WAVE, fit_payload["flux"], fit_payload["error"], curves, reported,
-                 f"{truth}: the fit the rule accepts has {reported + 1} components"
-                 + ("" if len(curves) == 1
-                    else " (dashed: other counts this run contains)"),
-                 axes[2 * row][0], axes[2 * row + 1][0])
+                 f"{truth}: the fit the rule accepts has {reported + 1} components",
+                 axes[2 * row][0], axes[2 * row + 1][0], labelled=(row == len(truths) - 1))
     fig.subplots_adjust(left=0.085, right=0.99, top=0.96, bottom=0.06)
     return fig
 
@@ -518,6 +531,9 @@ def fig_real(payload):
     for value in (-2, 2):
         axr.axhline(value, color="0.85", lw=0.6, ls=":")
     axr.set_ylim(-4.5, 4.5)
+    # three ticks, small enough for a panel this short: -2/+2 are drawn as guide lines
+    axr.set_yticks([-3, 0, 3])
+    axr.tick_params(labelsize=7)
     axr.set_ylabel(r"residual [$\sigma$]", fontsize=8)
     axr.set_xlabel(r"rest wavelength [$\AA$]", fontsize=8)
     fig.suptitle(rf"IRAS 07546+3928: the rule asks for {reported + 1} components "
@@ -680,6 +696,7 @@ def real_data_section(max_samples=120):
         probs = [float(np.mean(above == n)) for n in range(N_WINGS + 1)]
         by_floor[f"{floor:.2f}"] = int(np.argmax(probs))
     return {"wave": wave, "flux": flux, "error": ferr, "p_count_floor": p,
+            "chi2_dof": float(curves[int(np.argmax(p))]["chi2_dof"]),
             "floors": by_floor,
             "curves": curves, "n_samples": int(samples.shape[0]), "dchi2": dchi2}
 
@@ -759,12 +776,16 @@ def build_report(path: Path, payload: dict) -> None:
 ({real['n_samples']:,} posterior samples).  The bars are the same posterior as in
 section 2; the curve is the fit the rule accepted, with the residual underneath.</p>
 <img src="data:image/png;base64,{png['real']}" alt="the rule on IRAS 07546">
-<p class="cap">The fit describes the spectrum (the residuals sit inside the noise)
-and all three wings are on in every sample, so this object needs four components.  The
-four-component fit beats the three-component one by <code>dchi2</code> =
-{real['dchi2']:.0f} for three parameters &mdash; decisive, yet invisible in chi2/dof,
-where 57 000 pixels hide it in the third decimal.  The broadest component sits at the
-upper edge of the adopted width range, which is reported rather than hidden.</p>"""
+<p class="cap">The residuals show no structure -- they sit inside the noise -- and all
+three wings are on in every sample, so this object needs four components.  Its
+chi2/dof of {real['chi2_dof']:.3f} is far below 1 because the error bars are
+conservative on these pixels (the published two-component fit gets 0.32 on the same
+data); a low value cannot make a model look better than it is, and the comparison that
+decides the count is between two fits of the <em>same</em> pixels: four components beat
+three by <code>dchi2</code> = {real['dchi2']:.0f} for three parameters &mdash; decisive,
+yet invisible in chi2/dof, where 57 000 pixels hide it in the third decimal.  The
+broadest component sits at the upper edge of the adopted width range, which is reported
+rather than hidden.</p>"""
     else:
         real_html = ""
 
@@ -801,7 +822,9 @@ negligible is below the floor.</li>
 <li><strong>Take the most common count.</strong>  The mode of that distribution is the
 answer &mdash; the number of components the data actually constrain.</li>
 <li><strong>Check it against the data.</strong>  The fit at that count must describe
-the spectrum, i.e. its chi-square per degree of freedom must be about 1 (section 3).</li>
+the spectrum: its chi-square per degree of freedom must not be <em>above</em> about 1
+(section 3).  Well <em>below</em> 1 is not a problem -- it means the quoted error bars
+are conservative -- and it is what the real object below shows.</li>
 </ol>
 
 <img src="data:image/png;base64,{png['toggle']}" alt="what a toggle prior does">
@@ -824,10 +847,12 @@ bottom row of section 3 shows the fit is already at the noise level.</p>
 
 <h2>3. How well the fit matches the data</h2>
 <p>For each mock: the simulated spectrum (grey) and the best fit the rule accepts
-(solid), with the residual in units of the noise underneath.  Where the run also
-contains samples with a different number of components, those fits are drawn dashed
-with their chi2/dof in the legend &mdash; a switched-off component costs nothing, so
-one run contains a fit at every count it visits and no extra fitting is needed.</p>
+(solid), with the residual in units of the noise underneath.  A switched-off component
+costs nothing, so one run contains a fit at every count it visits and no extra fitting
+is needed; where such a fit differs from the accepted one by more than a line width it
+is drawn dashed, with its chi2/dof in the legend.  Where it does not, it is left out
+rather than drawn on top of the accepted curve &mdash; an invisible line in the legend
+is worse than no line at all.</p>
 <img src="data:image/png;base64,{png['mock_fits']}" alt="best fits and residuals">
 <table>
 <tr><th>mock</th><th>components in the mock</th><th>components the rule reports</th>

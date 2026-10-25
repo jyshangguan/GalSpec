@@ -141,9 +141,35 @@ class JaxParameter:
     def tied(self, func) -> None:
         self._owner.set_tied(self._name, func)
 
+    @property
+    def prior(self):
+        """Prior distribution of this parameter (``None`` when it has none).
+
+        This is the attribute astropy reserves on every
+        ``astropy.modeling.Parameter`` for "user fitters"; GalSpec fills it in
+        with a :class:`galspec.priors.Prior`::
+
+            line.sigma_w0.prior = priors.Uniform(800.0, 25000.0)
+
+            # a Gaussian around another parameter, hard-capped at five widths
+            b_hbeta.sigma_w0.prior = priors.Normal(
+                mean="b_halpha.sigma_w0", relative=0.20, nsigma=5)
+
+        Assigning ``None`` removes the prior and leaves the parameter uniform
+        over its bounds.  A prior may only be attached to a parameter that is
+        free: a fixed or tied parameter takes its value elsewhere, so the prior
+        would never be consulted.
+        """
+        return self._owner._priors.get(self._name)
+
+    @prior.setter
+    def prior(self, value) -> None:
+        self._owner.set_prior(self._name, value)
+
     def __repr__(self) -> str:
         state = "fixed" if self.fixed else ("tied" if self.tied is not None else "free")
-        return f"<JaxParameter {self._qualified}={self.value:g} ({state})>"
+        prior = " prior" if self.prior is not None else ""
+        return f"<JaxParameter {self._qualified}={self.value:g} ({state}{prior})>"
 
 
 # --------------------------------------------------------------------------------------
@@ -166,6 +192,7 @@ class JaxModel:
         self._values: Dict[str, float] = {}
         self._specs: Dict[str, ParamSpec] = {}
         self._ties: Dict[str, Callable[[Any], Any]] = {}
+        self._priors: Dict[str, Any] = {}
         self._belongs_to: Optional["JaxCompoundModel"] = None
         #: names explicitly supplied by the caller (used by ``_static_init`` hooks)
         self._provided = frozenset(kwargs)
@@ -236,6 +263,52 @@ class JaxModel:
             self._ties.pop(name, None)
         else:
             self._ties[name] = func
+
+    # -- priors --------------------------------------------------------------------
+    def set_prior(self, name: str, prior) -> None:
+        """Attach (or clear, with ``None``) the prior of one parameter.
+
+        Parameters
+        ----------
+        name : str
+            Parameter name, as accepted by :meth:`set_bounds`.
+        prior : galspec.priors.Prior, callable or None
+            A prior object; a plain ``u -> value`` callable is wrapped in
+            :class:`galspec.priors.CallablePrior`; ``None`` removes the prior.
+
+        Raises
+        ------
+        ValueError
+            If the parameter is fixed or tied, in which case a prior would never
+            be consulted.
+        KeyError
+            If the parameter does not exist.
+        """
+        from ..priors import as_prior
+
+        if name not in self._specs:
+            raise KeyError(f"unknown parameter {name!r}; known: {list(self._specs)}")
+        if prior is None:
+            self._priors.pop(name, None)
+            return
+        if self._specs[name].fixed:
+            raise ValueError(
+                f"cannot put a prior on {name!r}: the parameter is fixed, so its "
+                "value never comes from the prior. Remove the fixed flag first.")
+        if name in self._ties:
+            raise ValueError(
+                f"cannot put a prior on {name!r}: the parameter is tied to another "
+                "one, so its value never comes from the prior. Remove the tie first.")
+        self._priors[name] = as_prior(prior)
+
+    def get_prior(self, name: str):
+        """Prior of one parameter, or ``None``."""
+        return self._priors.get(name)
+
+    @property
+    def priors(self) -> Dict[str, Any]:
+        """``{parameter name: prior}`` for every parameter that has one."""
+        return dict(self._priors)
 
     def param_dict(self) -> Dict[str, float]:
         """Current parameter values keyed by *unqualified* name."""
@@ -362,6 +435,7 @@ class JaxModel:
         new._values = dict(self._values)
         new._specs = dict(self._specs)
         new._ties = dict(self._ties)
+        new._priors = dict(self._priors)
         new._belongs_to = None
         return new
 
@@ -455,6 +529,58 @@ class JaxCompoundModel(JaxModel):
     def spec(self, name: str) -> ParamSpec:
         leaf, _, base = self._lookup_qualified(name)
         return leaf._specs[base]
+
+    # -- priors, addressed by qualified name ---------------------------------------
+    def _prior_target(self, name: str) -> Tuple["JaxModel", str]:
+        """Resolve any spelling of a parameter name to ``(leaf, bare name)``.
+
+        Accepts ``"Halpha.sigma_w0"`` (submodel label, as the prior of a centred
+        prior quotes it), ``"sigma_w0_5"`` (the flat astropy spelling) and a bare
+        ``"sigma_w0"`` when only one submodel has it.
+        """
+        if not isinstance(name, str):
+            raise TypeError(f"parameter name must be a string, got {type(name).__name__}")
+        if "." in name:
+            label, _, base = name.rpartition(".")
+            leaf = self._by_name.get(label)
+            if leaf is not None and base in leaf._specs:
+                return leaf, base
+            raise KeyError(f"unknown parameter {name!r}")
+        base, idx = _split_qualified(name)
+        if idx is not None and 0 <= idx < len(self._leaves) and base in self._leaves[idx]._specs:
+            return self._leaves[idx], base
+        hits = [leaf for leaf in self._leaves if name in leaf._specs]
+        if len(hits) == 1:
+            return hits[0], name
+        if len(hits) > 1:
+            labels = [f"{leaf.name}.{name}" for leaf in hits]
+            raise KeyError(f"parameter name {name!r} is ambiguous: it matches {labels}; "
+                           "spell it with its submodel prefix")
+        raise KeyError(f"unknown parameter {name!r}")
+
+    def set_prior(self, name: str, prior) -> None:
+        """Attach (or clear) the prior of the parameter ``"Submodel.parameter"``.
+
+        Also accepts the flat spelling (``"sigma_w0_5"``) or a bare name that
+        only one submodel provides.
+        """
+        leaf, base = self._prior_target(name)
+        leaf.set_prior(base, prior)
+
+    def get_prior(self, name: str):
+        """Prior of the parameter ``"Submodel.parameter"``, or ``None``."""
+        leaf, base = self._prior_target(name)
+        return leaf.get_prior(base)
+
+    @property
+    def priors(self) -> Dict[str, Any]:
+        """``{"Submodel.parameter": prior}`` for every parameter that has one."""
+        out: Dict[str, Any] = {}
+        for i, leaf in enumerate(self._leaves):
+            label = leaf.name or self.submodel_names[i]
+            for base, prior in leaf._priors.items():
+                out[f"{label}.{base}"] = prior
+        return out
 
     @property
     def qualified_param_names(self) -> Tuple[str, ...]:

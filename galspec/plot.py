@@ -625,7 +625,13 @@ def _centred_prior_notes(fit, flat_names):
             width = f"{100.0 * prior.scale:g}%"
         else:
             width = f"{prior.scale:g}"
-        notes.append(f"$N$({centre}, {width})")
+        # a hard limit on the offset is part of the prior's definition, so it
+        # belongs on the axis label with it
+        nsigma = getattr(prior, 'nsigma', None)
+        cap = ''
+        if nsigma is not None and nsigma != 7.0:
+            cap = f", $\\pm${nsigma:g}$\\sigma$"
+        notes.append(f"$N$({centre}, {width}{cap})")
     return notes
 
 

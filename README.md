@@ -180,8 +180,20 @@ chi2/dof from 0.321 (the published two-component fit) to 0.195.
 Whether broad H-beta and H-gamma really have *the same shape* as broad H-alpha is
 the question of `example/fit_iras07546_jax_tied.py`. Instead of tying their shifts
 and widths to H-alpha's, each of the eight parameters gets a Gaussian prior centred
-on H-alpha's value (`galspec.priors.gaussian_around`): a width is allowed to differ
-by 20% of H-alpha's width, a shift by 5% of it. The fit then reports the difference
+on H-alpha's value, written on the parameter itself:
+
+```python
+from galspec import priors
+model.set_prior("b_hbeta.sigma_c",
+                priors.Normal(mean="b_halpha.sigma_c", relative=0.20, nsigma=5))
+model.set_prior("b_hbeta.dv_c",
+                priors.Normal(mean="b_halpha.dv_c", sigma=0.05,
+                              scale_from="b_halpha.sigma_c", nsigma=5))
+```
+
+a width is allowed to differ by 20% of H-alpha's width, a shift by 5% of it, and
+`nsigma` is a hard limit -- `--max-sigma 5` says "nowhere more than five widths
+out" (the default, seven, is where the Gaussian has run out). The fit then reports the difference
 per component, in km/s and in units of that width -- the pull -- so "similar" becomes
 a measurement rather than an assumption. On this object the narrow cores come back
 consistent with H-alpha's (pulls -0.4 and -0.8 tie widths) and the two **wing**
@@ -194,6 +206,14 @@ wider wind is not the right thing to replace it with.
 `develop/dev_jax/tied_prior_report.py` validates the mechanism on mocks whose answer
 is known and writes the result up (`develop/dev_jax/io_test/tied_prior.html`,
 section "Similar, not identical" of `docs/source/jax_gpu.rst`).
+
+Setting a prior is not confined to these examples: every model can carry one, next
+to `value`, `fixed` and `bounds`, and a prior may name another parameter as its
+centre. `priors.Uniform`, `priors.LogUniform`, `priors.Normal` and
+`priors.SpikeAndSlab` cover the four shapes the fits need;
+`develop/dev_jax/prior_api_report.py` writes up why this is safe
+(`develop/dev_jax/io_test/prior_api.html`) -- the new spelling reproduces the old
+unit-cube map bit for bit on all three examples, so no published evidence moves.
 
 ## Example Notebooks
 

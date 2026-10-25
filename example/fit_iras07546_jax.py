@@ -152,8 +152,10 @@ if str(_REPO_ROOT) not in sys.path:
 
 import galspec
 from galspec import jax_models as jxm
+from galspec import priors as priors_
 from galspec.jnesty_fit import JNesty_Fit, jax_devices_summary
 from galspec.jnesty_fit_io import save_jnesty_fit_to_fits
+from galspec.priors import log_uniform
 from galspec.utils import line_wave_dict as LINE_WAVE
 
 # --------------------------------------------------------------------------------------
@@ -550,32 +552,35 @@ def build_model(backend=jxm, include_iron=None, n_balmer_wings=1,
 # --------------------------------------------------------------------------------------
 # 4. Priors: wide, and taken from the data rather than from a previous fit
 # --------------------------------------------------------------------------------------
-def log_uniform(lower: float, upper: float):
-    """Prior that is uniform per decade between ``lower`` and ``upper``.
-
-    Bounds passed in ``bounds_dict`` are *linear*-uniform by design (that is what
-    "amplitude between 1 and 2" means literally), but a quantity that may span
-    four decades wants equal probability per factor of ten: otherwise 99% of the
-    prior sits at the bright end and faint lines are never explored.  A callable
-    handed to ``custom_priors`` says exactly what is meant.
-    """
-    lo, hi = np.log10(lower), np.log10(upper)
-
-    def transform(u):
-        return 10.0 ** (lo + (hi - lo) * u)
-
-    return transform
+# The priors live on the parameters themselves (``model.sigma_w0.prior = ...``),
+# which is the attribute astropy reserves on every Parameter for user fitters.
+# Two shapes are needed for this object:
+#
+# * ``priors_.LogUniform`` -- equal probability per factor of ten.  A box in
+#   ``bounds_dict`` is *linear*-uniform by design (that is what "amplitude between
+#   1 and 2" means literally), but a quantity that may span four decades wants
+#   equal probability per decade: otherwise 99% of the prior sits at the bright
+#   end and faint lines are never explored.
+# * ``priors_.Uniform`` -- plain flat, for quantities whose range is already the
+#   whole physically sensible one (a ratio bounded above by 1, a velocity shift).
 
 
-def make_priors(flux, n_balmer_wings=1):
-    """Return ``(bounds, custom_priors, notes)`` for the whole model.
+def prior_table(flux, n_balmer_wings=1):
+    """Every prior of the model, as ``{parameter: (shape, lower, upper)}``.
+
+    One table, so that the two ways of feeding it cannot drift apart:
+    :func:`apply_priors` puts these on the model (what the examples do now), and
+    :func:`make_priors` returns the older ``(bounds, custom_priors)`` pair that
+    the scripts in ``develop/`` still hand to ``JNesty_Fit``.
+
+    ``shape`` is ``"log"`` for a log-uniform prior (four decades of amplitude
+    freedom) and ``"uniform"`` otherwise.
 
     Everything is derived from the spectrum itself, so the recipe transfers to
     another object without hand-tuning:
 
     * a line peak may be anything from 1e-3 (invisible) to 3x the brightest pixel
-      of the spectrum, log-uniform -- four decades of freedom per line;
-    * a broad component may be up to 8x its own narrow core, log-uniform;
+      of the spectrum, log-uniform;
     * a *wind* component is 0-1 of its core, uniform.  That is the whole range a
       ratio can take in one direction, and it is what breaks the degeneracy:
       component 0 and component 1 of a ``Line_MultiGauss`` are exchangeable --
@@ -592,7 +597,7 @@ def make_priors(flux, n_balmer_wings=1):
     * any further wings (``n_balmer_wings > 1``) reuse exactly those two priors, so
       a wing is free to be narrower than the core and the ladder of components does
       not smuggle in a width ordering.  Switching a wing *off* is a different prior,
-      applied by the study script through ``custom_priors``.
+      applied by the study script (``priors.SpikeAndSlab``).
 
     ``develop/dev_jax/iron_tied_io_test.py`` measures the degeneracy with and
     without the amplitude limit.
@@ -600,62 +605,58 @@ def make_priors(flux, n_balmer_wings=1):
     peak = float(np.max(flux))
     continuum = float(np.percentile(flux, 15.0))
     amp = (1e-3, 3.0 * peak)      # line peaks
-    ratio = (1e-3, 8.0)           # broad / narrow amplitude
     wind = (0.0, 1.0)             # wind / core: bounded, and that breaks the
                                   # core-wind exchange degeneracy (swap -> 1/amp_w0)
 
-    bounds = {
-        "Continuum.amplitude": (0.2 * continuum, 4.0 * continuum),
-        "Continuum.alpha": (-5.0, 5.0),
+    table = {
+        "Continuum.amplitude": ("log", 0.2 * continuum, 4.0 * continuum),
+        "Continuum.alpha": ("uniform", -5.0, 5.0),
         # the iron has ONE free parameter now: its amplitude (the kernel is H-alpha)
-        "FeII.amplitude": (1e-3, 3.0 * continuum),
+        "FeII.amplitude": ("log", 1e-3, 3.0 * continuum),
         # narrow kinematics: [O III] sets them for every narrow line
-        "OIII.dv_c": (-1000.0, 1000.0),
-        "OIII.sigma_c": (30.0, 800.0),
-        "OIII.amp_c0": amp,
+        "OIII.dv_c": ("uniform", -1000.0, 1000.0),
+        "OIII.sigma_c": ("uniform", 30.0, 800.0),
+        "OIII.amp_c0": ("log", *amp),
         # [O III] broad wing
-        "OIII.amp_w0": wind,
-        "OIII.sigma_w0": (300.0, 4000.0),
+        "OIII.amp_w0": ("uniform", *wind),
+        "OIII.sigma_w0": ("uniform", 300.0, 4000.0),
         # other line peaks
-        "NII.amp_c0": amp,
-        "SII.amp_c0": amp, "SII.amp_c1": amp,
-        "OI.amp_c0": amp,
+        "NII.amp_c0": ("log", *amp),
+        "SII.amp_c0": ("log", *amp), "SII.amp_c1": ("log", *amp),
+        "OI.amp_c0": ("log", *amp),
         # broad H-alpha: the only place where the broad kinematics are free
-        "b_halpha.dv_c": (-2500.0, 2500.0),
-        "b_halpha.sigma_c": (300.0, 8000.0),
-        "b_halpha.amp_w0": wind,
-        "b_halpha.dv_w0": (-6000.0, 6000.0),
-        "b_halpha.sigma_w0": (800.0, 25000.0),
+        "b_halpha.dv_c": ("uniform", -2500.0, 2500.0),
+        "b_halpha.sigma_c": ("uniform", 300.0, 8000.0),
+        "b_halpha.amp_w0": ("uniform", *wind),
+        "b_halpha.dv_w0": ("uniform", -6000.0, 6000.0),
+        "b_halpha.sigma_w0": ("uniform", 800.0, 25000.0),
     }
     for i in range(1, n_balmer_wings):        # extra wings: same priors as the first
-        bounds[f"b_halpha.amp_w{i}"] = wind
-        bounds[f"b_halpha.dv_w{i}"] = (-6000.0, 6000.0)
-        bounds[f"b_halpha.sigma_w{i}"] = (800.0, 25000.0)
+        table[f"b_halpha.amp_w{i}"] = ("uniform", *wind)
+        table[f"b_halpha.dv_w{i}"] = ("uniform", -6000.0, 6000.0)
+        table[f"b_halpha.sigma_w{i}"] = ("uniform", 800.0, 25000.0)
     # narrow peaks, one per line
     for name in BALMER_NAMES:
-        bounds[f"n_{name.lower()}.amplitude"] = amp
-    bounds["n_hei.amplitude"] = amp
+        table[f"n_{name.lower()}.amplitude"] = ("log", *amp)
+    table["n_hei.amplitude"] = ("log", *amp)
     # broad peaks and ratios: each line keeps its own (the Balmer decrement)
     for name in BALMER_NAMES:
-        bounds[f"b_{name.lower()}.amp_c"] = amp
-        bounds[f"b_{name.lower()}.amp_w0"] = wind
+        table[f"b_{name.lower()}.amp_c"] = ("log", *amp)
+        table[f"b_{name.lower()}.amp_w0"] = ("uniform", *wind)
         for i in range(1, n_balmer_wings):
-            bounds[f"b_{name.lower()}.amp_w{i}"] = wind
-    bounds["b_hei.amp_c"] = amp
-    bounds["b_heii.amp_c"] = amp
+            table[f"b_{name.lower()}.amp_w{i}"] = ("uniform", *wind)
+    table["b_hei.amp_c"] = ("log", *amp)
+    table["b_heii.amp_c"] = ("log", *amp)
     for name in SINGLE_LINES:
-        bounds[f"{name}.amplitude"] = amp
+        table[f"{name}.amplitude"] = ("log", *amp)
+    return table
 
-    # Peak heights get a log-uniform prior.  The wind ratios do not: they are
-    # bounded above by 1, and a uniform prior over [0, 1] is the unbiased one there.
-    log_params = [name for name in bounds
-                  if name.endswith(("amp_c", "amp_c0", "amp_c1", "amplitude"))]
-    custom = {name: log_uniform(*bounds[name]) for name in log_params}
 
-    notes = [
+def prior_notes(n_balmer_wings=1):
+    """Human-readable one-liner per prior family, for the printed summary."""
+    return [
         ("continuum", "0.2-4x the level of the line-free windows, slope -5 to 5"),
-        ("line peaks", "1e-3 to 3x the brightest pixel, log-uniform"),
-        ("broad/narrow ratio", "1e-3 to 8, log-uniform"),
+        ("line peaks", "1e-3 to 3x the brightest pixel, log-uniform, one per line"),
         ("wind/core ratio", "0-1, uniform: no wind is brighter than its core, and "
                             "the bound breaks the core-wind exchange"),
         ("narrow lines", "30-800 km/s, one width for all, set by [O III]"),
@@ -667,29 +668,67 @@ def make_priors(flux, n_balmer_wings=1):
         ("He I 5876", "narrow Gaussian + one broad component, same ratio prior"),
         ("[S II] 6716/6731", "both peaks free: the ratio is a density diagnostic"),
     ]
-    return bounds, custom, notes
+
+
+def apply_priors(model, flux, n_balmer_wings=1):
+    """Put every prior on the model, one parameter at a time.
+
+    This is the whole prior specification: each line below says what is allowed
+    for one parameter, next to the parameter's own name, and a parameter that is
+    not mentioned stays uniform over its bounds.
+
+    Returns the ``(family, description)`` notes, for the printed summary.
+    """
+    for name, (shape, lower, upper) in prior_table(flux, n_balmer_wings).items():
+        prior = (priors_.LogUniform(lower, upper) if shape == "log"
+                 else priors_.Uniform(lower, upper))
+        model.set_prior(name, prior)
+    return prior_notes(n_balmer_wings)
+
+
+def make_priors(flux, n_balmer_wings=1):
+    """``(bounds, custom_priors, notes)``: the same priors in the older form.
+
+    Kept because the scripts in ``develop/`` hand these two dictionaries to
+    ``JNesty_Fit``; new code should call :func:`apply_priors` instead.
+    """
+    table = prior_table(flux, n_balmer_wings)
+    bounds = {name: (lower, upper) for name, (_, lower, upper) in table.items()}
+    custom = {name: log_uniform(lower, upper)
+              for name, (shape, lower, upper) in table.items() if shape == "log"}
+    return bounds, custom, prior_notes(n_balmer_wings)
 
 
 # --------------------------------------------------------------------------------------
 # 5. Run the fit
 # --------------------------------------------------------------------------------------
-def run_fit(wave, flux, error, bounds, custom_priors, nlive=NLIVE, dlogz=DLOGZ,
+def run_fit(wave, flux, error, nlive=NLIVE, dlogz=DLOGZ,
             max_iterations=200_000, device="auto", progress=None, n_balmer_wings=1,
-            tie_broad_balmer=True):
+            tie_broad_balmer=True, model=None, priors=True):
     """Sample the posterior with JNesty.  No optimiser is involved anywhere.
 
-    ``n_balmer_wings`` must match the ``make_priors`` call that produced
-    ``bounds``: it decides how many components the model has.
+    The model is built here, its priors are attached with :func:`apply_priors`,
+    and the sampler is told nothing about them beyond the model itself.
+
+    Parameters
+    ----------
+    priors : bool
+        Apply :func:`apply_priors`.  ``fit_iras07546_jax_tied.py`` passes
+        ``False`` because it attaches its own (soft) priors instead.
+    model : JaxModel, optional
+        Use this model instead of building one.
     """
     if progress is None:
         # Only draw the bar when someone is watching: in a batch job it would be
         # thousands of carriage-return updates in the log.
         progress = sys.stdout.isatty()
-    model = apply_model_labels(build_model(jxm,     # so the fit carries plot labels
-                                          n_balmer_wings=n_balmer_wings,
-                                          tie_broad_balmer=tie_broad_balmer))
+    if model is None:
+        model = apply_model_labels(build_model(jxm,     # so the fit carries plot labels
+                                              n_balmer_wings=n_balmer_wings,
+                                              tie_broad_balmer=tie_broad_balmer))
+    if priors:
+        apply_priors(model, flux, n_balmer_wings=n_balmer_wings)
     fit = JNesty_Fit(model, wave, flux, error,
-                     bounds_dict=bounds, custom_priors=custom_priors,
                      nlive=nlive, bound="multi", device=device)
     print(f"  free parameters : {fit.ndim}")
     print(f"  device          : {fit.device}  [{jax_devices_summary()}]")
@@ -1178,23 +1217,24 @@ def main(argv=None) -> int:
           f"{len(model.free_param_names)} free parameters")
     print("      " + ", ".join(submodels))
 
-    bounds, custom_priors, notes = make_priors(flux,
-                                               n_balmer_wings=args.broad_wings)
+    notes = apply_priors(model, flux, n_balmer_wings=args.broad_wings)
     print("\n[3/5] priors (no least-squares fit is used to set them):")
     for what, description in notes:
         print(f"      {what:20s} {description}")
 
-    missing = [q for q in free_qualified_names(model) if q not in bounds]
+    # Every free parameter must have been given a prior: a silent uniform one is
+    # how a stray parameter ends up sampling the whole box.
+    missing = [q for q in free_qualified_names(model) if model.get_prior(q) is None]
     if missing:
         raise RuntimeError(f"no prior given for these free parameters: {missing}")
 
     print("\n[4/5] running JNesty")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        fit = run_fit(wave, flux, error, bounds, custom_priors, nlive=args.nlive,
+        fit = run_fit(wave, flux, error, nlive=args.nlive,
                       dlogz=args.dlogz, max_iterations=args.max_iterations,
                       device=args.device, progress=args.progress,
-                      n_balmer_wings=args.broad_wings)
+                      n_balmer_wings=args.broad_wings, model=model, priors=False)
 
     print("\n[5/5] results")
     predicted, _ = report_quality(fit, wave, flux, error)

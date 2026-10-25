@@ -95,11 +95,26 @@ values just like astropy.
    print(fit.prior_dominated())   # parameters pressed against a prior edge
    fit.plot_corner()
 
-Priors are built with exactly the same rules as :class:`galspec.Dynesty_Fit`
-(``bounds_dict`` first, then the parameter's own finite bounds, then a
-per-parameter-type default with log-uniform amplitudes), so the same
-``bounds_dict`` gives the same prior -- and therefore a comparable evidence --
-in both fitters.
+Priors are set on the parameters themselves, and a parameter whose prior is
+never mentioned is uniform over its bounds:
+
+.. code-block:: python
+
+   from galspec import priors
+
+   model.sigma_w0.prior = priors.Uniform(800.0, 25000.0)
+   model.amp_c.prior = priors.LogUniform(1e-3, 3.0)      # flat per decade
+   # H-beta's shift near H-alpha's, within 5% of the width, at most 5 widths out:
+   model.dv_w0.prior = priors.Normal(mean="b_halpha.dv_w0", sigma=0.05,
+                                     scale_from="b_halpha.sigma_w0", nsigma=5)
+
+The fitter reads the priors off the model -- it is not told about them -- and works
+out the order in which dependent parameters have to be drawn. ``nsigma`` is a hard
+limit, not a suggestion: a value further from the centre than ``nsigma`` widths has
+zero prior probability. A model with no priors at all behaves exactly as before
+(``bounds_dict``, then the parameter's own finite bounds, then a per-type default
+with log-uniform amplitudes), so old code keeps its old prior -- and therefore a
+comparable evidence.
 
 Precision
 ---------
@@ -539,11 +554,15 @@ constructor arguments the astropy walker never sees (``n_components``,
 
 A loaded fit evaluates the model, the best fit, the quantiles and the evidence
 exactly as the original did -- the reloaded model reproduces the flux to 0.0
-difference in double precision, ties included. What it cannot reproduce is the
-*prior transform*: ``custom_priors`` are Python callables, and a closure defined
-in ``__main__`` cannot be written to a file. The file stores the resolved bounds
-and the names of the parameters that had a custom prior; loading such a file warns
-about it. That restriction is shared with the dynesty, nautilus and MCMC loaders.
+difference in double precision, ties included. The priors come back too: each one
+is stored as its type and its arguments (``{"kind": "uniform", "args": {"lower":
+800.0, "upper": 25000.0}}``), together with the name of any parameter it is centred
+on, so a file written from now on can be reloaded *and the sampler resumed*. The
+one exception is a prior supplied as a bare Python function (the older
+``custom_priors`` spelling): that cannot be written to a file, so the loader warns
+and keeps only the resolved bounds. Files written before priors became objects
+fall in the same case: they read normally, and are for results rather than for
+resuming.
 
 **Memory.** JNesty's GPU footprint for a fit like this is ~1 GB and does *not*
 grow with the number of iterations: the dead-point history is one buffer allocated
@@ -793,15 +812,13 @@ A prior that can switch a component off
 .. code-block:: python
 
    import galspec
+   from galspec import priors
 
-   priors = {
-       # a spike at exactly zero (probability p_off), else a linear slab on (0, 1]
-       "b_halpha.amp_w0": galspec.uniform_toggle(p_off=0.2),
-       "b_hbeta.amp_w0": galspec.uniform_toggle(p_off=0.2),
-       "b_hgamma.amp_w0": galspec.uniform_toggle(p_off=0.2),
-   }
-   fit = JNesty_Fit(model, wave, flux, error, bounds_dict=bounds,
-                    custom_priors=priors, bound="multi", nlive=1000)
+   # a spike at exactly zero (probability p_off = 0.2), else a linear slab on (0, 1]
+   for name in ("b_halpha", "b_hbeta", "b_hgamma"):
+       model.set_prior(f"{name}.amp_w0", priors.SpikeAndSlab(p_off=0.2, lower=0.0,
+                                                            upper=1.0))
+   fit = JNesty_Fit(model, wave, flux, error, bound="multi", nlive=1000)
 
    p = galspec.toggle_prior_odds(0.2)       # 0.2/0.8 = 0.25, for the Bayes factor
 
@@ -814,10 +831,12 @@ consequences matter.
   mass at zero, which has *finite* prior volume -- ``p_off`` of the cube -- as
   opposed to a density on the reals, which has none.  A nested sampler can find a
   region with finite volume; it could never find a point of measure zero.
-* Nothing couples the parameters.  ``JNesty_Fit`` applies each entry of
-  ``custom_priors`` to one cube coordinate, independently, so the transform cannot
-  enforce a hierarchical constraint among components.  All it does is allow a
-  component's amplitude to be zero.
+* A prior that reads another parameter does *not* need a spike.  Every prior is
+  applied to one cube coordinate; one that names another parameter
+  (``priors.Normal(mean="b_halpha.sigma_w0", ...)``) is evaluated after the
+  parameter it names, which is what makes a hierarchical constraint possible
+  without any extra machinery.  A spike and a hierarchy are separate features and
+  combine freely.
 
 ``galspec.priors`` also has ``log_uniform_toggle``: the same spike, but the slab is
 uniform *in the log*, which is the right shape when the gated quantity spans
@@ -1119,20 +1138,22 @@ The prior type
 
 .. code-block:: python
 
-   import galspec
+   from galspec import priors
 
-   priors = {
-       # a width: 20% of H-alpha's width, truncated to this parameter's own box
-       "b_hbeta.sigma_c": galspec.gaussian_around("b_halpha.sigma_c", 0.20,
-                                                 relative=True),
-       # a shift: 5% of that component's H-alpha *width* (not of the shift, which
-       # can be near zero), used as the standard deviation
-       "b_hbeta.dv_c": galspec.gaussian_around("b_halpha.dv_c", 0.05,
-                                              scale_from="b_halpha.sigma_c"),
-   }
+   # a width: 20% of H-alpha's width, at most five widths away, truncated to this
+   # parameter's own box
+   model.set_prior("b_hbeta.sigma_c",
+                   priors.Normal(mean="b_halpha.sigma_c", relative=0.20, nsigma=5))
+   # a shift: 5% of that component's H-alpha *width* (not of the shift, which can
+   # be near zero), used as the standard deviation
+   model.set_prior("b_hbeta.dv_c",
+                   priors.Normal(mean="b_halpha.dv_c", sigma=0.05,
+                                 scale_from="b_halpha.sigma_c", nsigma=5))
 
-``gaussian_around(center, scale, ...)`` returns a :class:`galspec.CenteredPrior`,
-which the fitters accept anywhere a custom prior is accepted.  ``center`` is either
+``priors.Normal(...)`` (and its older spelling ``galspec.gaussian_around(...)``)
+returns a :class:`galspec.CenteredPrior`, which the model accepts anywhere a prior
+is accepted.  ``nsigma`` is a **hard** limit on the offset; without it the Gaussian
+is cut at seven widths, where it has 1.3e-12 of its mass left.  ``mean`` is either
 a parameter name or a number; ``scale`` is the standard deviation in one of three
 forms, chosen by the keyword:
 
@@ -1142,22 +1163,25 @@ forms, chosen by the keyword:
 * ``scale_from="name"``: ``scale`` is a fraction of *that* parameter's value, which
   is how a shift is tied in units of a width.
 
-``log_space=True`` makes the Gaussian multiplicative (a log-normal in the
-parameter), which is the right shape for an amplitude; it cannot be combined with
-``relative``, because in log space ``scale`` is already a fraction, in natural logs.
+``log=True`` makes the Gaussian multiplicative (a log-normal in the parameter),
+which is the right shape for an amplitude; it cannot be combined with ``relative``,
+because in log space ``scale`` is already a fraction, in natural logs.
 
 Two things are needed for this to be more than a convenience.
 
-**The prior has to remain a proper density on the parameter's own box.**  The
-Gaussian is truncated to the range the parameter would otherwise have had (the same
-``bounds_dict`` entry), and applied as a *transform of the unit cube*: ``u`` maps
-one-to-one onto that range, through the inverse of the truncated normal's CDF.  A
-bijection is what keeps the evidence comparable with a run that uses the plain box
-prior, and what keeps nested sampling's prior volume meaningful.  The tails beyond
-seven sigma are cut -- 1.3e-12 of the mass, where float64 can no longer tell one
-cumulative probability from 1 -- so the map is exact everywhere it carries weight.
-When the box is the narrower of the two, the box wins, which is what truncation
-means.
+**The prior has to remain a proper density on the parameter's own range.**  The
+Gaussian is truncated to the range the parameter would otherwise have had (its own
+bounds, or ``mini``/``maxi``), and applied as a *transform of the unit cube*: ``u``
+maps one-to-one onto that range, through the inverse of the truncated normal's CDF.
+A bijection is what keeps the evidence comparable with a run that uses the plain box
+prior, and what keeps nested sampling's prior volume meaningful.  The range is the
+box *intersected* with ``nsigma`` widths either side of the centre; the default is
+seven, where 1.3e-12 of the mass is left and float64 can no longer tell one
+cumulative probability from 1.  When the box is the narrower of the two, the box
+wins, which is what truncation means.  Passing ``nsigma=5`` is a deliberate
+statement -- nothing beyond five widths has any prior probability at all -- and a
+posterior that piles up against the limit is then a bound rather than a
+measurement.
 
 **The dependency has to be resolved, not assumed.**  ``b_hbeta.dv_c`` reads two
 parameters, so the prior transform cannot evaluate the parameters in the order they

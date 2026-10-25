@@ -191,13 +191,31 @@ def save_jnesty_fit_to_fits(jnesty_fit, filename, thin: int = 1) -> str:
 
     custom = dict(getattr(jnesty_fit, "custom_priors", {}) or {})
     if custom:
-        names, reprs = [], []
-        for key, callable_ in custom.items():
-            names.append(str(key))
-            reprs.append(repr(callable_)[:200])
+        # Priors given as galspec.priors objects are stored whole (kind + the
+        # arguments of their constructor) and rebuilt on load.  A bare callable
+        # has no data form, so only its repr is kept and loading reports it.
+        full_by_flat = dict(zip(getattr(jnesty_fit, "param_names", []),
+                                getattr(jnesty_fit, "full_param_names", [])))
+        names, kinds, payloads, reprs = [], [], [], []
+        for key, prior in custom.items():
+            name = full_by_flat.get(key, key)
+            names.append(str(name))
+            reprs.append(repr(prior)[:200])
+            try:
+                data = prior.to_dict()
+            except TypeError:
+                kinds.append("callable")
+                payloads.append("")
+            else:
+                kinds.append(str(data["kind"]))
+                payloads.append(json.dumps(data["args"], sort_keys=True))
         hdul.append(fits.BinTableHDU.from_columns(
             [fits.Column(name="PARAM_NAME", format="A100",
                          array=np.array(names, dtype="U100")),
+             fits.Column(name="KIND", format="A32",
+                         array=np.array(kinds, dtype="U32")),
+             fits.Column(name="ARGS", format="A400",
+                         array=np.array(payloads, dtype="U400")),
              fits.Column(name="REPR", format="A200",
                          array=np.array(reprs, dtype="U200"))],
             name="CUSTOM_PRIORS"))
@@ -346,8 +364,24 @@ def load_jnesty_fit_from_fits(filename, wave: Optional[np.ndarray] = None):
         else:
             data["_log_scale_params"] = set()
         custom_names: list = []
+        custom_priors: dict = {}
         if "CUSTOM_PRIORS" in hdul:
-            custom_names = [str(v) for v in hdul["CUSTOM_PRIORS"].data["PARAM_NAME"]]
+            table = hdul["CUSTOM_PRIORS"].data
+            custom_names = [str(v) for v in table["PARAM_NAME"]]
+            if "KIND" in table.names:
+                from .priors import Prior
+
+                for row in table:
+                    kind = str(row["KIND"]).strip()
+                    if not kind or kind == "callable":
+                        continue
+                    try:
+                        args = json.loads(str(row["ARGS"]) or "{}")
+                        custom_priors[str(row["PARAM_NAME"])] = Prior.from_dict(
+                            {"kind": kind, "args": args})
+                    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                        warnings.warn(f"{filename}: could not rebuild the prior of "
+                                      f"{row['PARAM_NAME']} ({exc})", stacklevel=2)
 
         tree = _decode_json_hdu(hdul, "MODEL_STR")
         array_meta = _decode_json_hdu(hdul, "MODEL_ARR") or {}
@@ -404,12 +438,27 @@ def load_jnesty_fit_from_fits(filename, wave: Optional[np.ndarray] = None):
     fit.param_labels = qualified_parameter_labels(fit.model, fit.full_param_names)
     fit.full_param_labels = list(fit.param_labels)
 
-    if custom_names:
+    # -- priors: put the stored ones back on the model, then rebuild the map -----
+    unrestored = [name for name in custom_names if name not in custom_priors]
+    for name, prior in custom_priors.items():
+        try:
+            model.set_prior(name, prior)
+        except (KeyError, ValueError) as exc:
+            unrestored.append(name)
+            warnings.warn(f"{filename}: the stored prior of {name} could not be "
+                          f"attached ({exc}); it is reported, not restored",
+                          stacklevel=2)
+    fit.model_priors = fit._collect_model_priors()
+    fit.custom_priors = dict(fit.model_priors)
+    fit._build_prior_spec()
+
+    if unrestored:
         warnings.warn(
             "this file records custom priors for "
-            f"{custom_names}, but prior callables cannot be stored in FITS: the "
-            "posterior, evidence and model are restored, the prior transform is "
-            "not. Do not resume sampling from this object.", stacklevel=2)
+            f"{sorted(set(unrestored))}, but those cannot be stored in FITS (a bare "
+            "Python callable has no data form): the posterior, evidence and model are "
+            "restored, the prior transform of those parameters is uniform instead. "
+            "Do not resume sampling from this object.", stacklevel=2)
 
     print(f"JNesty_Fit object loaded from {filename}")
     return fit

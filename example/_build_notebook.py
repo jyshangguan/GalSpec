@@ -41,6 +41,7 @@ import jax.numpy as jnp
 
 import galspec
 from galspec import jax_models as jxm
+from galspec import priors as priors_
 from galspec.jnesty_fit import JNesty_Fit, jax_devices_summary
 from galspec.jnesty_fit_io import save_jnesty_fit_to_fits, load_jnesty_fit_from_fits
 from galspec.utils import line_wave_dict as LINE_WAVE
@@ -379,85 +380,61 @@ for q in free_qualified_names(model):
 '''
 
 priors = '''\
-def log_uniform(lower, upper):
-    """Prior that is uniform per decade between ``lower`` and ``upper``."""
-    lo, hi = np.log10(lower), np.log10(upper)
+# Each parameter carries its own prior: ``model.<name>.prior = ...``.  That is the
+# attribute astropy reserves on every Parameter for user fitters, so it sits next
+# to ``value``, ``fixed`` and ``bounds`` and costs nothing to learn.
+peak = float(np.max(flux))
+continuum = float(np.percentile(flux, 15.0))
+amp = (1e-3, 3.0 * peak)      # line peaks: four decades, log-uniform
+wind = (0.0, 1.0)             # wind / core: bounded, and that breaks the
+                              # core-wind exchange degeneracy (swap -> 1/amp_w0)
 
-    def transform(u):
-        return 10.0 ** (lo + (hi - lo) * u)
+# Every parameter whose range is a plain box gets ``Uniform``; a peak, which may
+# be four decades fainter than the brightest pixel, gets ``LogUniform`` so that
+# each factor of ten is equally likely.
+for name, (lower, upper) in {
+    "Continuum.alpha": (-5.0, 5.0),
+    "OIII.dv_c": (-1000.0, 1000.0),
+    "OIII.sigma_c": (30.0, 800.0),
+    "OIII.amp_w0": wind,
+    "OIII.sigma_w0": (300.0, 4000.0),
+    "b_halpha.dv_c": (-2500.0, 2500.0),
+    "b_halpha.sigma_c": (300.0, 8000.0),
+    "b_halpha.amp_w0": wind,
+    "b_halpha.dv_w0": (-6000.0, 6000.0),
+    "b_halpha.sigma_w0": (800.0, 25000.0),
+}.items():
+    model.set_prior(name, priors_.Uniform(lower, upper))
 
-    return transform
+for name, (lower, upper) in {
+    "Continuum.amplitude": (0.2 * continuum, 4.0 * continuum),
+    "FeII.amplitude": (1e-3, 3.0 * continuum),
+    "OIII.amp_c0": amp,
+    "NII.amp_c0": amp,
+    "SII.amp_c0": amp, "SII.amp_c1": amp,
+    "OI.amp_c0": amp,
+    "n_hei.amplitude": amp,
+    "b_hei.amp_c": amp,
+    "b_heii.amp_c": amp,
+}.items():
+    model.set_prior(name, priors_.LogUniform(lower, upper))
 
+for name in BALMER_NAMES:
+    model.set_prior(f"n_{name.lower()}.amplitude", priors_.LogUniform(*amp))
+    model.set_prior(f"b_{name.lower()}.amp_c", priors_.LogUniform(*amp))
+    model.set_prior(f"b_{name.lower()}.amp_w0", priors_.Uniform(*wind))
+for name in SINGLE_LINES:
+    model.set_prior(f"{name}.amplitude", priors_.LogUniform(*amp))
 
-def make_priors(flux):
-    """Bounds and log-uniform priors for the whole model.
-
-    ``amp_w0`` -- the wind's amplitude relative to the broad core -- is uniform on
-    [0, 1].  A wind is by definition no brighter than its core, and the bound is
-    what breaks the core-wind degeneracy: component 0 and component 1 of a
-    Line_MultiGauss are exchangeable (swapping them leaves the spectrum
-    bit-identical), but the swap sends amp_w0 -> 1/amp_w0, i.e. outside [0, 1].
-    The *widths* therefore keep their full data-driven range.
-    See ``develop/dev_jax/io_test/iron_tied_io_test.html``.
-    """
-    peak = float(np.max(flux))
-    continuum = float(np.percentile(flux, 15.0))
-    amp = (1e-3, 3.0 * peak)      # line peaks
-    ratio = (1e-3, 8.0)           # broad / narrow amplitude
-    wind = (0.0, 1.0)             # wind / core: bounded, and that breaks the
-                                  # core-wind exchange degeneracy (swap -> 1/amp_w0)
-
-    bounds = {
-        "Continuum.amplitude": (0.2 * continuum, 4.0 * continuum),
-        "Continuum.alpha": (-5.0, 5.0),
-        # one free parameter for the iron: its amplitude.  No width or shift prior
-        # is needed because the kernel is broad H-alpha.
-        "FeII.amplitude": (1e-3, 3.0 * continuum),
-        "OIII.dv_c": (-1000.0, 1000.0),
-        "OIII.sigma_c": (30.0, 800.0),
-        "OIII.amp_c0": amp,
-        "OIII.amp_w0": wind,
-        "OIII.sigma_w0": (300.0, 4000.0),
-        "NII.amp_c0": amp,
-        "SII.amp_c0": amp, "SII.amp_c1": amp,
-        "OI.amp_c0": amp,
-        # broad H-alpha: the only place where the broad kinematics are free
-        "b_halpha.dv_c": (-2500.0, 2500.0),
-        "b_halpha.sigma_c": (300.0, 8000.0),
-        "b_halpha.amp_w0": wind,
-        "b_halpha.dv_w0": (-6000.0, 6000.0),
-        "b_halpha.sigma_w0": (800.0, 25000.0),
-    }
-    for name in BALMER_NAMES:
-        bounds[f"n_{name.lower()}.amplitude"] = amp
-        bounds[f"b_{name.lower()}.amp_c"] = amp
-        bounds[f"b_{name.lower()}.amp_w0"] = wind
-    bounds["n_hei.amplitude"] = amp
-    bounds["b_hei.amp_c"] = amp
-    bounds["b_heii.amp_c"] = amp
-    for name in SINGLE_LINES:
-        bounds[f"{name}.amplitude"] = amp
-
-    # peak heights get a log-uniform prior; the wind ratios are bounded by 1 and
-    # take a uniform one instead
-    log_params = [n for n in bounds
-                  if n.endswith(("amp_c", "amp_c0", "amp_c1", "amplitude"))]
-    return bounds, {n: log_uniform(*bounds[n]) for n in log_params}
-
-
-bounds, custom_priors = make_priors(flux)
-print(f"{len(bounds)} free parameters, each with an explicit prior:")
+print(f"{len(model.priors)} free parameters, each with an explicit prior:")
 for q in free_qualified_names(model):
-    lo, hi = bounds[q]
-    kind = "log" if q in custom_priors else "linear"
-    print(f"  {q:22s} ({lo:9.3f}, {hi:9.3f})  {kind}-uniform")
+    print(f"  {q:22s} {model.get_prior(q)!r}")
 
 '''
 
 fit_cell = '''\
-fit = JNesty_Fit(model, wave, flux, error,
-                 bounds_dict=bounds, custom_priors=custom_priors,
-                 nlive=NLIVE, bound="multi", device="auto")
+# Nothing is passed about the priors: the sampler reads them off the model.
+fit = JNesty_Fit(model, wave, flux, error, nlive=NLIVE, bound="multi", device="auto")
 
 print(f"free parameters : {fit.ndim}")
 print(f"device          : {fit.device}  [{jax_devices_summary()}]")
@@ -1131,10 +1108,12 @@ from the spectrum itself, never from a previous fit:
 | iron amplitude | 1e-3 to 3x the continuum level | the only free iron parameter |
 | [S II] 6716/6731 | both peaks 1e-3 to 3x peak | the ratio is measured, not assumed |
 
-One subtlety: bounds passed in `bounds_dict` are *linear*-uniform by design, and a
-linear prior over four decades would put 99% of its probability at the bright
-end. Amplitudes therefore get an explicit `log_uniform` callable through
-`custom_priors`, so every factor of ten is equally likely.
+One subtlety: a parameter whose range is a plain box takes a *linear* prior, and
+a linear prior over four decades would put 99% of its probability at the bright
+end. Amplitudes therefore get `priors.LogUniform`, so every factor of ten is
+equally likely. That is the whole reason the two prior shapes exist: `Uniform`
+where the range is already the physically sensible one, `LogUniform` where it
+spans decades.
 
 A second, less obvious one: the two components of a `Line_MultiGauss` are
 **exchangeable**. Swapping them — `amp_c' = amp_c * amp_w0`,
@@ -1358,11 +1337,13 @@ restored no matter how they were written in the code."""),
     ("md", """### Reading it back
 
 `load_jnesty_fit_from_fits` rebuilds the model and the fit, and every summary and
-plot works on the result. The one thing it cannot rebuild is the prior
-*transform*: `custom_priors` are Python callables and a closure cannot be written
-to a file, so the file stores the resulting bounds and the names that had a
-custom prior. A loaded fit is therefore for reading results, not for resuming the
-sampler."""),
+plot works on the result. The priors come back with it: each one is stored as its
+*type plus its arguments* (`{"kind": "uniform", "args": {"lower": 800.0,
+"upper": 25000.0}}`), and a prior that names another parameter stores that name
+too, so the file is enough to rebuild the prior transform and resume the sampler.
+The single exception is a prior you wrote yourself as a plain Python function:
+that cannot be written to a file, so the loader warns and the file keeps only the
+resulting bounds."""),
 
     ("code", reload_cell),
 

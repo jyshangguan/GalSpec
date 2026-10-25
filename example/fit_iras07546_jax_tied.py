@@ -7,9 +7,9 @@ to H-alpha's values, so the three profiles differ only in amplitude.  That is a
 strong statement -- it says the broad-line region emitting H-gamma is moving
 exactly like the one emitting H-alpha.
 
-This script replaces each tie with a **prior centred on H-alpha's value**
-(:func:`galspec.priors.gaussian_around`): the parameter is free, but a priori it
-is expected near H-alpha's, within a width set by that component's own scale.
+This script replaces each tie with a **prior centred on H-alpha's value**:
+the parameter is free, but a priori it is expected near H-alpha's, within a width
+set by that component's own scale.
 
     widths  (sigma_c, sigma_w0, ...)      sigma = 20% of H-alpha's width
     shifts  (dv_c,    dv_w0,    ...)      sigma = 5%  of H-alpha's width
@@ -19,6 +19,13 @@ how much broader or narrower H-beta may be; the 5% says how far its centre may s
 from H-alpha's, measured against the line width rather than against the (small and
 possibly zero) shift itself.  Both numbers are choices, not measurements, and the
 script exposes them as ``--width-fraction`` and ``--shift-fraction``.
+
+``--max-sigma`` (default 7) puts a **hard limit** on the offset: ``--max-sigma 5``
+says "nowhere more than five tie widths from H-alpha".  That is a different
+statement from a wider Gaussian -- the prior is exactly zero beyond it -- so a
+posterior that piles up against the limit means the data wanted to go further,
+and the pull saturates at the cap instead of measuring a difference.  The table
+marks such rows.
 
 Eight parameters leave the tie (four per line), so the model has 38 free
 parameters instead of 30.  What that buys is a *measurement*: the posterior of
@@ -38,6 +45,7 @@ Usage::
     python example/fit_iras07546_jax_tied.py              # the real run (~1 h on one GPU)
     python example/fit_iras07546_jax_tied.py --quick      # a few minutes
     python example/fit_iras07546_jax_tied.py --width-fraction 0.5   # a looser tie
+    python example/fit_iras07546_jax_tied.py --max-sigma 5          # a hard limit
 
 Outputs go to ``example/output/`` with the ``iras07546_jax_tied_`` prefix:
 ``_fit.fits`` (reloadable with :func:`galspec.jnesty_fit_io.load_jnesty_fit_from_fits`),
@@ -64,7 +72,7 @@ if str(HERE) not in sys.path:
 import fit_iras07546_jax as base                                     # noqa: E402
 import galspec                                                       # noqa: E402
 from galspec import jax_models as jxm                                # noqa: E402
-from galspec.priors import gaussian_around                           # noqa: E402
+from galspec import priors as priors_                                # noqa: E402
 
 OUTPUT_DIR = base.OUTPUT_DIR
 PREFIX = "iras07546_jax_tied_"
@@ -78,6 +86,12 @@ WIDTH_FRACTION = 0.20
 #: Width of the centred prior on a velocity shift, as a fraction of that
 #: component's H-alpha *width* (not of the shift, which may be near zero).
 SHIFT_FRACTION = 0.05
+#: How many standard deviations of the difference are allowed at all.  Seven is
+#: the numerical default ("the Gaussian has run out"); a smaller number is a
+#: deliberate statement, e.g. 5 for "nowhere more than five tie widths".
+MAX_SIGMA = 7.0
+#: A sample within this many tie widths of the limit counts as "at the cap".
+CAP_TOLERANCE = 0.05
 
 #: 38 free parameters: 400 live points were measured to be too few at 40.
 NLIVE = 1000
@@ -111,68 +125,87 @@ def tied_names(n_balmer_wings=1):
     return pairs
 
 
-def tied_priors(bounds, custom_priors, n_balmer_wings=1,
-                width_fraction=WIDTH_FRACTION, shift_fraction=SHIFT_FRACTION):
-    """Add the released Balmer parameters and their centred priors.
+def reference_support(model, name):
+    """``(lower, upper)`` of a parameter that a centred prior will be truncated to.
 
-    Every released parameter keeps the *same box* as the H-alpha parameter it is
+    The released parameter keeps the *same box* as the H-alpha parameter it is
     centred on, and that box doubles as the truncation range of the Gaussian: the
     prior stays a proper density over the parameter's own range, which is what
     keeps its evidence comparable with the hard-tie run.
+    """
+    prior = model.get_prior(name)
+    support = getattr(prior, "support", None)
+    if support is None:
+        raise RuntimeError(
+            f"{name} has no explicit prior range, so the parameter centred on it "
+            "would fall back to a default box. Give it a priors.Uniform(...) or "
+            "priors.LogUniform(...) first (base.apply_priors does that).")
+    return support
+
+
+def apply_ties(model, n_balmer_wings=1, width_fraction=WIDTH_FRACTION,
+               shift_fraction=SHIFT_FRACTION, max_sigma=MAX_SIGMA):
+    """Put the soft ties on the model: eight parameters, eight lines of prior.
+
+    Each one says where the parameter is expected to be, in terms of another
+    parameter's *value*: the width of H-beta's core is a Gaussian around the width
+    of H-alpha's core, and likewise per wind component and for the shifts.  The
+    fitter works out that H-alpha's value has to be drawn first.
 
     Returns
     -------
-    bounds, custom_priors : dict
-        Copies of the inputs with the eight extra entries.
     rows : list of dict
         What was set, for the printed summary.
     """
-    bounds = dict(bounds)
-    custom_priors = dict(custom_priors)
     rows = []
     for stem in component_stems(n_balmer_wings):
         for line in TIED_LINES:
             # -- the width: a Gaussian around H-alpha's width, 20% wide
             name = f"{line}.sigma_{stem}"
             reference = f"{REFERENCE_LINE}.sigma_{stem}"
-            bounds[name] = bounds[reference]
-            custom_priors[name] = gaussian_around(reference, width_fraction,
-                                                  relative=True)
+            lower, upper = reference_support(model, reference)
+            model.set_prior(name, priors_.Normal(
+                mean=reference, relative=width_fraction, nsigma=max_sigma,
+                mini=lower, maxi=upper))
             rows.append({"parameter": name, "reference": reference,
-                         "kind": "width", "scale": f"{width_fraction:.0%} of the reference"})
+                         "kind": "width",
+                         "scale": f"{width_fraction:.0%} of the reference"})
             # -- the shift: a Gaussian around H-alpha's shift, 5% of the width wide
             name = f"{line}.dv_{stem}"
             reference = f"{REFERENCE_LINE}.dv_{stem}"
             width_from = f"{REFERENCE_LINE}.sigma_{stem}"
-            bounds[name] = bounds[reference]
-            custom_priors[name] = gaussian_around(reference, shift_fraction,
-                                                  scale_from=width_from)
+            # the box is the *shift's* own range (it may be negative); the width
+            # that says how far it may go comes from the line width
+            lower, upper = reference_support(model, reference)
+            model.set_prior(name, priors_.Normal(
+                mean=reference, sigma=shift_fraction, scale_from=width_from,
+                nsigma=max_sigma, mini=lower, maxi=upper))
             rows.append({"parameter": name, "reference": reference,
                          "kind": "shift",
                          "scale": f"{shift_fraction:.0%} of {width_from}"})
-    return bounds, custom_priors, rows
+    return rows
 
 
 # --------------------------------------------------------------------------------------
 # 2. The fit
 # --------------------------------------------------------------------------------------
-def run_tied_fit(wave, flux, error, bounds, custom_priors, nlive=NLIVE, dlogz=DLOGZ,
-                 max_iterations=MAX_ITERATIONS, device="auto", progress=None,
-                 n_balmer_wings=1):
-    """Sample the posterior of the soft-tied model with JNesty."""
-    # ``tie_broad_balmer=False`` releases the eight parameters; the priors above are
-    # what constrains them now.
-    return base.run_fit(wave, flux, error, bounds, custom_priors, nlive=nlive,
-                        dlogz=dlogz, max_iterations=max_iterations, device=device,
-                        progress=progress, n_balmer_wings=n_balmer_wings,
-                        tie_broad_balmer=False)
+def run_tied_fit(wave, flux, error, model, nlive=NLIVE, dlogz=DLOGZ,
+                 max_iterations=MAX_ITERATIONS, device="auto", progress=None):
+    """Sample the posterior of the soft-tied model with JNesty.
+
+    ``model`` must already carry its priors (``base.apply_priors`` then
+    ``apply_ties``), which is all the sampler needs: it reads them off the model.
+    """
+    return base.run_fit(wave, flux, error, nlive=nlive, dlogz=dlogz,
+                        max_iterations=max_iterations, device=device,
+                        progress=progress, model=model, priors=False)
 
 
 # --------------------------------------------------------------------------------------
 # 3. What the tie measured
 # --------------------------------------------------------------------------------------
 def tie_table(fit, width_fraction=WIDTH_FRACTION, shift_fraction=SHIFT_FRACTION,
-              n_balmer_wings=None):
+              n_balmer_wings=None, max_sigma=MAX_SIGMA):
     """Posterior summary of the difference between each line and H-alpha.
 
     For every tied pair: the two medians, their difference, the same difference
@@ -182,6 +215,10 @@ def tie_table(fit, width_fraction=WIDTH_FRACTION, shift_fraction=SHIFT_FRACTION,
     A pull of 0 means the data are consistent with the hard tie; |pull| ~ 1 means
     the difference is as large as the prior allowed for; |pull| >> 1 would mean the
     prior is fighting the data.
+
+    When the prior has a hard limit (``max_sigma`` smaller than the numerical
+    default), ``at_cap`` says whether a sizeable part of the posterior sits
+    against it -- and then the pull is a *limit*, not a measurement.
     """
     if n_balmer_wings is None:
         n_balmer_wings = base.broad_wing_count(fit)
@@ -203,6 +240,7 @@ def tie_table(fit, width_fraction=WIDTH_FRACTION, shift_fraction=SHIFT_FRACTION,
             scale = f"of {REFERENCE_LINE}.sigma_{stem}"
         pull = difference / tie_width
         delta_lo, delta_med, delta_hi = np.percentile(difference, [16, 50, 84])
+        at_cap_fraction = float(np.mean(np.abs(pull) >= max_sigma - CAP_TOLERANCE))
         rows.append({
             "line": line.split(".")[0], "parameter": line.split(".", 1)[1],
             "reference": median[reference_index], "value": median[line_index],
@@ -216,6 +254,9 @@ def tie_table(fit, width_fraction=WIDTH_FRACTION, shift_fraction=SHIFT_FRACTION,
             "pull_hi": float(np.percentile(pull, 84)),
             "tie_width": float(np.median(tie_width)), "scale": scale,
             "kind": kind,
+            "at_cap_fraction": at_cap_fraction,
+            "at_cap": bool(at_cap_fraction > 0.05),
+            "max_sigma": float(max_sigma),
         })
     return rows
 
@@ -240,11 +281,12 @@ def print_tie_table(rows):
     print(f"  {'':22s} {'[km/s]':>9s} {'[km/s]':>9s} {'[km/s]':>10s} "
           f"{'[%]':>11s} {'[sigma]':>7s}")
     for row in rows:
+        mark = "*" if row.get("at_cap") else " "
         print(f"  {row['line'] + '.' + row['parameter']:22s} "
               f"{row['reference']:9.1f} {row['value']:9.1f} "
               f"{nice(row['difference'])} "
               f"{100 * row['fractional']:+10.2f}% "
-              f"{nice(row['pull'])}")
+              f"{nice(row['pull'])}{mark}")
     print("  (the fractional column divides by H-alpha's own value; for a shift that\n"
           "   value can be small or zero, so the pull -- measured against the tie "
           "width -- is the\n   scale that matters)")
@@ -252,6 +294,17 @@ def print_tie_table(rows):
     print(f"\n  largest pull: {worst['line']}.{worst['parameter']} "
           f"= {worst['pull']:+.2f} sigma of the prior width "
           f"({worst['tie_width']:.0f} km/s)")
+    capped = [row for row in rows if row.get("at_cap")]
+    if capped:
+        limit = capped[0].get("max_sigma")
+        print(f"\n  * the prior stops at {limit:g} tie widths and this parameter's "
+              f"posterior sits against it")
+        for row in capped:
+            print(f"    {row['line']}.{row['parameter']}: "
+                  f"{100 * row['at_cap_fraction']:.0f}% of the samples are within "
+                  f"{CAP_TOLERANCE:g} widths of the limit")
+        print("    -> read that pull as a limit ('at least this far from H-alpha'), "
+              "not as a measurement; raise --max-sigma to let the data speak.")
     if abs(worst["pull"]) < 1.0:
         print("  -> every profile is within the tie width of H-alpha's: the hard tie "
               "was a good approximation.")
@@ -311,7 +364,8 @@ def print_evidence_comparison(fit, rows):
 # 4. Figures
 # --------------------------------------------------------------------------------------
 def plot_ties(rows, outfile, title="IRAS 07546+3928: how far H-$\\beta$ and "
-                                   "H-$\\gamma$ are from H-$\\alpha$"):
+                                   "H-$\\gamma$ are from H-$\\alpha$",
+              max_sigma=None):
     """Draw the tie measurement: one row per parameter, in units of the prior width.
 
     Built by hand rather than with :func:`galspec.plot.plot_posterior_hist` because
@@ -321,6 +375,9 @@ def plot_ties(rows, outfile, title="IRAS 07546+3928: how far H-$\\beta$ and "
     The horizontal bar on each row is the 16-84% interval of the difference, so it is
     usually shorter than the marker: the data measure these differences to a few
     percent of the tie width, which is the point.
+
+    When the prior has a hard limit, a dashed vertical line at ``+-max_sigma`` marks
+    it: a marker sitting on that line is a bound, not a measurement.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -335,19 +392,26 @@ def plot_ties(rows, outfile, title="IRAS 07546+3928: how far H-$\\beta$ and "
     for ax, (kind, panel_title, xlabel) in zip(axes, kinds):
         subset = [row for row in rows if row["kind"] == kind]
         for position, row in enumerate(subset):
+            capped = row.get("at_cap", False)
             ax.errorbar([row["pull"]], [position],
                         xerr=[[max(row["pull"] - row["pull_lo"], 0.0)],
                               [max(row["pull_hi"] - row["pull"], 0.0)]],
-                        fmt="o", ms=5.5, color="#2b6cb0", ecolor="#2b6cb0",
+                        fmt="o", ms=5.5,
+                        color="#c53030" if capped else "#2b6cb0",
+                        ecolor="#c53030" if capped else "#2b6cb0",
                         elinewidth=1.8, capsize=3.0, capthick=1.4,
                         label=None, zorder=4)
-            ax.annotate(f"{row['difference']:+.0f} km/s",
+            ax.annotate(f"{row['difference']:+.0f} km/s"
+                        + (" (at the limit)" if capped else ""),
                         (row["pull"], position), xytext=(0, 8),
                         textcoords="offset points", ha="center", fontsize=8.0,
-                        color="0.30", zorder=5)
+                        color="#c53030" if capped else "0.30", zorder=5)
         ax.axvline(0.0, color="#c53030", lw=1.3, zorder=3)
         for sigma, alpha in ((2.0, 0.09), (1.0, 0.16)):
             ax.axvspan(-sigma, sigma, color="#b7791f", alpha=alpha, lw=0, zorder=1)
+        if max_sigma is not None:
+            for value in (-max_sigma, max_sigma):
+                ax.axvline(value, color="0.25", lw=1.1, ls=(0, (4, 3)), zorder=3)
         ax.set_yticks(range(len(subset)))
         ax.set_yticklabels([tie_label(f"{row['line']}.{row['parameter']}")
                             for row in subset], fontsize=9)
@@ -358,7 +422,8 @@ def plot_ties(rows, outfile, title="IRAS 07546+3928: how far H-$\\beta$ and "
         # room for the annotations above the top row and below the bottom one
         ax.set_ylim(-0.75, len(subset) - 1 + 0.95)
         highest = max([abs(row["pull_hi"]) for row in subset] +
-                      [abs(row["pull_lo"]) for row in subset] + [2.0])
+                      [abs(row["pull_lo"]) for row in subset] +
+                      [2.0] + ([max_sigma] if max_sigma is not None else []))
         ax.set_xlim(-highest - 0.6, highest + 0.6)
 
     handles = [Line2D([], [], color="#c53030", lw=1.3,
@@ -369,8 +434,15 @@ def plot_ties(rows, outfile, title="IRAS 07546+3928: how far H-$\\beta$ and "
                      label="2 tie widths"),
                Line2D([], [], color="#2b6cb0", marker="o", ms=5.5, lw=1.8,
                       label="difference and its 16-84% interval")]
-    fig.legend(handles=handles, loc="lower center", ncol=4, frameon=False,
-               fontsize=9, bbox_to_anchor=(0.5, -0.01))
+    if max_sigma is not None:
+        handles.append(Line2D([], [], color="0.25", lw=1.1, ls=(0, (4, 3)),
+                              label=f"hard limit of the prior: {max_sigma:g} tie widths"))
+    if any(row.get("at_cap") for row in rows):
+        handles.append(Line2D([], [], color="#c53030", marker="o", ms=5.5, lw=0,
+                              label="posterior against the limit (a bound, "
+                                    "not a measurement)"))
+    fig.legend(handles=handles, loc="lower center", ncol=min(len(handles), 4),
+               frameon=False, fontsize=9, bbox_to_anchor=(0.5, -0.01))
     fig.suptitle(title, fontsize=11.5)
     fig.tight_layout(rect=(0.0, 0.05, 1.0, 0.96))
     fig.savefig(outfile, dpi=140, bbox_inches="tight")
@@ -402,6 +474,9 @@ def parse_args(argv=None):
     parser.add_argument("--shift-fraction", type=float, default=SHIFT_FRACTION,
                         help=f"prior width on a shift, as a fraction of that "
                              f"component's H-alpha width (default {SHIFT_FRACTION})")
+    parser.add_argument("--max-sigma", type=float, default=MAX_SIGMA,
+                        help="hard limit on the offset, in units of the prior width "
+                             f"(default {MAX_SIGMA:g}; try 5 for 'no wider offsets')")
     parser.add_argument("--quick", action="store_true",
                         help="rough answer quickly (nlive=200, dlogz=0.2)")
     args = parser.parse_args(argv)
@@ -432,15 +507,18 @@ def main(argv=None) -> int:
         print(f"      {line}: own dv_c, sigma_c, dv_w0, sigma_w0 (was: tied to H-alpha)")
 
     # -- the priors ------------------------------------------------------------
-    bounds, custom_priors, notes = base.make_priors(flux, n_balmer_wings=args.broad_wings)
-    bounds, custom_priors, tie_rows = tied_priors(
-        bounds, custom_priors, n_balmer_wings=args.broad_wings,
-        width_fraction=args.width_fraction, shift_fraction=args.shift_fraction)
-    print(f"\n[3/5] soft ties ({len(tie_rows)} parameters):")
+    notes = base.apply_priors(model, flux, n_balmer_wings=args.broad_wings)
+    tie_rows = apply_ties(model, n_balmer_wings=args.broad_wings,
+                          width_fraction=args.width_fraction,
+                          shift_fraction=args.shift_fraction,
+                          max_sigma=args.max_sigma)
+    print(f"\n[3/5] soft ties ({len(tie_rows)} parameters), "
+          f"hard limit {args.max_sigma:g} tie widths:")
     for row in tie_rows:
         print(f"      {row['parameter']:22s} = Gaussian around "
               f"{row['reference']:22s} ({row['scale']})")
-    missing = [name for name in base.free_qualified_names(model) if name not in bounds]
+    missing = [name for name in base.free_qualified_names(model)
+               if model.get_prior(name) is None]
     if missing:
         raise RuntimeError(f"no prior given for these free parameters: {sorted(missing)}")
 
@@ -448,17 +526,18 @@ def main(argv=None) -> int:
     print(f"\n[4/5] running JNesty ({args.nlive} live points)")
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        fit = run_tied_fit(wave, flux, error, bounds, custom_priors,
+        fit = run_tied_fit(wave, flux, error, model,
                            nlive=args.nlive, dlogz=args.dlogz,
                            max_iterations=args.max_iterations, device=args.device,
-                           progress=args.progress, n_balmer_wings=args.broad_wings)
+                           progress=args.progress)
 
     # -- results ---------------------------------------------------------------
     print("\n[5/5] results")
     predicted, _ = base.report_quality(fit, wave, flux, error)
     base.print_parameter_table(fit)
     rows = tie_table(fit, width_fraction=args.width_fraction,
-                     shift_fraction=args.shift_fraction)
+                     shift_fraction=args.shift_fraction,
+                     max_sigma=args.max_sigma)
     print_tie_table(rows)
     comparison = print_evidence_comparison(fit, rows)
     model_cpu = base.check_parity(fit, wave, predicted, tie_broad_balmer=False)
@@ -473,6 +552,7 @@ def main(argv=None) -> int:
                         wave=wave, flux=flux, error=error, predicted=predicted,
                         width_fraction=args.width_fraction,
                         shift_fraction=args.shift_fraction,
+                        max_sigma=args.max_sigma,
                         tie_rows=np.array([str(row) for row in rows]))
     print(f"\n  wrote {npz_path}")
     fits_path = outdir / f"{PREFIX}fit.fits"
@@ -488,7 +568,8 @@ def main(argv=None) -> int:
                          zooms, mask_list=list(base.MASK_WINDOWS), error=error)
         base.plot_corner(fit, outdir / f"{PREFIX}corner.png")
         base.plot_histograms(fit, outdir / f"{PREFIX}histograms.png")
-        plot_ties(rows, outdir / f"{PREFIX}ties.png")
+        plot_ties(rows, outdir / f"{PREFIX}ties.png",
+                  max_sigma=args.max_sigma if args.max_sigma < 7.0 else None)
 
     fit.release_device_buffers()
     print("\ndone.")

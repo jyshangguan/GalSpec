@@ -59,6 +59,7 @@ import numpy as np
 
 import galspec
 from galspec import jax_models as jxm
+from galspec import priors as priors_
 from galspec.jnesty_fit_io import save_jnesty_fit_to_fits
 
 HERE = Path(__file__).resolve().parent
@@ -89,30 +90,57 @@ MAX_ITERATIONS = 400_000
 # --------------------------------------------------------------------------------------
 # Priors: the published recipe, plus a toggle on every wing amplitude
 # --------------------------------------------------------------------------------------
-def make_toggle_priors(flux):
-    """``(bounds, custom_priors, notes)`` with the wing amplitudes gated.
+def apply_toggle_priors(model, flux):
+    """Put the published recipe on the model, then gate the wing amplitudes.
 
     Everything except the wing amplitudes is exactly what the published fit uses,
     so the two are comparable component by component.  Two things change:
 
     * every ``sigma_w`` gets the *core's* prior, 300-8000 km/s, because nothing
       says a wing must be broader than the core;
-    * ``amp_w<i>`` gets ``galspec.uniform_toggle(p_off=P_OFF[i])`` -- half of the
-      prior volume at exactly zero, the rest on a linear slab (0, 1].  The
-      amplitude stays bounded by the core, which is what keeps the labels
-      meaningful when only one component is present.
+    * ``amp_w<i>`` gets a `galspec.priors.SpikeAndSlab` with ``p_off=P_OFF[i]`` --
+      that fraction of the prior volume is at exactly zero, the rest on a linear
+      slab (0, 1].  The amplitude stays bounded by the core, which is what keeps
+      the labels meaningful when only one component is present.
+
+    Returns the ``(family, description)`` notes, for the printed summary.
     """
-    bounds, custom, notes = base.make_priors(flux, n_balmer_wings=N_WINGS)
+    notes = base.apply_priors(model, flux, n_balmer_wings=N_WINGS)
 
     for i in range(N_WINGS):
+        model.set_prior(f"b_halpha.sigma_w{i}", priors_.Uniform(*SIGMA_RANGE))
+    for line in WINGED_LINES:
+        for i in range(N_WINGS):
+            model.set_prior(f"b_{line}.amp_w{i}",
+                            priors_.SpikeAndSlab(p_off=P_OFF[i], lower=0.0, upper=1.0))
+
+    notes = [note for note in notes if note[0] != "broad wind"]
+    notes += [
+        ("broad components", f"1 core + {N_WINGS} wings for "
+                             + ", ".join(f"b_{line}" for line in WINGED_LINES)),
+        ("wing widths", f"{SIGMA_RANGE[0]:.0f}-{SIGMA_RANGE[1]:.0f} km/s, same as the "
+                        "core: a wing need not be broader"),
+        ("wing toggle", "p_off = " + ", ".join(f"{p:.1f}" for p in P_OFF)
+                        + ": this fraction of the prior has amp_w = 0 exactly, so the "
+                          "sampler can switch the wing off"),
+        ("needed", f"a wing counts above {MIN_WING_FRACTION*100:.0f}% of the core peak"),
+    ]
+    return notes
+
+
+def make_toggle_priors(flux):
+    """``(bounds, custom_priors, notes)``: the same priors in the older form.
+
+    Kept for scripts that still hand dictionaries to ``JNesty_Fit``; new code
+    should call :func:`apply_toggle_priors`.
+    """
+    bounds, custom, notes = base.make_priors(flux, n_balmer_wings=N_WINGS)
+    for i in range(N_WINGS):
         bounds[f"b_halpha.sigma_w{i}"] = SIGMA_RANGE
-    gated = {}
     for line in WINGED_LINES:
         for i in range(N_WINGS):
             name = f"b_{line}.amp_w{i}"
             custom[name] = galspec.uniform_toggle(p_off=P_OFF[i])
-            gated[name] = P_OFF[i]
-
     notes = [note for note in notes if note[0] != "broad wind"]
     notes += [
         ("broad components", f"1 core + {N_WINGS} wings for "
@@ -470,14 +498,16 @@ def main(argv=None) -> int:
     print(f"\n[2/5] model: {len(model.free_param_names)} free parameters, "
           f"{1 + N_WINGS} components per broad Balmer line")
 
-    bounds, custom, notes = make_toggle_priors(flux)
+    notes = apply_toggle_priors(model, flux)
     print("\n[3/5] priors")
     for what, description in notes:
         print(f"      {what:18s} {description}")
-    missing = [q for q in base.free_qualified_names(model) if q not in bounds]
+    missing = [q for q in base.free_qualified_names(model)
+               if model.get_prior(q) is None]
     if missing:
         raise RuntimeError(f"no prior given for these free parameters: {missing}")
-    toggled = sorted(n for n in custom if n.endswith(tuple(f"amp_w{i}" for i in range(N_WINGS))))
+    toggled = sorted(n for n in model.priors
+                     if n.split(".")[-1].endswith(tuple(f"amp_w{i}" for i in range(N_WINGS))))
     print(f"      gated amplitudes  {len(toggled)} "
           f"({', '.join(toggled[:3])}, ...)")
 
@@ -485,10 +515,10 @@ def main(argv=None) -> int:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         started = time.perf_counter()
-        fit = base.run_fit(wave, flux, error, bounds, custom, nlive=args.nlive,
+        fit = base.run_fit(wave, flux, error, nlive=args.nlive,
                            dlogz=args.dlogz, max_iterations=args.max_iterations,
                            device=args.device, progress=None,
-                           n_balmer_wings=N_WINGS)
+                           model=model, priors=False)
         wall = time.perf_counter() - started
     print(f"  wall clock      : {wall/60:.1f} min")
 

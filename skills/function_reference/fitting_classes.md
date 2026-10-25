@@ -121,6 +121,22 @@ print(f"Log evidence: {results.logz:.2f} ± {results.logzerr:.2f}")
 model_best, par_names, theta_best = dynesty_fit.get_best_fit()
 ```
 
+**Where the priors live.** `Dynesty_Fit` (astropy models) takes them as the two
+dictionaries above. The JAX counterpart `jax_models` + `JNesty_Fit` takes them off
+the model instead, one prior per parameter, which also allows a prior centred on
+another parameter:
+
+```python
+from galspec import priors
+model.sigma_c.prior = priors.Uniform(300.0, 8000.0)
+model.set_prior("b_hbeta.sigma_c",
+                priors.Normal(mean="b_halpha.sigma_c", relative=0.2, nsigma=5))
+fit = galspec.JNesty_Fit(model, wave, flux, ferr, nlive=500)
+```
+
+The nested-sampling rule is the same either way: a free parameter with no prior is
+uniform over its bounds, and a finite, increasing bound is required.
+
 ---
 
 **Modules**: `galspec.mcmc_fit`, `galspec.dynesty_fit`

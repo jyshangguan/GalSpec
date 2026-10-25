@@ -55,7 +55,7 @@ except ImportError:  # pragma: no cover
     corner = None
 
 from .dynesty_fit import Dynesty_Fit, _resolve_named_priors
-from .priors import resolve_prior_dependencies
+from .priors import as_prior, resolve_prior_dependencies
 from .param_labels import parameter_labels, qualified_parameter_labels
 
 __all__ = ["JNesty_Fit", "jax_devices_summary", "select_device"]
@@ -175,6 +175,12 @@ class JNesty_Fit:
                                  np.asarray(model.get_free_params(), dtype=float)))
         self.custom_priors = _resolve_named_priors(
             dict(custom_priors or {}), self.param_names, self.full_param_names)
+        # Priors set on the model win over the legacy dictionary: that is the
+        # documented place to put them now.
+        self.model_priors = self._collect_model_priors()
+        self.custom_priors = {name: as_prior(prior)
+                              for name, prior in self.custom_priors.items()}
+        self.custom_priors.update(self.model_priors)
         self._log_scale_params = set()
         self.param_bounds = self.get_param_bounds()
         self.model.set_prior_limits(_limits_by_base_name(self.param_bounds, self.param_names))
@@ -186,13 +192,8 @@ class JNesty_Fit:
         self._err = jnp.asarray(self.ferr)
         self._log_norm = jnp.log(2.0 * jnp.pi * self._err ** 2)
 
-        self._prior = _PriorSpec(self.param_names, self.full_param_names,
-                                 self.param_bounds, self._log_scale_params,
-                                 self.custom_priors)
-        self.prior_order = self._prior.order
-        self.centered_priors = self._prior.centered
+        self._build_prior_spec()
         self._loglike_jax = jax.jit(self._log_likelihood_jnp)
-        self._prior_jax = jax.jit(self._prior.transform)
         self._batch_jax = None
 
         self.results = None
@@ -205,6 +206,38 @@ class JNesty_Fit:
         self.sampler = None
 
     # -- priors --------------------------------------------------------------------
+    def _collect_model_priors(self) -> Dict[str, object]:
+        """Priors attached to the model's free parameters, keyed by flat name.
+
+        The model is the primary place a prior is set
+        (``line.sigma_w0.prior = priors.Uniform(...)``); this turns each one into
+        the flat-name mapping the transform is built from.
+        """
+        out: Dict[str, object] = {}
+        for flat, full in zip(self.param_names, self.full_param_names):
+            prior = None
+            for key in (full, flat):
+                if key is None:
+                    continue
+                try:
+                    prior = self.model.get_prior(key)
+                except KeyError:
+                    prior = None
+                if prior is not None:
+                    break
+            if prior is not None:
+                out[flat] = as_prior(prior)
+        return out
+
+    def _build_prior_spec(self) -> None:
+        """(Re)build the unit-cube transform from the current priors and boxes."""
+        self._prior = _PriorSpec(self.param_names, self.full_param_names,
+                                 self.param_bounds, self._log_scale_params,
+                                 self.custom_priors)
+        self.prior_order = self._prior.order
+        self.centered_priors = self._prior.centered
+        self._prior_jax = jax.jit(self._prior.transform)
+
     def _base_name(self, param_name: str) -> str:
         """``amp_c0_1`` -> ``amp_c0`` (strip the astropy submodel suffix)."""
         return Dynesty_Fit._base_name(param_name)
@@ -245,12 +278,21 @@ class JNesty_Fit:
     def get_param_bounds(self) -> list:
         """Resolve ``(lower, upper)`` for every free parameter.
 
-        Precedence matches :class:`galspec.Dynesty_Fit`: ``bounds_dict``, then
-        the model parameter's own finite bounds, then a per-type default (with
-        log-uniform priors for amplitudes).
+        Precedence: the support of a prior set on the parameter (``Uniform``,
+        ``LogUniform``, a ``Normal`` given ``mini``/``maxi``, ...), then
+        ``bounds_dict``, then the model parameter's own finite bounds, then a
+        per-type default (with log-uniform priors for amplitudes).
+
+        A prior that carries its own range wins because that range *is* its
+        definition: ``priors.Uniform(800, 25000)`` says more than ``bounds`` does,
+        and writing the box twice is how the two used to drift apart.
         """
         bounds = []
         for name in self.param_names:
+            prior = self.custom_priors.get(name)
+            if prior is not None and prior.support is not None:
+                bounds.append(_validate_bound(name, prior.support))
+                continue
             custom = self._custom_bound(name)
             if custom is not None:
                 bounds.append(_validate_bound(name, custom))

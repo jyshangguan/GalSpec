@@ -1097,3 +1097,296 @@ the GPU comes from evaluating a fixed-size parameter vector -- and because the
 toggle needs no change to the sampler at all.  If a component count is the
 *scientific* question rather than a diagnostic, diffusive nested sampling is the
 better tool.
+
+Similar, not identical: a prior centred on another parameter
+------------------------------------------------------------
+
+The component-count section above ends with a model whose broad Balmer lines share
+one kinematics: broad H-beta's and H-gamma's shifts and widths are *tied* to broad
+H-alpha's, so only the amplitudes differ.  That is a physical statement -- the three
+lines come from the same gas -- but in the fit it is an absolute one.  A tied
+parameter cannot disagree, so the fit cannot report whether the tie was right, and a
+real difference between the profiles would be silently absorbed by the amplitudes.
+
+The alternative is not to free all eight parameters: with 57 000 pixels and a wide
+prior box the widths are individually well measured, but the *difference* between
+H-beta and H-alpha would then be dominated by whatever the data cannot constrain.
+What is wanted is a prior that says "near H-alpha's value, and not farther than
+this", which is exactly a Gaussian centred on another parameter.
+
+The prior type
+~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   import galspec
+
+   priors = {
+       # a width: 20% of H-alpha's width, truncated to this parameter's own box
+       "b_hbeta.sigma_c": galspec.gaussian_around("b_halpha.sigma_c", 0.20,
+                                                 relative=True),
+       # a shift: 5% of that component's H-alpha *width* (not of the shift, which
+       # can be near zero), used as the standard deviation
+       "b_hbeta.dv_c": galspec.gaussian_around("b_halpha.dv_c", 0.05,
+                                              scale_from="b_halpha.sigma_c"),
+   }
+
+``gaussian_around(center, scale, ...)`` returns a :class:`galspec.CenteredPrior`,
+which the fitters accept anywhere a custom prior is accepted.  ``center`` is either
+a parameter name or a number; ``scale`` is the standard deviation in one of three
+forms, chosen by the keyword:
+
+* **absolute** (default): ``scale`` is in the parameter's own units;
+* ``relative=True``: ``scale`` is a fraction of the *centre's* value, so the prior
+  widens with the profile it is centred on;
+* ``scale_from="name"``: ``scale`` is a fraction of *that* parameter's value, which
+  is how a shift is tied in units of a width.
+
+``log_space=True`` makes the Gaussian multiplicative (a log-normal in the
+parameter), which is the right shape for an amplitude; it cannot be combined with
+``relative``, because in log space ``scale`` is already a fraction, in natural logs.
+
+Two things are needed for this to be more than a convenience.
+
+**The prior has to remain a proper density on the parameter's own box.**  The
+Gaussian is truncated to the range the parameter would otherwise have had (the same
+``bounds_dict`` entry), and applied as a *transform of the unit cube*: ``u`` maps
+one-to-one onto that range, through the inverse of the truncated normal's CDF.  A
+bijection is what keeps the evidence comparable with a run that uses the plain box
+prior, and what keeps nested sampling's prior volume meaningful.  The tails beyond
+seven sigma are cut -- 1.3e-12 of the mass, where float64 can no longer tell one
+cumulative probability from 1 -- so the map is exact everywhere it carries weight.
+When the box is the narrower of the two, the box wins, which is what truncation
+means.
+
+**The dependency has to be resolved, not assumed.**  ``b_hbeta.dv_c`` reads two
+parameters, so the prior transform cannot evaluate the parameters in the order they
+appear in the model: it has to go in dependency order, with the values it has already
+produced.  ``galspec.resolve_prior_dependencies`` does the name resolution (flat
+name, then qualified, then a unique bare match -- an ambiguous one is an error
+rather than a guess), detects cycles, and returns an order in which independent
+parameters keep their original position, so a model without centred priors
+transforms exactly as it did before.  Both fitters walk that order -- ``JNesty_Fit``
+through a jitted, vmapped function and ``Dynesty_Fit`` in numpy -- and
+``tests/test_priors_tied.py`` asserts they agree to 1e-9 on the same model.
+
+The one case worth spelling out is a **log-scaled parameter** (an amplitude, by the
+default bounds).  Its box is stored in log10 units, so the truncation range has to be
+exponentiated before it reaches the prior, or the tie silently lands in the wrong
+place; the fitters do that.
+
+What it does to the evidence
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A hard tie is a statement that a parameter *is* another parameter.  A prior that lets
+it be free spends prior volume on values the data then exclude, so ``ln Z`` falls
+even when the freedom is useless.  For a Gaussian of width ``sigma_tie`` and a
+posterior of width ``sigma_post`` the cost per parameter is
+
+.. math::
+
+   \Delta \ln Z \;\approx\; \ln\frac{\sigma_{\rm tie}\sqrt{2\pi}}
+                                     {\sigma_{\rm post}} ,
+
+which for the eight parameters here is 20-35 nats *if the tie is right*.  The sign
+of the measured difference therefore has to be read carefully: a drop of that size is
+the expected cost of a freedom the data did not need, not evidence against the tie,
+and a large *rise* means the likelihood gained more than the prior volume cost, i.e.
+the tie was wrong.  What answers the science question either way is the *pull* -- the
+difference from H-alpha in units of ``sigma_tie`` -- which is set by the data whenever
+the data are better than the prior, and which the tied fit cannot produce at all.
+
+The worked example
+~~~~~~~~~~~~~~~~~~
+
+``example/fit_iras07546_jax_tied.py`` is the published fit with the eight Balmer
+parameters released and centred on H-alpha, one wind per line as published: 38 free
+parameters instead of 30.  It writes
+``example/output/iras07546_jax_tied_`` prefixed products (``posterior.npz``,
+``fit.fits``, ``fit.png`` and its two zooms, ``histograms.png``, ``corner.png``,
+``ties.png``) and prints the tie table, which quotes for each
+parameter the two medians, their difference in km/s, that difference as a fraction of
+H-alpha's value, the tie width, and the pull.
+
+The same numbers are the subject of ``develop/dev_jax/tied_prior_report.py``, whose
+write-up is ``develop/dev_jax/io_test/tied_prior.html``.  It also answers the
+question the real fit cannot: two mocks generated from the published fit itself, one
+with the H-beta and H-gamma profiles made 1.4 times broader than H-alpha's (a
+difference of two tie widths, which H-alpha's own parameters are measured 9-39 times
+better than) and one with them identical, fitted exactly as the real spectrum is.
+A mechanism that cannot recover a planted two-sigma difference, or that invents a
+difference when there is none, is not a mechanism worth quoting on real data.
+
+On those mocks the mechanism does what it claims.  The identical one comes back
+identical: no pull larger than 0.30 tie widths, and :math:`\chi^2` over the eight
+pulls divided by their own errors is 0.2.  The 1.4-times one recovers its planted
++2.0 pulls nearly exactly where the line is bright -- +1.97, +1.83 and +1.93 on
+H-beta's core, H-beta's wing and H-gamma's core, :math:`\chi^2/8` = 1.5 -- with one
+honest exception: H-gamma's wing, where a planted +2.0 comes back at
++0.72 +- 0.44, because at this signal-to-noise that component's width is only
+measurable to about half a tie width.  That is the reason the real fit's +4.9 pull on
+the same parameter is quoted as a direction rather than as a number, and it is why
+the report says which rows the data can decide.
+
+
+What it measured on IRAS 07546+3928
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The released fit took 48.6 minutes on one GPU (1000 live points, 219 606 iterations).
+Its answer is not the one the premise expected.
+
+.. list-table:: The eight released parameters, against H-alpha in both fits
+   :header-rows: 1
+   :widths: 22 12 12 12 12 11 10
+
+   * - parameter
+     - H-alpha, tied
+     - H-alpha, soft
+     - line, soft
+     - difference
+     - relative
+     - pull
+   * - :math:`\beta\ \sigma_c`
+     - 1301.4
+     - 1274.8
+     - 1167.7
+     - -107.1
+     - -8.4%
+     - -0.42
+   * - :math:`\beta\ v_c`
+     - 187.2
+     - 216.6
+     - 62.0
+     - -153.8
+     - -71.0%
+     - -2.41
+   * - :math:`\beta\ \sigma_{w0}`
+     - 5145.6
+     - 4110.6
+     - 8575.1
+     - +4465.5
+     - +108.6%
+     - **+5.43**
+   * - :math:`\beta\ v_{w0}`
+     - -520.1
+     - -432.8
+     - -725.6
+     - -294.3
+     - -68.0%
+     - -1.43
+   * - :math:`\gamma\ \sigma_c`
+     - 1301.4
+     - 1274.8
+     - 1079.7
+     - -195.1
+     - -15.3%
+     - -0.77
+   * - :math:`\gamma\ v_c`
+     - 187.2
+     - 216.6
+     - 202.7
+     - -14.1
+     - -6.5%
+     - -0.22
+   * - :math:`\gamma\ \sigma_{w0}`
+     - 5145.6
+     - 4110.6
+     - 8171.9
+     - +4061.8
+     - +98.8%
+     - **+4.94**
+   * - :math:`\gamma\ v_{w0}`
+     - -520.1
+     - -432.8
+     - -1440.4
+     - -1007.6
+     - -232.8%
+     - **-4.90**
+
+All values in km s\ :sup:`-1`.  "H-alpha, soft" is the reference the released
+parameter is centred on in this fit; "H-alpha, tied" is H-alpha's own value in the
+published tied fit, and the two differ (5146 to 4111 in the wing) because releasing
+the tie re-divides the broad Balmer flux -- which is the caveat at the end of this
+section, visible already in this column.  "difference" is the line's own value minus
+the soft-tie reference, "relative" divides by it, "pull" divides the difference by the
+tie width, which is what the prior controls, and a pull of 0 means the data are
+consistent with the tie.
+
+**The cores agree; the winds do not.**  H-beta's and H-gamma's core widths come back
+within 0.4 and 0.8 tie widths of H-alpha's, and H-gamma's core shift within 0.2, so
+the premise holds for the narrow component in every case that matters.  Both *wind*
+components are about twice as broad as H-alpha's, at 5.4 and 4.9 tie widths away from
+it, and H-gamma's wind is also 1008 km s\ :sup:`-1` more blueshifted (4.9 tie widths).
+A pull beyond about three means the difference is larger than the tie was allowed to
+express: the data are asking for a wider tie, and the fitted value is a compromise
+between the likelihood and the prior rather than the likelihood's own answer.
+
+**The evidence rises, it does not fall.**  :math:`\ln Z` is 132 181.59 +- 0.45
+against 130 880.55 +- 0.64 for the hard tie: **+1301.04 +- 0.78**, where the Occam
+penalty above predicts a *drop* of 28 nats if the tie were right.  The likelihood must
+therefore gain about 1330 nats, and it does: :math:`\chi^2` falls from 17 469 to
+14 783 for eight extra parameters, i.e. reduced :math:`\chi^2/\rm dof` from 0.307 to
+0.260 and residual rms from 0.55 to 0.51 sigma.  The arithmetic closes --
+1343 - 28 = 1315 expected against 1301 measured -- which is what says that both runs
+are sound, rather than that the comparison was won by luck.
+
+Where that :math:`\Delta\chi^2` = 2686 sits matters as much as its size:
+
+* the H-beta core (4840-4885 A): :math:`\Delta\chi^2` = 424, rms 0.75 -> 0.52 sigma,
+  the worst region of the hard-tie fit;
+* the H-gamma core (4330-4380 A): :math:`\Delta\chi^2` = 66, rms 0.40 -> 0.31;
+* 4600-6000 A as a whole: 1683, i.e. the Balmer *wings* and the region they cross;
+* the H-alpha core: -18, and [O III] 4950-5010 A: -35, both unchanged.
+
+The released parameters bought their gain where they act and left the lines they were
+not asked to change alone: the fit did not buy :math:`\chi^2` by degrading H-alpha.
+
+**What the freedom was spent on -- and why it is not a wind measurement.**  The
+released wind widths come back at 8575 and 8172 km s\ :sup:`-1`, i.e. a FWHM near
+20 000 km s\ :sup:`-1`, and the H-gamma wind then carries six times the H-gamma core
+flux: ``amp_w0 * sigma_w0 / (amp_c * sigma_c)`` is 6.07 against 1.37 for the same
+line in the hard-tie fit.  That is not a wind; it is one Gaussian being asked to
+absorb the broad excess that the component-count run above already showed needs
+*three* components -- and that run reaches :math:`\chi^2/\rm dof` = 0.195 on the
+same data, better than the 0.260 here.  Widening the wind is the wrong way to absorb
+it.
+
+So the soft-tie fit is not evidence that "H-beta's wind really is twice H-alpha's".
+What it establishes is narrower and more useful:
+
+* the tie was too strong: :math:`\Delta\ln Z` = +1301, and the tied fit's own H-beta
+  window is its worst region (rms 0.75 sigma against 0.40 for H-gamma);
+* the disagreement lives in the **wings**, not in the cores, which the tie describes
+  well (pulls -0.4 and -0.8);
+* the right remedy for the wings is more components (the toggle model), not a wider
+  second component, and the pulls say so by saturating at the edge of what the tie
+  allows (5.4 and 4.9) rather than settling inside it.
+
+The pull remains the number to quote either way: it is how far the data had to push
+the parameter to make the tie work, and +5.4 says it could not.
+
+One detail of the tie width itself is worth changing for the next object.  A shift's
+tolerance is 5% of the *component's own* width, so the wind shifts are constrained to
+206 km s\ :sup:`-1` while the core shifts are held to 64 -- H-beta's wind shift comes
+back only 1.4 tie widths out despite being 294 km s\ :sup:`-1` away.  If shifts are the
+quantity of interest, size that tolerance from the core width, which is the
+better-measured one.
+
+
+
+Two caveats belong with the soft tie.
+
+* **The tie width is a physical statement, and it is the choice that decides the
+  answer.**  20% of the width says the two profiles move like the same gas to within
+  a fifth; a real galaxy whose H-beta region is genuinely twice as broad as its
+  H-alpha region would show pulls of ~5 and would be reported as such, not smoothed
+  away.  The pull is designed to make that visible rather than to avoid it.
+* **Component *i* is tied to component *i*.**  With one wind per line the pairing is
+  unambiguous; with more it is a choice, and the example pairs them in order
+  (``w0`` with ``w0``).
+
+The same construction is general: any parameter can be centred on any other, or on a
+chain of others (``resolve_prior_dependencies`` handles the ordering and rejects
+cycles).  Amplitudes, ratios, iron parameters -- nothing in the prior machinery is
+specific to the Balmer lines, and a plain ``gaussian_around`` with a numeric centre
+is a truncated Gaussian, useful on its own.

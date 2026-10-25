@@ -336,7 +336,8 @@ def apply_model_labels(model, labels=None):
     return model
 
 
-def build_model(backend=jxm, include_iron=None, n_balmer_wings=1):
+def build_model(backend=jxm, include_iron=None, n_balmer_wings=1,
+                tie_broad_balmer=True):
     """The full model: two models per line, narrow and broad.
 
     ``include_iron`` defaults to "yes for the JAX model, no for the astropy twin":
@@ -374,6 +375,13 @@ def build_model(backend=jxm, include_iron=None, n_balmer_wings=1):
     component-count study in ``example/fit_iras07546_jax_toggle.py`` asks the
     sampler for up to three and switches them on and off.  He I 5876 and He II
     4686 keep a single broad Gaussian either way.
+
+    ``tie_broad_balmer`` decides whether broad H-beta and H-gamma *share* the
+    profile shape of broad H-alpha (the default: the shifts and widths are tied,
+    component by component) or keep their own.  The soft-tie fit in
+    ``example/fit_iras07546_jax_tied.py`` sets it to ``False`` and constrains the
+    released parameters with a Gaussian centred on H-alpha instead, which is the
+    difference between "the same" and "similar".
 
     No convolution is applied: see the module docstring.
     """
@@ -504,7 +512,7 @@ def build_model(backend=jxm, include_iron=None, n_balmer_wings=1):
     # kinematics: a classical broad-line region and a broader one can rotate or be
     # shifted differently.  What is shared is the *shape*; each line keeps its own
     # peak and its own ratio, which is how the Balmer decrement comes out.
-    for line in (b_hbeta, b_hgamma):
+    for line in (b_hbeta, b_hgamma) if tie_broad_balmer else ():
         line.dv_c.tied = _tie_fn(backend, "tie_MultiGauss_dv_c")("b_halpha")
         line.sigma_c.tied = _tie_fn(backend, "tie_MultiGauss_sigma_c")("b_halpha")
         for i in range(n_balmer_wings):
@@ -666,7 +674,8 @@ def make_priors(flux, n_balmer_wings=1):
 # 5. Run the fit
 # --------------------------------------------------------------------------------------
 def run_fit(wave, flux, error, bounds, custom_priors, nlive=NLIVE, dlogz=DLOGZ,
-            max_iterations=200_000, device="auto", progress=None, n_balmer_wings=1):
+            max_iterations=200_000, device="auto", progress=None, n_balmer_wings=1,
+            tie_broad_balmer=True):
     """Sample the posterior with JNesty.  No optimiser is involved anywhere.
 
     ``n_balmer_wings`` must match the ``make_priors`` call that produced
@@ -677,7 +686,8 @@ def run_fit(wave, flux, error, bounds, custom_priors, nlive=NLIVE, dlogz=DLOGZ,
         # thousands of carriage-return updates in the log.
         progress = sys.stdout.isatty()
     model = apply_model_labels(build_model(jxm,     # so the fit carries plot labels
-                                          n_balmer_wings=n_balmer_wings))
+                                          n_balmer_wings=n_balmer_wings,
+                                          tie_broad_balmer=tie_broad_balmer))
     fit = JNesty_Fit(model, wave, flux, error,
                      bounds_dict=bounds, custom_priors=custom_priors,
                      nlive=nlive, bound="multi", device=device)
@@ -919,12 +929,16 @@ class _TabulatedCurve(Fittable1DModel):
         return np.interp(np.asarray(x, dtype=float), self._wave, self._flux)
 
 
-def cpu_model_with_values(fit, wave):
+def cpu_model_with_values(fit, wave, tie_broad_balmer=True):
     """The astropy twin of the fitted model, at the best-fitting sample.
 
     :func:`galspec.plot.plot_fit` walks an astropy compound model and draws every
     component, so the fitted JAX model is mirrored into its astropy equivalent
     here.
+
+    ``tie_broad_balmer`` must match the model that was fitted: a soft-tied fit
+    released those ties, and copying its resolved values onto a twin that still
+    has them tied would re-impose H-alpha's widths on H-beta.
 
     The values copied across are the *tie-resolved* ones (``param_dict()``): an
     astropy compound model does not re-derive a tied parameter when it is
@@ -956,7 +970,8 @@ def cpu_model_with_values(fit, wave):
 
     iron = _TabulatedCurve(wave, iron_flux, name="FeII")
     parts = list(build_model(galspec,                # astropy leaves, no iron model
-                             n_balmer_wings=broad_wing_count(fit)))
+                             n_balmer_wings=broad_wing_count(fit),
+                             tie_broad_balmer=tie_broad_balmer))
     parts.insert(1, iron)                       # right after the continuum
     model_cpu = parts[0]
     for part in parts[1:]:
@@ -972,9 +987,9 @@ def cpu_model_with_values(fit, wave):
     return model_cpu
 
 
-def check_parity(fit, wave, predicted):
+def check_parity(fit, wave, predicted, tie_broad_balmer=True):
     """Assert that the astropy twin reproduces the JAX model."""
-    model_cpu = cpu_model_with_values(fit, wave)
+    model_cpu = cpu_model_with_values(fit, wave, tie_broad_balmer=tie_broad_balmer)
     cpu = np.asarray(model_cpu(wave))
     difference = float(np.max(np.abs(cpu - predicted)) / np.max(np.abs(predicted)))
     print(f"  CPU/JAX parity  : max difference {difference:.2e} of the peak flux")

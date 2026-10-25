@@ -435,7 +435,7 @@ def plot_posterior_hist(fit_or_samples, params=None, labels=None, quantiles=(0.1
     fig : matplotlib.figure.Figure
     axes : ndarray of matplotlib.axes.Axes
     """
-    samples, names, latex, bounds = _posterior_inputs(fit_or_samples)
+    samples, names, latex, bounds, notes = _posterior_inputs(fit_or_samples)
 
     if params is None:
         index = list(range(samples.shape[1]))
@@ -516,10 +516,16 @@ def plot_posterior_hist(fit_or_samples, params=None, labels=None, quantiles=(0.1
                     ax.axvline(limit, color='gray', ls=':', lw=1.0)
                 else:
                     outside.append(limit)
-        if prior_text and bounds is not None:
-            limits = [limit for limit in bounds[column]
-                      if limit is not None and np.isfinite(limit)]
-            if limits and outside:
+        if prior_text:
+            # a prior centred on another parameter is described by that centre and
+            # its width, not by the box it is truncated to
+            note = notes[column] if notes is not None else None
+            if note:
+                ax.text(0.98, 0.97, note, transform=ax.transAxes, fontsize=8.5,
+                        color='gray', ha='right', va='top')
+            elif bounds is not None and outside:
+                limits = [limit for limit in bounds[column]
+                          if limit is not None and np.isfinite(limit)]
                 # the axis cannot show both the posterior and the prior: say where
                 # the prior is instead of hiding it, and say that it is out of view
                 span_text = ", ".join(f"{limit:.3g}" for limit in limits)
@@ -569,7 +575,13 @@ def _prior_bounds_for_columns(fit, flat_names):
 
 
 def _posterior_inputs(fit_or_samples):
-    """Normalise the input of :func:`plot_posterior_hist`."""
+    """Normalise the input of :func:`plot_posterior_hist`.
+
+    Returns ``(samples, names, labels, bounds, notes)``; ``notes`` is ``None``
+    unless some parameters carry a prior centred on another parameter, in which
+    case it holds one short description per column (or ``None``) so that the panel
+    can say *what* that prior is instead of only where its box ends.
+    """
     if hasattr(fit_or_samples, 'samples_equal_weight'):
         fit = fit_or_samples
         samples = np.asarray(fit.samples_equal_weight, dtype=float)
@@ -577,12 +589,44 @@ def _posterior_inputs(fit_or_samples):
         names = list(getattr(fit, 'full_param_names', None) or flat)
         labels = getattr(fit, 'param_labels', None)
         bounds = _prior_bounds_for_columns(fit, flat)
-        return samples, names, labels, bounds
+        notes = _centred_prior_notes(fit, flat)
+        return samples, names, labels, bounds, notes
     samples = np.asarray(fit_or_samples, dtype=float)
     if samples.ndim != 2:
         raise ValueError("expected an (nsamples, ndim) array or a fit object")
     names = [f"param_{i}" for i in range(samples.shape[1])]
-    return samples, names, None, None
+    return samples, names, None, None, None
+
+
+def _centred_prior_notes(fit, flat_names):
+    """One label per column for priors centred on another parameter, else ``None``."""
+    centered = getattr(fit, 'centered_priors', None) or {}
+    if not centered:
+        return None
+    labels = getattr(fit, 'param_labels', None)
+    param_map = getattr(fit, 'param_map', None) or {}
+
+    def spell(name):
+        if labels is not None and name in param_map:
+            return labels[param_map[name]]
+        return name
+
+    notes = []
+    for index in range(len(flat_names)):
+        item = centered.get(index)
+        if item is None:
+            notes.append(None)
+            continue
+        prior = item[0]
+        centre = spell(prior.center) if isinstance(prior.center, str) else f"{prior.center:g}"
+        if prior.scale_from is not None:
+            width = f"{prior.scale:g} x {spell(prior.scale_from)}"
+        elif prior.relative:
+            width = f"{100.0 * prior.scale:g}%"
+        else:
+            width = f"{prior.scale:g}"
+        notes.append(f"$N$({centre}, {width})")
+    return notes
 
 
 def reorder_legend(ax, order):

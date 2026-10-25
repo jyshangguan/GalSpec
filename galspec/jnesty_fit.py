@@ -55,6 +55,7 @@ except ImportError:  # pragma: no cover
     corner = None
 
 from .dynesty_fit import Dynesty_Fit, _resolve_named_priors
+from .priors import resolve_prior_dependencies
 from .param_labels import parameter_labels, qualified_parameter_labels
 
 __all__ = ["JNesty_Fit", "jax_devices_summary", "select_device"]
@@ -185,8 +186,11 @@ class JNesty_Fit:
         self._err = jnp.asarray(self.ferr)
         self._log_norm = jnp.log(2.0 * jnp.pi * self._err ** 2)
 
-        self._prior = _PriorSpec(self.param_names, self.param_bounds,
-                                 self._log_scale_params, self.custom_priors)
+        self._prior = _PriorSpec(self.param_names, self.full_param_names,
+                                 self.param_bounds, self._log_scale_params,
+                                 self.custom_priors)
+        self.prior_order = self._prior.order
+        self.centered_priors = self._prior.centered
         self._loglike_jax = jax.jit(self._log_likelihood_jnp)
         self._prior_jax = jax.jit(self._prior.transform)
         self._batch_jax = None
@@ -477,26 +481,50 @@ class JNesty_Fit:
 class _PriorSpec:
     """Static prior description compiled into a pure-jnp transform."""
 
-    def __init__(self, names, bounds, log_scale_params, custom_priors):
+    def __init__(self, names, full_names, bounds, log_scale_params, custom_priors):
         self.names = list(names)
         self.lower = np.asarray([b[0] for b in bounds], dtype=float)
         self.upper = np.asarray([b[1] for b in bounds], dtype=float)
         self.span = self.upper - self.lower
         self.log_scale = [name in log_scale_params for name in self.names]
         self.custom = [custom_priors.get(name) for name in self.names]
+        # Priors centred on another parameter need their dependencies evaluated
+        # first, and their truncation range is the box this parameter would have
+        # had without one.
+        self.order, self.centered = resolve_prior_dependencies(
+            self.names, full_names, custom_priors)
+        for index, (prior, center, scale_from) in list(self.centered.items()):
+            if prior.lower is None or prior.upper is None:
+                # a log-scaled parameter keeps its box in log10 units; the centred
+                # prior works in physical units, so undo the logarithm here
+                lower, upper = self.lower[index], self.upper[index]
+                if self.log_scale[index]:
+                    lower, upper = 10.0 ** lower, 10.0 ** upper
+                self.centered[index] = (
+                    prior.with_bounds(lower, upper), center, scale_from)
 
     def transform(self, u):
-        """Unit cube -> physical parameters (per-element, traced-safe)."""
-        parts = []
-        for i, name in enumerate(self.names):
+        """Unit cube -> physical parameters (dependency order, traced-safe)."""
+        values = {}
+        for i in self.order:
             ui = u[i]
-            if self.custom[i] is not None:
-                parts.append(jnp.asarray(self.custom[i](ui)))
+            centered = self.centered.get(i)
+            if centered is not None:
+                prior, center, scale_from = centered
+                if not isinstance(center, float):
+                    center = values[center]
+                scale_value = None
+                if scale_from is not None:
+                    scale_value = (scale_from if isinstance(scale_from, float)
+                                   else values[scale_from])
+                values[i] = prior.transform(ui, center, scale_value)
+            elif self.custom[i] is not None:
+                values[i] = jnp.asarray(self.custom[i](ui))
             elif self.log_scale[i]:
-                parts.append(10.0 ** (self.lower[i] + self.span[i] * ui))
+                values[i] = 10.0 ** (self.lower[i] + self.span[i] * ui)
             else:
-                parts.append(self.lower[i] + self.span[i] * ui)
-        return jnp.stack(parts)
+                values[i] = self.lower[i] + self.span[i] * ui
+        return jnp.stack([values[i] for i in range(len(self.names))])
 
 
 def _validate_bound(name, bound):

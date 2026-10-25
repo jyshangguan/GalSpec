@@ -9,6 +9,8 @@ from copy import deepcopy
 import numpy as np
 from astropy.modeling import CompoundModel
 
+from .priors import resolve_prior_dependencies
+
 try:
     import dynesty
     from dynesty import utils as dyfunc
@@ -166,6 +168,19 @@ class Dynesty_Fit:
             dict(custom_priors or {}), self.param_names, self.full_param_names)
         self._log_scale_params = set()
         self.param_bounds = self.get_param_bounds()
+        # Priors centred on another parameter are evaluated in dependency order, and
+        # their truncation range is the same box the plain prior would have used.
+        self.prior_order, self.centered_priors = resolve_prior_dependencies(
+            self.param_names, self.full_param_names, self.custom_priors)
+        for _index, (_prior, _center, _scale) in list(self.centered_priors.items()):
+            if _prior.lower is None or _prior.upper is None:
+                # a log-scaled parameter keeps its box in log10 units; the centred
+                # prior works in physical units, so undo the logarithm here
+                _lower, _upper = self.param_bounds[_index]
+                if self.param_names[_index] in self._log_scale_params:
+                    _lower, _upper = 10.0 ** _lower, 10.0 ** _upper
+                self.centered_priors[_index] = (
+                    _prior.with_bounds(_lower, _upper), _center, _scale)
         self.theta_initial = np.asarray(
             [getattr(self.model, name).value for name in self.param_names], dtype=float)
         self.ndim = len(self.param_names)
@@ -271,7 +286,18 @@ class Dynesty_Fit:
     def prior_transform(self, u):
         u = np.asarray(u, dtype=float)
         theta = np.empty_like(u)
-        for index, name in enumerate(self.param_names):
+        for index in self.prior_order:
+            centered = self.centered_priors.get(index)
+            if centered is not None:
+                prior, center, scale_from = centered
+                center = center if isinstance(center, float) else theta[center]
+                scale_value = None
+                if scale_from is not None:
+                    scale_value = (scale_from if isinstance(scale_from, float)
+                                   else theta[scale_from])
+                theta[index] = prior.transform(u[index], center, scale_value)
+                continue
+            name = self.param_names[index]
             if name in self.custom_priors:
                 theta[index] = self.custom_priors[name](u[index])
             else:

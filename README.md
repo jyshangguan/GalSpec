@@ -177,6 +177,24 @@ need?"). On IRAS 07546+3928 that run reports **four** components -- the count ha
 posterior probability 1.000 at the 3%-of-core amplitude floor -- and improves
 chi2/dof from 0.321 (the published two-component fit) to 0.195.
 
+Whether broad H-beta and H-gamma really have *the same shape* as broad H-alpha is
+the question of `example/fit_iras07546_jax_tied.py`. Instead of tying their shifts
+and widths to H-alpha's, each of the eight parameters gets a Gaussian prior centred
+on H-alpha's value (`galspec.priors.gaussian_around`): a width is allowed to differ
+by 20% of H-alpha's width, a shift by 5% of it. The fit then reports the difference
+per component, in km/s and in units of that width -- the pull -- so "similar" becomes
+a measurement rather than an assumption. On this object the narrow cores come back
+consistent with H-alpha's (pulls -0.4 and -0.8 tie widths) and the two **wing**
+components do not: the evidence is **1301 nats higher** than the hard tie's rather
+than the 28 lower a needless freedom would cost, and chi2/dof falls from 0.307 to
+0.260. The freedom is spent on the wings, which the fit broadens to a FWHM of
+~20 000 km/s -- one Gaussian absorbing the broad excess that the component-count
+model above needs three wings for (chi2/dof 0.195). So the tie is too strong, but a
+wider wind is not the right thing to replace it with.
+`develop/dev_jax/tied_prior_report.py` validates the mechanism on mocks whose answer
+is known and writes the result up (`develop/dev_jax/io_test/tied_prior.html`,
+section "Similar, not identical" of `docs/source/jax_gpu.rst`).
+
 ## Example Notebooks
 
 The `example/` directory contains detailed notebooks demonstrating:

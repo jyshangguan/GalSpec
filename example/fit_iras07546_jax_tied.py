@@ -318,8 +318,12 @@ def main() -> int:
                   f"volume\n       costs -- so the hard tie is rejected, and the pulls "
                   f"above say where.")
             print(f"       (the published fit's own evidence is stable in nlive: "
-                  f"130 887.64 at 1000 points\n       against 130 894.66 at 400, "
-                  f"i.e. -7 nats -- so this is not a convergence artefact.)")
+                  f"130 887.64 at 1000 points\n       against "
+                  f"{published.log_evidence:.2f} at 400, i.e. "
+                  f"{130887.64 - published.log_evidence:+.0f} nats -- so this is not "
+                  f"a convergence\n       artefact.  Repeating the 400-point run moves "
+                  f"it by a few nats, which is\n       the honest error bar on a single "
+                  f"evidence.)")
     else:
         print(f"    (missing: run example/fit_iras07546_jax.py first)")
 

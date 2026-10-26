@@ -414,6 +414,78 @@ def test_fit_exposes_labels():
     print(f"  fit labels: {fit.param_labels[:3]}")
 
 
+def _qualified_theta(model, **overrides):
+    """Free parameter vector addressed by ``Submodel.parameter`` names."""
+    theta = np.asarray(model.get_free_params(), dtype=float).copy()
+    flat = dict(zip(model.qualified_param_names, model.param_names))
+    for qualified, value in overrides.items():
+        theta[model.free_param_names.index(flat[qualified])] = value
+    return theta
+
+
+# --------------------------------------------------------------------------------------
+# 5. Setting the free parameters refreshes the tied ones
+# --------------------------------------------------------------------------------------
+def test_set_free_params_refreshes_tied_values_on_the_leaves():
+    """After a fit a submodel shows the fitted value, as an astropy submodel does.
+
+    Ties are resolved during evaluation, so the *total* model was always right; the
+    leaves kept their construction defaults.  ``plot_fit`` draws a component by
+    evaluating the leaf, so the published figure showed [N II] with the default
+    700 km/s width instead of the 298 km/s it is tied to.
+    """
+    def doublet(name, amp_c0):
+        return jxm.Line_MultiGauss_doublet(n_components=1, amp_c0=amp_c0,
+                                           amp_c1=amp_c0 / 2.96, dv_c=0.0,
+                                           sigma_c=700.0, wavec0=6583.0,
+                                           wavec1=6548.0, name=name)
+
+    o3 = doublet("OIII", 2.0)
+    n2 = doublet("NII", 0.8)
+    n2.dv_c.tied = jxm.tie.tie_MultiGauss_dv_c("OIII")
+    n2.sigma_c.tied = jxm.tie.tie_MultiGauss_sigma_c("OIII")
+    n2.amp_c1.tied = jxm.tie.tie_MultiGauss_doublet_ratio("NII", 2.96)
+    compound = o3 + n2
+
+    theta = _qualified_theta(compound, **{"OIII.amp_c0": 2.0, "OIII.dv_c": 70.0,
+                                          "OIII.sigma_c": 300.0, "NII.amp_c0": 0.8})
+    compound.set_free_params(theta)
+
+    assert np.isclose(float(n2.sigma_c.value), 300.0), n2.sigma_c.value
+    assert np.isclose(float(n2.dv_c.value), 70.0), n2.dv_c.value
+    assert np.isclose(float(n2.amp_c1.value), 0.8 / 2.96), n2.amp_c1.value
+
+    wave = np.linspace(6500.0, 6700.0, 2001)
+    total = np.asarray(compound(wave))
+    parts = sum(np.asarray(compound[name](wave)) for name in compound.submodel_names)
+    assert np.allclose(total, parts, rtol=1e-12, atol=1e-12), \
+        f"components differ from the total by {np.abs(total - parts).max():.3g}"
+
+    # the drawn doublet is the tied one: a 300 km/s Gaussian, not a 700 km/s one
+    y = np.asarray(compound["NII"](wave))
+    above = np.where(y > y.max() / 2.0)[0]
+    fwhm_kms = (wave[above[-1]] - wave[above[0]]) / 6583.0 * LS_KM
+    assert np.isclose(fwhm_kms, 2.3548 * 300.0, rtol=0.05), fwhm_kms
+    print(f"  [N II] drawn at {fwhm_kms:.0f} km/s FWHM, components sum to the total")
+
+
+def test_sync_tied_values_is_idempotent_and_leaves_free_params_alone():
+    line = jxm.Line_MultiGauss(n_components=2, amp_c=1.0, sigma_c=1500.0,
+                               wavec=6563.0, name="b_halpha")
+    other = jxm.Line_MultiGauss(n_components=2, amp_c=0.3, sigma_c=1200.0,
+                                wavec=4862.0, name="b_hbeta")
+    other.sigma_c.tied = jxm.tie.tie_MultiGauss_sigma_c("b_halpha")
+    compound = line + other
+    theta = _qualified_theta(compound, **{"b_halpha.sigma_c": 1234.0})
+    compound.set_free_params(theta)
+    first = dict(compound.param_dict())
+    compound.sync_tied_values()
+    assert compound.param_dict() == first
+    assert np.isclose(float(other.sigma_c.value), 1234.0)
+    assert np.allclose(compound.get_free_params(), theta), "free parameters moved"
+    print("  sync is idempotent and does not touch the free parameters")
+
+
 # --------------------------------------------------------------------------------------
 # 4. Posterior histograms
 # --------------------------------------------------------------------------------------

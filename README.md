@@ -203,11 +203,12 @@ consistent with H-alpha's (pulls -0.40 and -0.65 tie widths) and the two **wing*
 components do not: their widths sit against the 8000 km/s ceiling of the width prior
 (pulls +4.94 and +4.91 -- every sample of H-beta's wind above 7895 km/s, where the
 five-width window would have allowed 10 300), and H-gamma's wind shift moves to -4.60.
-The evidence is **1258 nats higher** than the hard tie's rather than the 29 lower a
+The evidence is **1263 nats higher** than the hard tie's rather than the 29 lower a
 needless freedom would cost, and chi2/dof falls from 0.307 to 0.261: over 57 000
 pixels that is about +1300 nats of likelihood against the 29 the extra prior volume
 costs, so the gain is the better fit and not a book-keeping effect (rerunning the hard
-tie with 1000 live points moves its evidence by 7 nats, so both runs are converged).
+tie with 1000 live points moves its evidence by 2 nats, and repeating a run at 400
+moves it by a few, so both are converged to well inside this difference).
 The freedom is spent on the wings, which the fit broadens to a FWHM of ~19 000 km/s --
 one Gaussian absorbing the broad excess that the component-count model above needs
 three wings for (chi2/dof 0.195). So the tie is too strong, but a wider wind is not

@@ -287,26 +287,28 @@ prior in ``set_priors`` first. Which is the honest form of the answer -- the ado
 
 The fit itself: 38 free parameters, ``log Z = 132 153.01 +- 0.45`` in 36.6 min,
 ``chi2/dof = 0.261`` against the hard tie's 0.307, so nothing is worse. The evidence
-is **+1258 nats** above the hard tie's 130 894.66, where the eight parameters' own
+is **+1263 nats** above the hard tie's 130 889.60, where the eight parameters' own
 prior volume is worth only +29. The difference is the better fit and not the
 arithmetic: dropping chi2/dof from 0.307 to 0.261 over 56 956 degrees of freedom is
 ``0.5 x 2 620 = +1 310`` nats of likelihood, and 1 310 - 29 = +1 281 against the
-measured +1 258. The two agree to the accuracy of a chi2/dof printed to three digits
+measured +1 263. The two agree to the accuracy of a chi2/dof printed to three digits
 (0.001 of it is 57 nats), which is enough to say where the evidence went: into the
 likelihood, not into prior volume.
 
 A gain that size is worth checking against the sampler before it is quoted, and the
 control is cheap: the published fit rerun at 1000 live points instead of 400 returns
-130 887.64 +- 0.39 against 130 894.66 +- 0.61, a shift of 7 nats, with the same
-posteriors. So the comparison is between two converged runs, and the hard tie is
-rejected at 1265 +- 0.6 nats -- a likelihood gain from a model that was genuinely
-misfitting, not a difference in prior volume.
+130 887.64 +- 0.39 against 130 889.60 +- 0.62, a shift of 2 nats, with the same
+posteriors. Repeating it at 400 points moves it by up to 5 nats (three runs gave
+130 894.66, 130 893.37 and 130 889.60), so the honest error on a single evidence is
+about 5 nats and not the 0.6 the run reports -- still small next to this difference.
+The hard tie is rejected at 1263 +- 6 nats: a likelihood gain from a model that was
+genuinely misfitting, not a difference in prior volume.
 
 One number in that list is a warning about all of them. Releasing the two wing widths
-moves H-alpha's *own* wind width from 5 147 +- 68 to 4 017 +- 14 km/s: 1 130 km/s,
+moves H-alpha's *own* wind width from 5 143 +- 70 to 4 017 +- 14 km/s: 1 126 km/s,
 sixteen times the plain fit's error bar and eighty times the tied one's. It is not the
-sampler -- the plain fit's wind width is stable in ``nlive`` (5 146.5 +- 68 at 400
-points, 5 145.1 +- 70 at 1000), and the tied fit's posterior is not multimodal. It is
+sampler -- the plain fit's wind width is stable in ``nlive`` (5 143 +- 70 at 400
+points, 5 145 +- 70 at 1000), and the tied fit's posterior is not multimodal. It is
 the model. So those error bars are *conditional*: they measure the width of a narrow
 ridge, not the uncertainty of a quantity. The wind's shape is set jointly with the
 balance between core, continuum and wings, and changing how the wings are described
@@ -375,6 +377,12 @@ The recipe, as ``example/fit_iras07546_jax_toggle.py`` applies it:
    :width: 85%
 
    The four components the run reports for broad H-alpha, sorted by width.
+
+.. figure:: _static/example_figures/iras07546_jax_toggle_gates.png
+   :width: 95%
+
+   Where the count comes from: left, the posterior on how many components the profile
+   needs (0.84 for four); right, the probability that each of the three wings is on.
 
 The answer on IRAS 07546+3928: the run asked for at most four broad components and
 returned **four** -- a core plus three wings. In 97% of the 236 466 equally weighted

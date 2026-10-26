@@ -72,7 +72,7 @@ than ``dlogz`` of the evidence may remain unseen.
 
 The run prints its own summary::
 
-          log Z = 130894.66 +- 0.61   (64835 iterations, 9.9 min)
+          log Z = 130889.60 +- 0.62   (66956 iterations, 10.2 min)
        chi2/dof = 0.307, residual rms 0.55 sigma, worst pixel 3.9 sigma
 
 4. Present the results
@@ -93,35 +93,35 @@ they are computed here rather than sampled.
    parameter                  median         -         +  unit
    ----------------------------------------------------------------------------
    Continuum.amplitude       0.54103    0.0003   0.00029  1e-14 erg/s/cm2/A
-   Continuum.alpha            1.0779    0.0052    0.0051
-   FeII.amplitude            0.25047    0.0016    0.0015  1e-14 erg/s/cm2/A
-   n_halpha.amplitude         2.3378     0.019     0.018  1e-14 erg/s/cm2/A
-   b_halpha.amp_c             1.5234     0.012     0.012  1e-14 erg/s/cm2/A
-   b_halpha.dv_c              187.13       2.5       2.5  km/s
-   b_halpha.sigma_c           1301.6       6.8         7  km/s
-   b_halpha.amp_w0           0.10693    0.0017    0.0017  ratio to core
-   b_halpha.dv_w0            -520.82        28        27  km/s
-   b_halpha.sigma_w0          5146.5        68        73  km/s
-   n_hbeta.amplitude            0.59    0.0085    0.0086  1e-14 erg/s/cm2/A
-   b_hbeta.amp_c             0.62655     0.004    0.0039  1e-14 erg/s/cm2/A
-   b_hbeta.amp_w0            0.15936    0.0032    0.0033  ratio to core
-   n_hgamma.amplitude        0.17306    0.0066    0.0068  1e-14 erg/s/cm2/A
-   b_hgamma.amp_c            0.29002    0.0037    0.0038  1e-14 erg/s/cm2/A
-   b_hgamma.amp_w0          0.099937    0.0068    0.0067  ratio to core
-   OIII.amp_c0                1.9274    0.0095    0.0097  1e-14 erg/s/cm2/A
-   OIII.dv_c                  70.745      0.96      0.95  km/s
-   OIII.sigma_c               298.87       1.3       1.2  km/s
-   OIII.amp_w0              0.036356    0.0017    0.0018  ratio to core
-   OIII.sigma_w0              1341.8        45        47  km/s
-   NII.amp_c0                0.75144     0.014     0.014  1e-14 erg/s/cm2/A
-   SII.amp_c0               0.022472    0.0019     0.002  1e-14 erg/s/cm2/A
-   SII.amp_c1                0.05314     0.002     0.002  1e-14 erg/s/cm2/A
-   OI.amp_c0                0.062156    0.0021    0.0022  1e-14 erg/s/cm2/A
-   HeII.amplitude           0.033374     0.004    0.0041  1e-14 erg/s/cm2/A
-   b_heii.amp_c             0.086021    0.0023    0.0022  1e-14 erg/s/cm2/A
-   OIII4363.amplitude       0.045626    0.0044    0.0046  1e-14 erg/s/cm2/A
-   n_hei.amplitude          0.042936    0.0026    0.0025  1e-14 erg/s/cm2/A
-   b_hei.amp_c              0.040697    0.0012    0.0012  1e-14 erg/s/cm2/A
+   Continuum.alpha            1.0778     0.005    0.0051
+   FeII.amplitude            0.25047    0.0015    0.0015  1e-14 erg/s/cm2/A
+   n_halpha.amplitude         2.3372     0.019     0.018  1e-14 erg/s/cm2/A
+   b_halpha.amp_c              1.523     0.011     0.012  1e-14 erg/s/cm2/A
+   b_halpha.dv_c              187.24       2.4       2.4  km/s
+   b_halpha.sigma_c           1301.5       6.6       6.7  km/s
+   b_halpha.amp_w0           0.10704    0.0018    0.0017  ratio to core
+   b_halpha.dv_w0            -519.32        28        26  km/s
+   b_halpha.sigma_w0          5143.4        67        74  km/s
+   n_hbeta.amplitude         0.58991    0.0082    0.0083  1e-14 erg/s/cm2/A
+   b_hbeta.amp_c             0.62641    0.0039    0.0038  1e-14 erg/s/cm2/A
+   b_hbeta.amp_w0            0.15966    0.0034    0.0034  ratio to core
+   n_hgamma.amplitude        0.17306    0.0066    0.0065  1e-14 erg/s/cm2/A
+   b_hgamma.amp_c            0.29017    0.0036    0.0037  1e-14 erg/s/cm2/A
+   b_hgamma.amp_w0          0.099886    0.0062    0.0066  ratio to core
+   OIII.amp_c0                1.9275    0.0095    0.0096  1e-14 erg/s/cm2/A
+   OIII.dv_c                  70.717      0.95      0.96  km/s
+   OIII.sigma_c               298.88       1.2       1.2  km/s
+   OIII.amp_w0              0.036375    0.0017    0.0017  ratio to core
+   OIII.sigma_w0              1343.9        47        47  km/s
+   NII.amp_c0                0.75139     0.014     0.014  1e-14 erg/s/cm2/A
+   SII.amp_c0               0.022533    0.0019    0.0019  1e-14 erg/s/cm2/A
+   SII.amp_c1               0.053145    0.0019    0.0019  1e-14 erg/s/cm2/A
+   OI.amp_c0                0.062106    0.0021    0.0022  1e-14 erg/s/cm2/A
+   HeII.amplitude           0.033405    0.0041    0.0041  1e-14 erg/s/cm2/A
+   b_heii.amp_c             0.086096    0.0023    0.0023  1e-14 erg/s/cm2/A
+   OIII4363.amplitude       0.045406    0.0045    0.0047  1e-14 erg/s/cm2/A
+   n_hei.amplitude           0.04289    0.0024    0.0026  1e-14 erg/s/cm2/A
+   b_hei.amp_c              0.040666    0.0011    0.0012  1e-14 erg/s/cm2/A
 
 The figure: data, model, and residuals in units of the error, with the 1-sigma guides
 drawn so that a good fit is visibly flat and inside them.

@@ -149,7 +149,7 @@ class JaxParameter:
         ``astropy.modeling.Parameter`` for "user fitters"; GalSpec fills it in
         with a :class:`galspec.priors.Prior`::
 
-            line.sigma_w0.prior = priors.Uniform(800.0, 25000.0)
+            line.sigma_w0.prior = priors.Uniform(300.0, 8000.0)
 
             # a Gaussian around another parameter, hard-capped at five widths
             b_hbeta.sigma_w0.prior = priors.Normal(

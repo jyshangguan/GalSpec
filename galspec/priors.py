@@ -12,7 +12,7 @@ Attach a prior to a parameter of a JAX model, exactly like ``bounds`` or
 
     import galspec.priors as priors
 
-    b_halpha.sigma_w0.prior = priors.Uniform(800.0, 25000.0)
+    b_halpha.sigma_w0.prior = priors.Uniform(300.0, 8000.0)
     b_halpha.amp_c.prior = priors.LogUniform(1e-3, 3.0)
 
     # a Gaussian centred on another parameter, capped at five tie widths
@@ -323,10 +323,10 @@ class Uniform(Prior):
 
     Examples
     --------
-    >>> prior = Uniform(800.0, 25000.0)
+    >>> prior = Uniform(300.0, 8000.0)
     >>> [round(float(prior(u)), 1) for u in (0.0, 0.5, 1.0)]
-    [800.0, 12900.0, 25000.0]
-    >>> round(float(prior.logpdf(1000.0)) + float(np.log(25000.0 - 800.0)), 12)
+    [300.0, 4150.0, 8000.0]
+    >>> round(float(prior.logpdf(1000.0)) + float(np.log(8000.0 - 300.0)), 12)
     0.0
     >>> prior.logpdf(10.0)
     -inf

@@ -35,9 +35,10 @@ Running it
 
     python example/fit_iras07546_jax_toggle.py
 
-``P_OFF``, ``SIGMA_RANGE`` and ``MIN_WING_FRACTION`` at the top of the file say how
-likely each extra wing is a priori, how wide wings may be, and when a wing counts as
-present.  The fit takes hours with the settings below and minutes with ``QUICK = True``.
+``P_OFF`` and ``MIN_WING_FRACTION`` at the top of the file say how likely each extra
+wing is a priori and when a wing counts as present; the widths are the published
+recipe's, 300-8000 km/s for the core and for every wing.  The fit takes hours with
+the settings below and minutes with ``QUICK = True``.
 """
 
 from __future__ import annotations
@@ -71,8 +72,6 @@ PREFIX = "iras07546_jax_toggle_"
 N_WINGS = 3
 #: Prior probability that wing 0, 1, 2 is off: the higher order, the less likely.
 P_OFF = (0.2, 0.5, 0.7)
-#: One width prior for the core and for every wing [km/s].
-SIGMA_RANGE = (300.0, 8000.0)
 #: A wing counts as present above this fraction of the core peak.
 MIN_WING_FRACTION = 0.03
 #: The lines that get wings (the He lines keep one broad Gaussian).
@@ -80,7 +79,7 @@ WINGED_LINES = ("halpha", "hbeta", "hgamma")
 #: The published fit, for the closing comparison: its own file when it is there, and
 #: the numbers `example/output/` gives when it is not.
 PUBLISHED_FIT = OUTPUT_DIR / "iras07546_jax_fit.fits"
-PUBLISHED = {"free_parameters": 30, "log_evidence": 130880.55, "chi2_dof": 0.321}
+PUBLISHED = {"free_parameters": 30, "log_evidence": 130894.66, "chi2_dof": 0.307}
 
 NLIVE = 1000                   # 40 free parameters: 400 was measured to be too few
 DLOGZ = 0.01
@@ -205,10 +204,10 @@ def toggle_priors(model, flux):
     """The published recipe plus a spike and slab on every wing amplitude.
 
     Everything except the wing amplitudes is what the published fit uses, so the two
-    are comparable component by component.  Two things change:
+    are comparable component by component -- including the widths: the published
+    recipe already gives a wing the core's 300-8000 km/s box, because nothing says a
+    wing must be broader than its core.  One thing changes:
 
-    * every ``sigma_w`` gets the *core's* prior, 300-8000 km/s, because nothing says a
-      wing must be broader than the core;
     * ``amp_w<i>`` gets a :class:`galspec.priors.SpikeAndSlab` with ``p_off=P_OFF[i]``:
       that fraction of the prior volume is at exactly zero, the rest on a linear slab
       (0, 1].  The amplitude stays bounded by the core, which is what keeps the labels
@@ -218,9 +217,7 @@ def toggle_priors(model, flux):
     ``develop/dev_jax/prior_api_report.py`` compares its prior transform with the
     pre-prior-API spelling.
     """
-    plain.set_priors(model, flux)
-    for i in range(N_WINGS):
-        model.set_prior(f"b_halpha.sigma_w{i}", priors.Uniform(*SIGMA_RANGE))
+    plain.set_priors(model, flux)          # core and wing already share 300-8000 km/s
     for line in WINGED_LINES:
         for i in range(N_WINGS):
             model.set_prior(f"b_{line}.amp_w{i}",
@@ -277,7 +274,9 @@ def main() -> int:
                         component_count_wings=component_count(fit,
                                                               floor=MIN_WING_FRACTION),
                         p_off=np.array(P_OFF), min_wing_fraction=MIN_WING_FRACTION,
-                        sigma_range=np.array(SIGMA_RANGE))
+                        # recorded from the model, so the file says what was used
+                        sigma_range=np.array(
+                            model.get_prior("b_halpha.sigma_w0").support))
     fits_path = OUTPUT_DIR / f"{PREFIX}fit.fits"
     save_jnesty_fit_to_fits(fit, fits_path)
     print(f"\n  wrote {npz_path}")

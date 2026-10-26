@@ -71,6 +71,8 @@ Contents
 
    installation
    quickstart
+   fitting_walkthrough
+   priors
    jax_gpu
 
 .. toctree::

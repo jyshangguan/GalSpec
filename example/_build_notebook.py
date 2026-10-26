@@ -238,9 +238,9 @@ inside it and is modelled instead.
   are ~700 km/s. So the model is *not* convolved, exactly as in
   `wrk_sagan_iras07546.ipynb`; the fitted narrow width is the observed one.
 * **Wide priors, taken from the data.** Line peaks from invisible to 3x the brightest
-  pixel (log-uniform); the broad core 300-8000 km/s and the wind 800-25000 km/s; the
-  wind's amplitude anywhere between 0 and 1 of the core. Section 5 shows the prior
-  spread against the data.
+  pixel (log-uniform); one width box for the broad core and for the wind, 300-8000
+  km/s; the wind's amplitude anywhere between 0 and 1 of the core. Section 5 shows the
+  prior spread against the data.
 * **Physical ties.** Every narrow line shares one velocity shift and one width
   (measured from [O III]); the broad core and the wind are each shared across the three
   Balmer lines and He I; and the Fe II template is broadened by broad H-alpha itself.
@@ -364,8 +364,7 @@ spectrum itself, never from a previous fit:
 | wind/core ratio | 0-1, **uniform** | no wind is brighter than its own core -- and this is what breaks the core-wind degeneracy |
 | narrow widths | 30-800 km/s | unresolved up to the widest known narrow-line region |
 | [O III] wing width | 300-4000 km/s | a wing on the narrow core, not the broad-line wind |
-| broad core | 300-8000 km/s | FWHM up to ~19000 km/s |
-| broad wind | 800-25000 km/s | FWHM up to ~59000 km/s, for a line wing |
+| broad core and wind | 300-8000 km/s | FWHM up to ~19000 km/s; a wing is not assumed broader than its core |
 | continuum level | 0.2-4x the line-free windows | cannot be negative, cannot swamp the lines |
 | iron amplitude | 1e-3 to 3x the continuum level | the only free iron parameter |
 | [S II] 6716/6731 | both peaks 1e-3 to 3x peak | the ratio is measured, not assumed |
@@ -542,6 +541,9 @@ written in the corner, so nothing is hidden by the zoom."""),
   H-gamma really share H-alpha's profile.
 * `python fit_iras07546_jax_toggle.py` -- puts a spike-and-slab prior on each wind amplitude and
   reports how many components the profile actually needs.
+* `docs/source/fitting_walkthrough.rst` -- this notebook as a documentation page, with figures.
+* `docs/source/priors.rst` -- what each prior shape does, and how one parameter's prior can
+  name another's.
 * `docs/source/jax_gpu.rst` -- the CPU/GPU benchmark built on a fit like this.
 * `tests/test_jax_parity.py` -- proves the JAX models equal the astropy ones, the tied iron included.
 * `tests/test_model_features.py` -- pins the iron template's grid and padding, the tied kernel, and
@@ -570,7 +572,7 @@ not -- the number of Gaussians per line, a template name or a polynomial degree 
 
 `load_jnesty_fit_from_fits` rebuilds the model and the fit, and every summary and plot works on the
 result. The priors come back with it: each one is stored as its *type plus its arguments*
-(`{"kind": "uniform", "args": {"lower": 800.0, "upper": 25000.0}}`), and a prior that names another
+(`{"kind": "uniform", "args": {"lower": 300.0, "upper": 8000.0}}`), and a prior that names another
 parameter stores that name too, so the file is enough to rebuild the prior transform and resume the
 sampler. The single exception is a prior you wrote yourself as a plain Python function: that cannot
 be written to a file, so the loader warns and the file keeps only the resulting bounds."""),

@@ -386,12 +386,15 @@ def set_priors(model, flux):
     model["OIII"].amp_w0.prior = priors.Uniform(0.0, 1.0)
     model["OIII"].sigma_w0.prior = priors.Uniform(300.0, 4000.0)
 
-    # broad kinematics: the only place where the broad-line region is free to move
+    # broad kinematics: the only place where the broad-line region is free to move.
+    # Core and wind share one width box -- a wing is not known in advance to be broader
+    # than the core, and letting it run to 25 000 km/s only puts prior where the data
+    # are not.
     model["b_halpha"].dv_c.prior = priors.Uniform(-2500.0, 2500.0)
     model["b_halpha"].sigma_c.prior = priors.Uniform(300.0, 8000.0)
     for i in range(n_wings):
         getattr(model["b_halpha"], f"dv_w{i}").prior = priors.Uniform(-6000.0, 6000.0)
-        getattr(model["b_halpha"], f"sigma_w{i}").prior = priors.Uniform(800.0, 25000.0)
+        getattr(model["b_halpha"], f"sigma_w{i}").prior = priors.Uniform(300.0, 8000.0)
 
     # each broad line keeps its own peak and its own wind ratio (the Balmer decrement)
     for line in ("halpha", "hbeta", "hgamma"):

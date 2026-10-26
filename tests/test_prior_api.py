@@ -186,7 +186,7 @@ def tied_model():
 def test_a_prior_can_be_written_in_terms_of_another_parameter():
     """The whole point: ``sigma_w0`` of H-beta is a Gaussian around H-alpha's."""
     model = tied_model()
-    model.set_prior("Halpha.sigma_w0", Uniform(800.0, 25000.0))
+    model.set_prior("Halpha.sigma_w0", Uniform(300.0, 8000.0))
     model.set_prior("Hbeta.sigma_w0",
                     Normal(mean="Halpha.sigma_w0", relative=0.2, nsigma=5))
     prior = model.get_prior("Hbeta.sigma_w0")

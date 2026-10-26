@@ -172,10 +172,11 @@ How many broad-line components the data actually need is the question of
 fraction of the prior volume at exactly zero (`galspec.priors`), and one run then
 returns a posterior on the number of components. It is calibrated on mocks with a known
 answer by `develop/dev_jax/broad_line_components.py`, whose write-up is
-`docs/source/jax_gpu.rst` (section "How many components do the broad lines
-need?"). On IRAS 07546+3928 that run reports **four** components -- a core plus three
+`docs/source/priors.rst` (section "Worked example: switching a component off"),
+together with the mock calibration. On IRAS 07546+3928 that run reports **four**
+components -- a core plus three
 wings, with posterior probability 0.84 at the 3%-of-core amplitude floor (0.97
-counting any excursion off zero) -- and improves chi2/dof from 0.321 (the
+counting any excursion off zero) -- and improves chi2/dof from 0.307 (the
 published two-component fit) to 0.195.
 
 Whether broad H-beta and H-gamma really have *the same shape* as broad H-alpha is
@@ -195,19 +196,26 @@ model.set_prior("b_hbeta.dv_c",
 a width is allowed to differ by 20% of H-alpha's width, a shift by 5% of it, and
 `nsigma` is a hard limit -- `MAX_SIGMA = 5` at the top of the script says "nowhere
 more than five widths out" (the default, seven, is where the Gaussian has run out).
-The fit then reports the difference
-per component, in km/s and in units of that width -- the pull -- so "similar" becomes
+The fit then reports the difference per component, in km/s and in units of that
+width -- the pull -- so "similar" becomes
 a measurement rather than an assumption. On this object the narrow cores come back
-consistent with H-alpha's (pulls -0.4 and -0.8 tie widths) and the two **wing**
-components do not: the evidence is **1301 nats higher** than the hard tie's rather
-than the 28 lower a needless freedom would cost, and chi2/dof falls from 0.307 to
-0.260. The freedom is spent on the wings, which the fit broadens to a FWHM of
-~20 000 km/s -- one Gaussian absorbing the broad excess that the component-count
-model above needs three wings for (chi2/dof 0.195). So the tie is too strong, but a
-wider wind is not the right thing to replace it with.
+consistent with H-alpha's (pulls -0.40 and -0.65 tie widths) and the two **wing**
+components do not: their widths sit against the 8000 km/s ceiling of the width prior
+(pulls +4.94 and +4.91 -- every sample of H-beta's wind above 7895 km/s, where the
+five-width window would have allowed 10 300), and H-gamma's wind shift moves to -4.60.
+The evidence is **1258 nats higher** than the hard tie's rather than the 29 lower a
+needless freedom would cost, and chi2/dof falls from 0.307 to 0.261: over 57 000
+pixels that is about +1300 nats of likelihood against the 29 the extra prior volume
+costs, so the gain is the better fit and not a book-keeping effect (rerunning the hard
+tie with 1000 live points moves its evidence by 7 nats, so both runs are converged).
+The freedom is spent on the wings, which the fit broadens to a FWHM of ~19 000 km/s --
+one Gaussian absorbing the broad excess that the component-count model above needs
+three wings for (chi2/dof 0.195). So the tie is too strong, but a wider wind is not
+the right thing to replace it with.
 `develop/dev_jax/tied_prior_report.py` validates the mechanism on mocks whose answer
-is known and writes the result up (`develop/dev_jax/io_test/tied_prior.html`,
-section "Similar, not identical" of `docs/source/jax_gpu.rst`).
+is known and writes the result up (`develop/dev_jax/io_test/tied_prior.html`;
+the construction is also on `docs/source/priors.rst`, section "Worked example: a
+prior centred on another parameter").
 
 Setting a prior is not confined to these examples: every model can carry one, next
 to `value`, `fixed` and `bounds`, and a prior may name another parameter as its

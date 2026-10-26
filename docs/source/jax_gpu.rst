@@ -907,11 +907,12 @@ The answer for IRAS 07546+3928
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The run asked for at most four broad components and returned **four** -- a core
-plus three wings: in every one of the 228 281 equally weighted samples all three
-wings are on, so at the 3% floor the posterior on the *wing* count is
-``P(3 wings) = 1.000``.  The three Bayes factors are unbounded above (no sample
-in the run switched any of the wings off), so this is not a marginal call.  Sorted
-by width, broad H-alpha comes out as:
+plus three wings: in 97% of the 236 466 equally weighted samples all three wings
+are on, and in 84% all three stay above the 3% floor, so the posterior on the
+*wing* count is ``P(3 wings) = 0.84``.  The first two wings are never switched off
+at all (their Bayes factors are unbounded above) and the third is on by a factor
+of 76, so this is not a marginal call.  Sorted by width, broad H-alpha comes out
+as:
 
 .. list-table::
    :header-rows: 1

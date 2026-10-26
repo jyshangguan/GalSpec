@@ -173,9 +173,10 @@ fraction of the prior volume at exactly zero (`galspec.priors`), and one run the
 returns a posterior on the number of components. It is calibrated on mocks with a known
 answer by `develop/dev_jax/broad_line_components.py`, whose write-up is
 `docs/source/jax_gpu.rst` (section "How many components do the broad lines
-need?"). On IRAS 07546+3928 that run reports **four** components -- the count has
-posterior probability 1.000 at the 3%-of-core amplitude floor -- and improves
-chi2/dof from 0.321 (the published two-component fit) to 0.195.
+need?"). On IRAS 07546+3928 that run reports **four** components -- a core plus three
+wings, with posterior probability 0.84 at the 3%-of-core amplitude floor (0.97
+counting any excursion off zero) -- and improves chi2/dof from 0.321 (the
+published two-component fit) to 0.195.
 
 Whether broad H-beta and H-gamma really have *the same shape* as broad H-alpha is
 the question of `example/fit_iras07546_jax_tied.py`. Instead of tying their shifts
@@ -192,8 +193,9 @@ model.set_prior("b_hbeta.dv_c",
 ```
 
 a width is allowed to differ by 20% of H-alpha's width, a shift by 5% of it, and
-`nsigma` is a hard limit -- `--max-sigma 5` says "nowhere more than five widths
-out" (the default, seven, is where the Gaussian has run out). The fit then reports the difference
+`nsigma` is a hard limit -- `MAX_SIGMA = 5` at the top of the script says "nowhere
+more than five widths out" (the default, seven, is where the Gaussian has run out).
+The fit then reports the difference
 per component, in km/s and in units of that width -- the pull -- so "similar" becomes
 a measurement rather than an assumption. On this object the narrow cores come back
 consistent with H-alpha's (pulls -0.4 and -0.8 tie widths) and the two **wing**

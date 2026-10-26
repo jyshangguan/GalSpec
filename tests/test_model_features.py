@@ -618,34 +618,32 @@ def _load_example():
     return module
 
 
-def test_example_grows_the_broad_lines_without_changing_the_published_fit():
-    """``n_balmer_wings`` adds components and nothing else.
+def test_example_grows_the_broad_lines_and_pins_down_every_prior():
+    """``n_wings`` adds components, nothing else, and every one of them has a prior.
 
     The published fit has 30 free parameters and one wind per Balmer line.  Asking
-    for four components must add exactly 3 parameters per gated line (an amplitude,
-    a shift and a width each) and must leave the astropy twin and the priors
-    consistent with the JAX model -- the twin is built by
-    ``cpu_model_with_values`` from the same count, and every free parameter needs a
-    bound or the fit refuses to start.
+    for four components must add exactly 5 parameters per extra wing -- three on
+    broad H-alpha (an amplitude, a shift and a width) and one amplitude per remaining
+    Balmer line, whose shifts and widths are tied to H-alpha -- and every free
+    parameter must carry a prior, or the fit refuses to start.
     """
     example = _load_example()
     flux = np.linspace(0.4, 2.2, 500)
 
-    default = example.build_model(jxm)
+    default = example.build_model()
     assert len(default.free_param_names) == 30, len(default.free_param_names)
     assert default["b_halpha"].n_components == 2
 
-    wide = example.build_model(jxm, n_balmer_wings=3)
+    wide = example.build_model(n_wings=3)
     assert len(wide.free_param_names) == 40, len(wide.free_param_names)
     for line in ("b_halpha", "b_hbeta", "b_hgamma"):
         assert wide[line].n_components == 4, (line, wide[line].n_components)
     # He I 5876 and He II 4686 keep a single broad Gaussian
     assert wide["b_hei"].n_components == 1
     assert wide["b_heii"].n_components == 1
-    # the extra wings are tied to broad H-alpha, component by component (astropy
-    # ties return the Parameter itself, so compare the numbers)
-    # (the amplitudes are *not* tied between lines: each keeps its own Balmer
-    # decrement.  Only the shifts and widths are shared.)
+    # the extra wings are tied to broad H-alpha, component by component (the
+    # amplitudes are *not* tied between lines: each keeps its own Balmer decrement.
+    # Only the shifts and widths are shared.)
     for line in ("b_hbeta", "b_hgamma"):
         for stem in ("dv_w", "sigma_w"):
             for i in (1, 2):
@@ -657,17 +655,18 @@ def test_example_grows_the_broad_lines_without_changing_the_published_fit():
                 assert got == expected, (line, stem, i, got, expected)
 
     for count in (0, 1, 3):
-        model = example.build_model(jxm, n_balmer_wings=count)
-        bounds, custom, _notes = example.make_priors(flux, n_balmer_wings=count)
-        missing = [q for q in example.free_qualified_names(model) if q not in bounds]
+        model = example.build_model(n_wings=count)
+        example.set_priors(model, flux)
+        missing = [q for q in example.free_qualified_names(model)
+                   if model.get_prior(q) is None]
         assert not missing, (count, missing)
         # each wing costs five free parameters: three on broad H-alpha and one
         # amplitude per remaining Balmer line (their shifts and widths are tied)
         assert len(model.free_param_names) == 25 + 5 * count, count
-        # the astropy twin is built from the same count
-        twin = example.build_model(galspec, n_balmer_wings=count)
-        assert twin["b_halpha"].n_components == 1 + count
-        assert twin["b_hei"].n_components == 1
+
+    # releasing the broad ties frees exactly the eight shared parameters
+    released = example.build_model(tie_broad=False)
+    assert len(released.free_param_names) == 38, len(released.free_param_names)
 
     print(f"  example: {len(default.free_param_names)} -> {len(wide.free_param_names)} "
           f"free parameters for 1 -> 3 wings (5 per extra wing)")

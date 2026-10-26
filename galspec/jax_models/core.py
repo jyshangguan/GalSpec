@@ -657,10 +657,19 @@ class JaxCompoundModel(JaxModel):
         return leaf._values[base]
 
     def set_free_params(self, theta) -> "JaxCompoundModel":
+        """Set the free parameters, then refresh every tied one.
+
+        Astropy shares ``Parameter`` objects between a compound model and its
+        submodels, so a submodel always shows the value that was fitted.  Here the
+        leaves keep their own storage and the ties are resolved during evaluation,
+        which left a tied parameter holding its *construction default*: the total
+        model (which does resolve ties) was right while a drawn component was not --
+        a tied [N II] width of 700 km/s instead of the [O III] line's 298.
+        """
         for name, value in zip(self.free_param_names, np.asarray(theta, dtype=float)):
             leaf, _, base = self._lookup_qualified(name)
             leaf._values[base] = float(value)
-        return self
+        return self.sync_tied_values()
 
     def get_free_params(self) -> np.ndarray:
         return self.free_param_values
@@ -678,6 +687,22 @@ class JaxCompoundModel(JaxModel):
             raise RuntimeError("evaluating a compound model with leaves owned by another compound")
         params = {n: resolver.get(node._qualified(n)) for n in node._specs}
         return node.evaluate(x, params)
+
+    def sync_tied_values(self) -> "JaxCompoundModel":
+        """Write each tied parameter's tied value into its leaf.
+
+        The total model and its components then agree by construction, and
+        ``model['NII'].sigma_c.value`` is what the fit produced, as in astropy.
+        """
+        resolver = _Resolver(self, None, use_current=True, resolve_ties=True)
+        pending = []
+        for leaf in self._leaves:
+            for name, spec in leaf._specs.items():
+                if name in leaf._ties and not spec.fixed:
+                    pending.append((leaf, name, float(resolver.get(leaf._qualified(name)))))
+        for leaf, name, value in pending:
+            leaf._values[name] = value
+        return self
 
     def copy(self) -> "JaxCompoundModel":
         """Copy the tree, duplicating leaves (ties/values/bounds preserved)."""

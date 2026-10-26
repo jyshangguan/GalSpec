@@ -607,8 +607,15 @@ def _centred_prior_notes(fit, flat_names):
     param_map = getattr(fit, 'param_map', None) or {}
 
     def spell(name):
-        if labels is not None and name in param_map:
-            return labels[param_map[name]]
+        # ``param_map`` maps a qualified name to the column index -- either the index
+        # itself (dynesty, nautilus, jax jnesty) or ``(index, name)`` (mcmc, and the
+        # jnesty FITS loader), so both shapes have to work here.
+        entry = param_map.get(name)
+        if entry is None:
+            return name
+        index = entry[0] if isinstance(entry, tuple) else entry
+        if labels is not None:
+            return labels[index]
         return name
 
     notes = []

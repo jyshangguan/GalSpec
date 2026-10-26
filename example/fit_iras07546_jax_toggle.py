@@ -79,7 +79,7 @@ WINGED_LINES = ("halpha", "hbeta", "hgamma")
 #: The published fit, for the closing comparison: its own file when it is there, and
 #: the numbers `example/output/` gives when it is not.
 PUBLISHED_FIT = OUTPUT_DIR / "iras07546_jax_fit.fits"
-PUBLISHED = {"free_parameters": 30, "log_evidence": 130894.66, "chi2_dof": 0.307}
+PUBLISHED = {"free_parameters": 30, "log_evidence": 130889.60, "chi2_dof": 0.307}
 
 NLIVE = 1000                   # 40 free parameters: 400 was measured to be too few
 DLOGZ = 0.01
@@ -187,6 +187,47 @@ def sorted_components(fit, floor=MIN_WING_FRACTION, max_samples=2000):
             "flux_fraction": float(np.median(used_fraction)) if used_fraction else 0.0,
         })
     return rows
+
+
+def plot_components(fit, wave, flux, model_best, error, outfile):
+    """The decomposition itself: one curve per component of broad H-alpha."""
+    core_sigma = float(np.median(fit.samples_equal_weight[
+        :, list(fit.full_param_names).index("b_halpha.sigma_c")]))
+    core_dv = float(np.median(fit.samples_equal_weight[
+        :, list(fit.full_param_names).index("b_halpha.dv_c")]))
+    rows = [row for row in sorted_components(fit) if row["n"] >= 1]
+    colours = ["#2b6cb0", "#2f855a", "#b7791f", "#805ad5", "#c53030"]
+    fig, (ax, axr) = plt.subplots(2, 1, figsize=(9.2, 4.8), sharex=True,
+                                  gridspec_kw={"height_ratios": [3, 1], "hspace": 0.06})
+    wavec = plain.LINE_WAVE["Halpha"]
+    x = np.linspace(wavec - 400.0, wavec + 400.0, 1500)
+    sel = (wave > x[0]) & (wave < x[-1])
+    ax.plot(wave[sel], flux[sel], color="0.15", lw=0.8, label="data")
+    core_amp = float(np.median(fit.samples_equal_weight[
+        :, list(fit.full_param_names).index("b_halpha.amp_c")]))
+    core_curve = core_amp * np.exp(-0.5 * ((x - wavec * (1.0 + core_dv / 299792.458))
+                                           / (wavec * core_sigma / 299792.458)) ** 2)
+    ax.plot(x, core_curve, color=colours[0], lw=1.1,
+            label=f"core: FWHM {core_sigma * FWHM:.0f} km/s")
+    for j, row in enumerate(rows):
+        curve = core_amp * row["amp"] * np.exp(
+            -0.5 * ((x - wavec * (1.0 + (core_dv + row["dv"]) / 299792.458))
+                    / (wavec * row["sigma"] / 299792.458)) ** 2)
+        ax.plot(x, curve, color=colours[(j + 1) % len(colours)], lw=1.1, ls="--",
+                label=f"wing: FWHM {row['fwhm']:.0f} km/s, "
+                      f"{row['flux_fraction'] * 100:.0f}% of the flux")
+    ax.set_ylabel(r"$F_\lambda$  [$10^{-14}$ erg s$^{-1}$ cm$^{-2}$ $\AA^{-1}$]")
+    ax.set_title("Broad H-alpha: the components the sampler left switched on",
+                 fontsize=10.5)
+    ax.legend(frameon=False, fontsize=8.5, loc="upper left")
+    axr.axhline(0, color="0.7", lw=0.6)
+    axr.plot(wave[sel], (flux[sel] - np.asarray(model_best(wave))[sel]) / error[sel],
+             color="0.3", lw=0.7)
+    axr.set_ylabel(r"residual / $\sigma$")
+    axr.set_xlabel(r"rest wavelength [$\AA$]")
+    fig.savefig(outfile, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    return outfile
 
 
 def base_scale():
@@ -399,9 +440,13 @@ def main() -> int:
     right.set_ylim(0, 1.05)
     right.set_title("per-wing posterior probability of being on", fontsize=10)
     fig.tight_layout()
-    fig.savefig(OUTPUT_DIR / f"{PREFIX}components.png", dpi=150, bbox_inches="tight")
+    fig.savefig(OUTPUT_DIR / f"{PREFIX}gates.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"  wrote the figures and {OUTPUT_DIR / f'{PREFIX}components.png'}")
+
+    # and the decomposition itself: what the four components of broad H-alpha look like
+    out = OUTPUT_DIR / f"{PREFIX}components.png"
+    plot_components(fit, wave, flux, model_best, error, out)
+    print(f"  wrote the figures, {OUTPUT_DIR / f'{PREFIX}gates.png'} and {out}")
 
     fit.release_device_buffers()
     return 0

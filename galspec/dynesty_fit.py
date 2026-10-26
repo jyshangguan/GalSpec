@@ -9,6 +9,8 @@ from copy import deepcopy
 import numpy as np
 from astropy.modeling import CompoundModel
 
+from .priors import resolve_prior_dependencies
+
 try:
     import dynesty
     from dynesty import utils as dyfunc
@@ -53,12 +55,47 @@ class _LikelihoodPool:
         return self._pool.map(_worker_log_likelihood, values)
 
 
+def _resolve_named_priors(priors, param_names, full_param_names):
+    """Map prior callables onto flattened parameter names.
+
+    ``custom_priors`` is stored per *flattened* name (``amp_c_0``) because that is
+    what the prior transform walks over, but nobody wants to write that: the
+    dictionary may therefore key on the flattened name, on the qualified name
+    (``"Halpha.amp_c"``, the same convention as ``bounds_dict``) or on the bare
+    parameter name (``"amp_c"``, which then applies to every line that has one).
+    """
+    if not priors:
+        return {}
+    resolved = {}
+    known = set(param_names) | set(full_param_names)
+    for index, flat in enumerate(param_names):
+        full = full_param_names[index] if index < len(full_param_names) else None
+        base = Dynesty_Fit._base_name(flat)
+        known.add(base)
+        for key in (flat, full, base):
+            if key is not None and key in priors:
+                resolved[flat] = priors[key]
+                break
+    unmatched = [key for key in priors if key not in known]
+    if unmatched:
+        warnings.warn(f"custom_priors ignored, no matching free parameter: {unmatched}")
+    return resolved
+
+
+def _astropy_parameter_labels(model, names):
+    """LaTeX labels for astropy compound models (see :mod:`galspec.param_labels`)."""
+    from .param_labels import qualified_parameter_labels
+    return qualified_parameter_labels(model, names)
+
+
 class Dynesty_Fit:
     """Fit an Astropy compound model with :mod:`dynesty`.
 
     Model bounds are used whenever both ends are finite. Otherwise a conservative
     parameter-type default is used. Default amplitude priors are log-uniform;
-    explicitly supplied bounds are always linear-uniform.
+    explicitly supplied bounds are always linear-uniform, so pass a callable in
+    ``custom_priors`` (keyed by qualified, flattened or bare parameter name) when
+    you want a log-uniform prior over an explicitly given range.
 
     ``n_processes > 1`` parallelizes likelihood calls. Alternatively, ``pool``
     accepts a user-managed object with a ``map`` method; user pools are not closed.
@@ -84,7 +121,7 @@ class Dynesty_Fit:
     def __init__(self, model, wave_use, flux_use, ferr, bounds_dict=None,
                  default_bounds=None, sample_method="rwalk", nlive=500,
                  bound="multi", rstate=None, n_processes=1, pool=None,
-                 queue_size=None):
+                 queue_size=None, custom_priors=None):
         if dynesty is None:
             raise ImportError("dynesty is required; install GalSpec's dependencies")
         if not isinstance(model, CompoundModel):
@@ -118,16 +155,32 @@ class Dynesty_Fit:
         self.queue_size = queue_size
         self.bounds_dict = dict(bounds_dict or {})
         self.default_bounds = self.DEFAULT_BOUNDS | dict(default_bounds or {})
-        self.custom_priors = {}
-
         self._name_submodels()
         self.param_names = [name for name in self.model.param_names
                             if not getattr(self.model, name).fixed
                             and not getattr(self.model, name).tied]
         self.full_param_names = self._full_parameter_names()
+        # LaTeX labels for plots, same convention as JNesty_Fit.
+        self.param_labels = _astropy_parameter_labels(self.model, self.full_param_names)
+        self.full_param_labels = list(self.param_labels)
         self.param_map = dict(zip(self.full_param_names, enumerate(self.param_names)))
+        self.custom_priors = _resolve_named_priors(
+            dict(custom_priors or {}), self.param_names, self.full_param_names)
         self._log_scale_params = set()
         self.param_bounds = self.get_param_bounds()
+        # Priors centred on another parameter are evaluated in dependency order, and
+        # their truncation range is the same box the plain prior would have used.
+        self.prior_order, self.centered_priors = resolve_prior_dependencies(
+            self.param_names, self.full_param_names, self.custom_priors)
+        for _index, (_prior, _center, _scale) in list(self.centered_priors.items()):
+            if _prior.lower is None or _prior.upper is None:
+                # a log-scaled parameter keeps its box in log10 units; the centred
+                # prior works in physical units, so undo the logarithm here
+                _lower, _upper = self.param_bounds[_index]
+                if self.param_names[_index] in self._log_scale_params:
+                    _lower, _upper = 10.0 ** _lower, 10.0 ** _upper
+                self.centered_priors[_index] = (
+                    _prior.with_bounds(_lower, _upper), _center, _scale)
         self.theta_initial = np.asarray(
             [getattr(self.model, name).value for name in self.param_names], dtype=float)
         self.ndim = len(self.param_names)
@@ -233,7 +286,18 @@ class Dynesty_Fit:
     def prior_transform(self, u):
         u = np.asarray(u, dtype=float)
         theta = np.empty_like(u)
-        for index, name in enumerate(self.param_names):
+        for index in self.prior_order:
+            centered = self.centered_priors.get(index)
+            if centered is not None:
+                prior, center, scale_from = centered
+                center = center if isinstance(center, float) else theta[center]
+                scale_value = None
+                if scale_from is not None:
+                    scale_value = (scale_from if isinstance(scale_from, float)
+                                   else theta[scale_from])
+                theta[index] = prior.transform(u[index], center, scale_value)
+                continue
+            name = self.param_names[index]
             if name in self.custom_priors:
                 theta[index] = self.custom_priors[name](u[index])
             else:
@@ -324,6 +388,7 @@ class Dynesty_Fit:
                     owned_pool.join()
         self.runtime_seconds = time.perf_counter() - started
         self.ncall = int(np.sum(self.results.ncall))
+        self.n_iterations = int(getattr(self.results, "niter", 0) or 0)
         weights = np.exp(self.results.logwt - self.results.logz[-1])
         self.samples_equal_weight = dyfunc.resample_equal(
             self.results.samples, weights, rstate=self.rstate)

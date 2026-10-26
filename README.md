@@ -15,6 +15,10 @@ GalSpec is a Python package for fitting astronomical spectra, specifically desig
 - **Comprehensive Line Database**: Built-in UV/optical emission lines
 - **Template Support**: Fe II and stellar population templates
 - **Flexible Model Composition**: Easily combine continuum, line, and template components
+- **GPU Acceleration (optional)**: JAX implementations of the same models, with
+  a JNesty sampler -- 50-105x faster batched likelihood evaluations and 4-22x
+  faster complete nested-sampling fits on an RTX 4090 (the larger the CPU model,
+  the larger the gain; see docs/source/jax_gpu.rst)
 
 ## Documentation
 
@@ -86,6 +90,141 @@ fitted_model = fitter(model, wave, flux)
 print(f"Hα amplitude: {fitted_model[1].amplitude.value:.3f}")
 ```
 
+## GPU Acceleration (JAX)
+
+The `galspec.jax_models` subpackage re-implements the models as pure JAX
+functions, so a fit can run on a GPU. It is optional -- `import galspec` does not
+require JAX.
+
+```python
+import numpy as np
+import galspec
+from galspec import jax_models as jxm
+from galspec.jnesty_fit import JNesty_Fit
+
+# same constructors, same fixed/tied/bounds/name semantics as the astropy models
+continuum = jxm.PowerLaw1D(amplitude=0.5, x_0=5000, alpha=1.0,
+                           fixed={"x_0": True}, name="Continuum")
+line = jxm.Line_MultiGauss_doublet(n_components=2, amp_c0=1.7, amp_c1=0.57,
+                                   dv_c=-43, sigma_c=250, wavec0=5006.84,
+                                   wavec1=4958.91, name="OIII",
+                                   amp_w0=0.35, dv_w0=-280, sigma_w0=340)
+line.amp_c1.tied = galspec.tie_MultiGauss_doublet_ratio("OIII", 2.98)
+model = continuum + line
+
+fit = JNesty_Fit(model, wave, flux, error, nlive=200, device="auto")
+fit.fit(dlogz=0.5)
+best_model, names, theta = fit.get_best_fit()
+print(fit.get_evidence())          # (logZ, logZ_err)
+```
+
+Install the dependencies with `pip install -e ".[gpu]"` (or `".[jax]"` for a
+CPU-only JAX) and install [JNesty](https://github.com/jyshangguan/jnesty) from
+its repository. See `docs/source/jax_gpu.rst` for the model list, parity
+guarantees, benchmarks and the recipe for adding a new model, and
+`develop/dev_jax/` for the benchmark and demo scripts.
+
+The JAX models are verified against the CPU models by
+`tests/test_jax_parity.py`; fluxes agree to ~1e-16 relative (float64), so the
+GPU and CPU fits are guaranteed to be solving the same problem.
+
+A complete worked example lives in `example/fit_iras07546_jax.py` (script,
+about 10 min on one GPU) and `example/fit_iras07546_jax.ipynb` (the same fit broken
+into annotated cells). It fits **4200-6800 A** of IRAS 07546+3928 (rest frame,
+56 956 pixels, H-gamma to [S II]) in one go: a power-law continuum plus an Fe II
+template, H-alpha/H-beta/H-gamma each modelled **twice** (a narrow `Line_Gaussian`
+and a broad `Line_MultiGauss` with a core and a wind), He I 5876 and He II 4686
+with one broad Gaussian each, [O III] with a broad wing, and [N II], [S II], [O I]
+and [O III] 4363 -- 30 free parameters describing seventeen models, with every
+narrow line tied to the [O III] kinematics, the broad components tied across the
+three Balmer lines, and no least-squares step anywhere. Nothing blueward of H-gamma or redward of
+[S II] is modelled, so no window has to be masked; the Na D region, which used to
+be masked, is now covered by fitting He I 5876.
+
+The doublet ratios are tied at their atomic values except [S II], whose 6716/6731
+ratio is a density diagnostic and is therefore measured. The Fe II template is
+fitted in its `IronTemplate_tied` form: the iron is broadened by the profile of
+the broad H-alpha component, tied component by component -- the core to the broad
+core, the wind to the wind -- so its only free parameter is its amplitude. It
+carries no weights of its own (a `Line_MultiGauss` is already a weighted sum, and
+the convolution renormalises it). The core and the wind are exchangeable, so the
+wind amplitude is bounded by its own core; that alone removes the mirror branch,
+and the widths are left free to overlap.
+`develop/dev_jax/io_test/iron_tied_io_test.html` measures the degeneracy and
+shows a mock recovered with the bound in place. (`IronTemplate_new` -- one velocity dispersion
+and a velocity shift -- remains available, and the two agree exactly for a
+one-component kernel.) The error bar on every pixel is the measured pixel-to-pixel
+scatter plus **5% of the flux** in quadrature, which stands for the photon noise
+of the source.
+
+The model is not convolved with the LSF (this spectrum grossly oversamples the
+instrument); the fit is drawn with `galspec.plot.plot_fit`, so every component and
+the sigma-scaled residuals appear in one figure, the marginals are drawn with
+`galspec.plot.plot_posterior_hist` (axis from the posterior, not the prior), and
+the whole run is written to a FITS file that
+`galspec.jnesty_fit_io.load_jnesty_fit_from_fits` turns back into a working fit.
+Parameter labels come from `galspec.param_labels`, so plots print
+`BH$\alpha$:$\sigma_{w0}$` instead of `Halpha.sigma_w0`.
+
+How many broad-line components the data actually need is the question of
+`example/fit_iras07546_jax_toggle.py`: the three Balmer lines get a core plus
+**three** wings, each wing amplitude carries a toggle prior that puts a fixed
+fraction of the prior volume at exactly zero (`galspec.priors`), and one run then
+returns a posterior on the number of components. It is calibrated on mocks with a known
+answer by `develop/dev_jax/broad_line_components.py`, whose write-up is
+`docs/source/priors.rst` (section "Worked example: switching a component off"),
+together with the mock calibration. On IRAS 07546+3928 that run reports **four**
+components -- a core plus three
+wings, with posterior probability 0.84 at the 3%-of-core amplitude floor (0.97
+counting any excursion off zero) -- and improves chi2/dof from 0.307 (the
+published two-component fit) to 0.195.
+
+Whether broad H-beta and H-gamma really have *the same shape* as broad H-alpha is
+the question of `example/fit_iras07546_jax_tied.py`. Instead of tying their shifts
+and widths to H-alpha's, each of the eight parameters gets a Gaussian prior centred
+on H-alpha's value, written on the parameter itself:
+
+```python
+from galspec import priors
+model.set_prior("b_hbeta.sigma_c",
+                priors.Normal(mean="b_halpha.sigma_c", relative=0.20, nsigma=5))
+model.set_prior("b_hbeta.dv_c",
+                priors.Normal(mean="b_halpha.dv_c", sigma=0.05,
+                              scale_from="b_halpha.sigma_c", nsigma=5))
+```
+
+a width is allowed to differ by 20% of H-alpha's width, a shift by 5% of it, and
+`nsigma` is a hard limit -- `MAX_SIGMA = 5` at the top of the script says "nowhere
+more than five widths out" (the default, seven, is where the Gaussian has run out).
+The fit then reports the difference per component, in km/s and in units of that
+width -- the pull -- so "similar" becomes
+a measurement rather than an assumption. On this object the narrow cores come back
+consistent with H-alpha's (pulls -0.40 and -0.65 tie widths) and the two **wing**
+components do not: their widths sit against the 8000 km/s ceiling of the width prior
+(pulls +4.94 and +4.91 -- every sample of H-beta's wind above 7895 km/s, where the
+five-width window would have allowed 10 300), and H-gamma's wind shift moves to -4.60.
+The evidence is **1258 nats higher** than the hard tie's rather than the 29 lower a
+needless freedom would cost, and chi2/dof falls from 0.307 to 0.261: over 57 000
+pixels that is about +1300 nats of likelihood against the 29 the extra prior volume
+costs, so the gain is the better fit and not a book-keeping effect (rerunning the hard
+tie with 1000 live points moves its evidence by 7 nats, so both runs are converged).
+The freedom is spent on the wings, which the fit broadens to a FWHM of ~19 000 km/s --
+one Gaussian absorbing the broad excess that the component-count model above needs
+three wings for (chi2/dof 0.195). So the tie is too strong, but a wider wind is not
+the right thing to replace it with.
+`develop/dev_jax/tied_prior_report.py` validates the mechanism on mocks whose answer
+is known and writes the result up (`develop/dev_jax/io_test/tied_prior.html`;
+the construction is also on `docs/source/priors.rst`, section "Worked example: a
+prior centred on another parameter").
+
+Setting a prior is not confined to these examples: every model can carry one, next
+to `value`, `fixed` and `bounds`, and a prior may name another parameter as its
+centre. `priors.Uniform`, `priors.LogUniform`, `priors.Normal` and
+`priors.SpikeAndSlab` cover the four shapes the fits need;
+`develop/dev_jax/prior_api_report.py` writes up why this is safe
+(`develop/dev_jax/io_test/prior_api.html`) -- the new spelling reproduces the old
+unit-cube map bit for bit on all three examples, so no published evidence moves.
+
 ## Example Notebooks
 
 The `example/` directory contains detailed notebooks demonstrating:
@@ -99,6 +238,7 @@ The `example/` directory contains detailed notebooks demonstrating:
 - Python ≥ 3.9
 - numpy, scipy, matplotlib, astropy, pandas
 - emcee, dynesty (for Bayesian fitting)
+- jax + jnesty (optional, for GPU-accelerated fitting)
 
 **Note**: When using `ReadSpectrum` class for extinction correction, SFD dust map data (4 FITS files, ~167MB total) will be automatically downloaded from [kbarbary/sfddata](https://github.com/kbarbary/sfddata) on first use.
 

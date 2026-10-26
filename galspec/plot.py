@@ -11,8 +11,22 @@ mpl.rc("ytick.major", width=1., size=8)
 mpl.rc("xtick.minor", width=1., size=5)
 mpl.rc("ytick.minor", width=1., size=5)
 
-__all__ = ['plot_fit', 'plot_fit_new', 'reorder_legend',
+__all__ = ['plot_fit', 'plot_fit_new', 'plot_posterior_hist', 'reorder_legend',
            'plot_narrow_line_diagnostic', 'plot_narrow_line_template_validation']
+
+#: Colours cycled through for the individual model components by :func:`plot_fit`.
+#:
+#: matplotlib's own cycle has ten entries, which is not enough for a model with
+#: twenty components: unrelated lines then share a colour, and the worst case is a
+#: line taking the same red as the total model.  The first entries keep the usual
+#: matplotlib order (blue, orange, green, ...) minus ``C3``, which stays reserved
+#: for the total model, and the palette continues to 24 colours.
+_COMPONENT_COLORS = (
+    "#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd", "#8c564b", "#e377c2",
+    "#7f7f7f", "#bcbd22", "#17becf", "#8c8c00", "#1b9e77", "#d95f02",
+    "#7570b3", "#e7298a", "#66a61e", "#e6ab02", "#a6761d", "#666666",
+    "#393b79", "#637939", "#8c6d31", "#843c39", "#7b4173", "#5254a3",
+)
 
 
 def plot_fit_new(wave, flux, model, weight=None, error=None, ax=None, axr=None, xlim=None, ylim0=None, 
@@ -125,7 +139,7 @@ def plot_fit_new(wave, flux, model, weight=None, error=None, ax=None, axr=None, 
 
     if ylabel is not None:
         ax.set_ylabel(ylabel, fontsize=24)
-    axr.set_ylabel(r'Res.', fontsize=24)
+    axr.set_ylabel(r'Res./$\sigma$' if residual_in_sigma else r'Res.', fontsize=24)
 
     ax.minorticks_on()
     axr.minorticks_on()
@@ -149,7 +163,8 @@ def plot_fit_new(wave, flux, model, weight=None, error=None, ax=None, axr=None, 
 
 def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0=None, 
              ylim1=None, xlabel=None, ylabel=None, legend_kwargs=None, plot_weight=True, 
-             ignore_list=None, legend_map=None, mask_list=None):
+             ignore_list=None, legend_map=None, mask_list=None, error=None,
+             residual_in_sigma=False):
     '''
     Plot the fitting result.
 
@@ -179,6 +194,13 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
         Y-axis label.
     mask_list : list, optional
         A list of tuples specifying the wavelength ranges to be masked in the plot.
+    error : array like, optional
+        Uncertainty of ``flux``.  Only used when ``residual_in_sigma`` is True.
+    residual_in_sigma : bool, optional
+        Draw ``(data - model) / error`` instead of the raw residual, with dashed
+        guides at +/-1 sigma.  A raw residual in flux units hides how large it is
+        compared with the noise, and one bright pixel can set the scale of the
+        whole residual panel; in units of sigma both problems disappear.
     
     Returns
     -------
@@ -264,8 +286,17 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
                         y = msub(wave)
                     ax.plot(wave, y, lw=0.5, ls='--', color=color)
     
-    axr.step(wave, flux_res, lw=1, color='k')
-    axr.axhline(0, color='k', ls='--', lw=1.0)
+    if residual_in_sigma:
+        if error is None:
+            raise ValueError("residual_in_sigma=True needs the `error` array")
+        flux_res = flux_res / np.asarray(error, dtype=float)
+        axr.step(wave, flux_res, lw=1, color='k')
+        axr.axhline(0, color='k', ls='--', lw=1.0)
+        for level in (-1, 1):
+            axr.axhline(level, color='gray', ls=':', lw=1.0)
+    else:
+        axr.step(wave, flux_res, lw=1, color='k')
+        axr.axhline(0, color='k', ls='--', lw=1.0)
     
     ax.tick_params(labelbottom=False)
     if xlim is not None:
@@ -282,7 +313,7 @@ def plot_fit(wave, flux, model, weight=None, ax=None, axr=None, xlim=None, ylim0
 
     if ylabel is not None:
         ax.set_ylabel(ylabel, fontsize=24)
-    axr.set_ylabel(r'Res.', fontsize=24)
+    axr.set_ylabel(r'Res./$\sigma$' if residual_in_sigma else r'Res.', fontsize=24)
 
     ax.minorticks_on()
     axr.minorticks_on()
@@ -332,11 +363,276 @@ def _map_legend(model, legend_map, ignore_list=None):
                     label_list.append(l)
         
         if m.name not in legend_dict:
-            legend_dict[m.name] = (f'C{count_colors%10}', m.name)
-            label_list.append(m.name)
+            color = _COMPONENT_COLORS[count_colors % len(_COMPONENT_COLORS)]
+            # a model may set `label` to something readable (e.g. "BH$\alpha$");
+            # fall back to the machine name
+            label = getattr(m, 'label', None) or m.name
+            legend_dict[m.name] = (color, label)
+            label_list.append(label)
             count_colors += 1
 
     return legend_dict
+
+
+def plot_posterior_hist(fit_or_samples, params=None, labels=None, quantiles=(0.16, 0.5, 0.84),
+                        bins=40, ncols=3, figsize=None, weights=None, color='C0',
+                        show_bounds=True, show_stats=True, title=None, filename=None,
+                        density=True, histtype='stepfilled', alpha=0.45, log_scale=None,
+                        view_quantiles=(0.001, 0.999), pad=0.06, prior_text=True):
+    r"""Histograms of selected one-dimensional posteriors.
+
+    A corner plot shows every pair, which for forty parameters is unreadable; most
+    of the time the marginal distribution of a handful of parameters is all that
+    is wanted.  Each panel shows the histogram, the median, the 16-84 percentile
+    band and, in the corner, ``median +err -err``.  When a fit object is given,
+    the prior bounds are drawn as dotted vertical lines: a posterior that fills the
+    prior has not been measured.
+
+    Parameters
+    ----------
+    fit_or_samples : object or array like
+        A fitted sampler (``JNesty_Fit`` / ``Dynesty_Fit``) or an ``(nsamples,
+        ndim)`` array of equally weighted samples.
+    params : sequence, optional
+        Which parameters to draw: names as reported by the fitter (``Halpha.sigma_w0``
+        or the flat ``sigma_w0_3``) or integer indices.  Default: every free
+        parameter.
+    labels : sequence of str, optional
+        Panel labels; defaults to the fitter's LaTeX labels
+        (:mod:`galspec.param_labels`), e.g. ``BH$\alpha$:$\sigma_{w0}$``.
+    quantiles : tuple of three floats
+        Lower, central and upper quantile.
+    bins : int
+        Histogram bins per panel.
+    ncols : int
+        Number of panels per row.
+    figsize : tuple, optional
+        Default chosen from the number of panels.
+    weights : array like, optional
+        Sample weights.  Defaults to ``fit.samples_equal_weight`` weights if the
+        samples are not already equally weighted.
+    color : str
+        Face colour of the histograms.
+    show_bounds : bool
+        Draw the prior bounds (only possible when a fit object is given).
+    show_stats : bool
+        Annotate median and percentiles in each panel.
+    log_scale : sequence of str, optional
+        Subset of the drawn parameters to put on a logarithmic x axis.
+    view_quantiles : tuple of two floats
+        The x range of each panel covers this percentile range of the posterior,
+        plus ``pad`` of that span.  It is taken from the *samples*, never from the
+        prior: a prior ten times wider than the posterior would otherwise squeeze
+        the histogram into a spike, which is exactly the panel's job to avoid.
+    pad : float
+        Fraction of the posterior span added on each side.
+    prior_text : bool
+        When a prior bound falls outside the view (the usual case), write the prior
+        range in the panel corner instead of stretching the axis to reach it.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    axes : ndarray of matplotlib.axes.Axes
+    """
+    samples, names, latex, bounds, notes = _posterior_inputs(fit_or_samples)
+
+    if params is None:
+        index = list(range(samples.shape[1]))
+    else:
+        index = []
+        for item in params:
+            if isinstance(item, (int, np.integer)):
+                index.append(int(item))
+            elif item in names:
+                index.append(names.index(item))
+            else:
+                matches = [i for i, n in enumerate(names)
+                           if n.endswith('.' + item) or n.rsplit('.', 1)[-1] == item]
+                if len(matches) != 1:
+                    raise ValueError(f"parameter {item!r} is not in the fit "
+                                     f"(candidates: {[n for n in names][:5]} ...)")
+                index.append(matches[0])
+    if labels is None:
+        labels = [latex[i] if latex is not None else names[i] for i in index]
+    elif len(labels) != len(index):
+        raise ValueError("labels and params must have the same length")
+
+    n_panels = len(index)
+    ncols = max(1, min(ncols, n_panels))
+    nrows = int(np.ceil(n_panels / ncols))
+    if figsize is None:
+        figsize = (4.1 * ncols, 3.0 * nrows)
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
+    flat_axes = axes.ravel()
+
+    log_scale = set(log_scale or ())
+    lo_q, mid_q, hi_q = quantiles
+    for panel, (column, label) in enumerate(zip(index, labels)):
+        ax = flat_axes[panel]
+        values = samples[:, column]
+        kw = {'weights': weights, 'bins': bins, 'density': density, 'color': color,
+              'alpha': alpha, 'histtype': histtype}
+        if log_scale and names[column] in log_scale:
+            positive = values > 0
+            kw['bins'] = np.logspace(np.log10(values[positive].min()),
+                                     np.log10(values.max()), bins)
+            ax.set_xscale('log')
+        ax.hist(values, **kw)
+
+        lower, centre, upper = np.percentile(values, [100 * lo_q, 100 * mid_q,
+                                                      100 * hi_q])
+        ax.axvspan(lower, upper, color=color, alpha=0.18, lw=0)
+        ax.axvline(centre, color='k', lw=1.4)
+
+        # The view comes from the posterior.  Left to autoscaling, the prior-bound
+        # lines below would drag the axis out to the prior width and turn a
+        # well-measured parameter into a thin spike.
+        on_log = bool(log_scale) and names[column] in log_scale
+        if on_log:
+            positive = values[values > 0]
+            if positive.size:
+                v_lo, v_hi = np.percentile(positive, [100 * view_quantiles[0],
+                                                      100 * view_quantiles[1]])
+                v_lo, v_hi = max(v_lo, positive.min()), max(v_hi, positive.min())
+                ax.set_xlim(v_lo / (1.0 + pad), v_hi * (1.0 + pad))
+        else:
+            v_lo, v_hi = np.percentile(values, [100 * view_quantiles[0],
+                                                100 * view_quantiles[1]])
+            span = v_hi - v_lo
+            if span <= 0:
+                span = max(abs(v_hi), 1.0) * 1e-6
+            v_lo, v_hi = v_lo - pad * span, v_hi + pad * span
+            if values.min() >= 0.0 and v_lo < 0.0 < values.min():
+                v_lo = 0.0
+            ax.set_xlim(v_lo, v_hi)
+
+        outside = []
+        if show_bounds and bounds is not None:
+            for limit in bounds[column]:
+                if limit is None or not np.isfinite(limit):
+                    continue
+                if v_lo <= limit <= v_hi:
+                    ax.axvline(limit, color='gray', ls=':', lw=1.0)
+                else:
+                    outside.append(limit)
+        if prior_text:
+            # a prior centred on another parameter is described by that centre and
+            # its width, not by the box it is truncated to
+            note = notes[column] if notes is not None else None
+            if note:
+                ax.text(0.98, 0.97, note, transform=ax.transAxes, fontsize=8.5,
+                        color='gray', ha='right', va='top')
+            elif bounds is not None and outside:
+                limits = [limit for limit in bounds[column]
+                          if limit is not None and np.isfinite(limit)]
+                # the axis cannot show both the posterior and the prior: say where
+                # the prior is instead of hiding it, and say that it is out of view
+                span_text = ", ".join(f"{limit:.3g}" for limit in limits)
+                ax.text(0.98, 0.97, f"prior [{span_text}]", transform=ax.transAxes,
+                        fontsize=8.5, color='gray', ha='right', va='top')
+
+        ax.set_xlabel(label, fontsize=15)
+        ax.set_yticks([])
+        ax.tick_params(axis='x', labelsize=12)
+        if show_stats:
+            ax.set_title(f"{centre:.4g} $^{{+{upper - centre:.3g}}}_{{-{centre - lower:.3g}}}$",
+                         fontsize=12, pad=4)
+
+    for ax in flat_axes[n_panels:]:
+        ax.axis('off')
+    if title:
+        fig.suptitle(title, fontsize=14, y=1.0)
+    fig.tight_layout()
+    if filename:
+        fig.savefig(filename, dpi=140, bbox_inches='tight')
+    return fig, axes
+
+
+def _prior_bounds_for_columns(fit, flat_names):
+    """Prior limits aligned with the sample columns, in physical units."""
+    raw = getattr(fit, 'param_bounds', None)
+    if not raw:
+        return None
+    if isinstance(raw, dict):
+        pairs = [raw.get(name) for name in flat_names]
+    else:
+        pairs = list(raw)
+        if len(pairs) != len(flat_names):
+            return None
+    # amplitudes are sampled in log10 when the default bounds are used
+    log_names = set(getattr(fit, '_log_scale_params', ()) or ())
+    out = []
+    for name, pair in zip(flat_names, pairs):
+        if pair is None:
+            out.append((None, None))
+            continue
+        lower, upper = pair
+        if name in log_names:
+            lower, upper = 10.0 ** lower, 10.0 ** upper
+        out.append((lower, upper))
+    return out
+
+
+def _posterior_inputs(fit_or_samples):
+    """Normalise the input of :func:`plot_posterior_hist`.
+
+    Returns ``(samples, names, labels, bounds, notes)``; ``notes`` is ``None``
+    unless some parameters carry a prior centred on another parameter, in which
+    case it holds one short description per column (or ``None``) so that the panel
+    can say *what* that prior is instead of only where its box ends.
+    """
+    if hasattr(fit_or_samples, 'samples_equal_weight'):
+        fit = fit_or_samples
+        samples = np.asarray(fit.samples_equal_weight, dtype=float)
+        flat = list(getattr(fit, 'param_names', []))
+        names = list(getattr(fit, 'full_param_names', None) or flat)
+        labels = getattr(fit, 'param_labels', None)
+        bounds = _prior_bounds_for_columns(fit, flat)
+        notes = _centred_prior_notes(fit, flat)
+        return samples, names, labels, bounds, notes
+    samples = np.asarray(fit_or_samples, dtype=float)
+    if samples.ndim != 2:
+        raise ValueError("expected an (nsamples, ndim) array or a fit object")
+    names = [f"param_{i}" for i in range(samples.shape[1])]
+    return samples, names, None, None, None
+
+
+def _centred_prior_notes(fit, flat_names):
+    """One label per column for priors centred on another parameter, else ``None``."""
+    centered = getattr(fit, 'centered_priors', None) or {}
+    if not centered:
+        return None
+    labels = getattr(fit, 'param_labels', None)
+    param_map = getattr(fit, 'param_map', None) or {}
+
+    def spell(name):
+        if labels is not None and name in param_map:
+            return labels[param_map[name]]
+        return name
+
+    notes = []
+    for index in range(len(flat_names)):
+        item = centered.get(index)
+        if item is None:
+            notes.append(None)
+            continue
+        prior = item[0]
+        centre = spell(prior.center) if isinstance(prior.center, str) else f"{prior.center:g}"
+        if prior.scale_from is not None:
+            width = f"{prior.scale:g} x {spell(prior.scale_from)}"
+        elif prior.relative:
+            width = f"{100.0 * prior.scale:g}%"
+        else:
+            width = f"{prior.scale:g}"
+        # a hard limit on the offset is part of the prior's definition, so it
+        # belongs on the axis label with it
+        nsigma = getattr(prior, 'nsigma', None)
+        cap = ''
+        if nsigma is not None and nsigma != 7.0:
+            cap = f", $\\pm${nsigma:g}$\\sigma$"
+        notes.append(f"$N$({centre}, {width}{cap})")
+    return notes
 
 
 def reorder_legend(ax, order):

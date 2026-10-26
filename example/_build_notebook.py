@@ -45,33 +45,45 @@ def script_cells(path: Path = SCRIPT) -> dict[str, str]:
 PLOT_DATA = '''\
 # Before fitting anything: the spectrum, the error the loader built for it, and the
 # line-free level the priors are scaled from.
+from matplotlib.lines import Line2D
+
 step = slice(None, None, 5)                       # 57 000 pixels is more than a screen
 error_percent = 100.0 * error / np.abs(flux)
 
-fig, axes = plt.subplots(2, 1, figsize=(13.0, 6.0), sharex=True,
-                         gridspec_kw={"height_ratios": [3.0, 1.0]},
-                         constrained_layout=True)
-axes[0].plot(wave[step], flux[step], color="0.35", lw=0.6, label="spectrum")
-axes[0].plot(wave[step], error[step], color="#b5364a", lw=0.8, label="1-sigma error")
-axes[0].axhline(np.percentile(flux, 15.0), color="#2b6cb0", lw=0.8, ls="--",
-                label="line-free level (15th percentile)")
+# three rows: a strip for the legend, the spectrum, the error curve
+fig, (legend_ax, ax, axr) = plt.subplots(
+    3, 1, figsize=(13.0, 6.4), sharex=True,
+    gridspec_kw={"height_ratios": [0.10, 2.8, 1.0]}, constrained_layout=True)
+legend_ax.axis("off")
+
+ax.plot(wave[step], flux[step], color="0.35", lw=0.6)
+ax.plot(wave[step], error[step], color="#b5364a", lw=0.8)
+ax.axhline(np.percentile(flux, 15.0), color="#2b6cb0", lw=0.8, ls="--")
 for centre, text in ((LINE_WAVE["Hgamma"], r"H$\\gamma$"),
                      (LINE_WAVE["Hbeta"], r"H$\\beta$"),
                      (LINE_WAVE["HeI_5876"], "He I"),
                      (LINE_WAVE["Halpha"], r"H$\\alpha$")):
-    axes[0].axvline(centre, color="#2b6cb0", lw=0.7, ls=":", zorder=0)
-    axes[0].annotate(text, (centre, 0.97), xycoords=("data", "axes fraction"),
-                     xytext=(2, 0), textcoords="offset points", fontsize=11,
-                     color="#2b6cb0", va="top")
-axes[0].set_ylabel("flux density  [1e-14 erg/s/cm$^2$/A]")
-axes[0].set_title("IRAS 07546+3928: 4200-6800 A, fitted in one go")
-# the legend goes above the axes, so it cannot sit on the line labels
-axes[0].legend(fontsize=9, frameon=False, ncol=3, loc="lower center",
-               bbox_to_anchor=(0.5, 1.005))
-axes[1].plot(wave[step], error_percent[step], color="#b5364a", lw=0.8)
-axes[1].set_ylabel("error [%]")
-axes[1].set_xlabel("rest wavelength  [A]")
-axes[1].set_ylim(0, 1.25 * np.percentile(error_percent, 99.0))
+    ax.axvline(centre, color="#2b6cb0", lw=0.7, ls=":", zorder=0)
+    ax.annotate(text, (centre, 0.97), xycoords=("data", "axes fraction"),
+                xytext=(2, 0), textcoords="offset points", fontsize=11,
+                color="#2b6cb0", va="top")
+ax.set_ylabel("flux density  [1e-14 erg/s/cm$^2$/A]")
+# the legend sits in the strip above the panel: a legend anchored outside the axes
+# would be invisible to the layout engine and would land on the title
+legend_ax.legend(
+    handles=[Line2D([], [], color="0.35", lw=0.8),
+             Line2D([], [], color="#b5364a", lw=0.8),
+             Line2D([], [], color="#2b6cb0", lw=0.8, ls="--")],
+    labels=["spectrum", "1-sigma error", "line-free level (15th percentile)"],
+    loc="center", ncol=3, frameon=False, fontsize=9)
+fig.suptitle("IRAS 07546+3928: 4200-6800 A, fitted in one go", fontsize=13)
+
+axr.plot(wave[step], error_percent[step], color="#b5364a", lw=0.8)
+axr.set_ylabel("error [%]")
+axr.set_xlabel("rest wavelength  [A]")
+# not zero-based: the curve only varies by a few percent, and the point of this panel
+# is to show that the error is flat in wavelength
+axr.set_ylim(0.94 * error_percent[step].min(), 1.06 * error_percent[step].max())
 '''
 
 PRIOR_SPREAD = '''\

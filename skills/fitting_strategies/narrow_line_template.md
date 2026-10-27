@@ -156,6 +156,33 @@ no3 = Line_template(template_velc=velc_temp, template_flux=flux_temp,
 # If residuals show broad component under [S II], mask the region or use [O III]
 ```
 
+**Two failure modes that are easy to miss** (both hit the Ark 120 X-shooter
+analysis and each one biased the template width):
+
+1. **The continuum order decides the width, not the line.**  The [S II]
+   doublet sits on the damped red wing of broad Hα, so the local continuum is
+   *curved*, not a straight line.  Fitting a linear continuum over a ~75 Å
+   window absorbs the curvature into a spurious broad component and returns a
+   width that is 30 per cent too small (113 km s^-1 instead of 159 km s^-1 on
+   Ark 120).  Always compare continuum orders 1-4 and watch the width, not the
+   chi2: chi2 keeps improving with order, so use BIC plus the convergence of
+   the width.  A window-by-window scan (several 50-90 Å windows, several
+   orders) that reproduces the same sigma to within a few per cent is the
+   actual validation.
+
+2. **Atmospheric absorption may sit on the doublet.**  In the *observed* frame
+   the O_2 B band is at 6867-6960 Å, which for a source at z ~ 0.03 lands
+   exactly between 6716 and 6731 (rest).  For X-shooter/VLT data check the
+   molecfit transmission *before* choosing [S II] as the template source for a
+   z ~ 0.03 object: at rest 6650 the transmission can be as low as 0.58, and
+   the residual spikes reach 17 per cent of the continuum.  Either mask that
+   stretch (and accept that He I 6678 is then unusable) or use [O III].
+
+**Consistency check worth doing every time:** refit the doublet with
+`Line_template` using the profile you just extracted and compare chi2 with the
+free fit.  A difference of a few units means the frozen profile is a faithful
+description of the data (Ark 120: Delta chi2 = -0.4).
+
 ### ⭐⭐ Option 2: [O III] λλ4959,5007 Doublet (SECONDARY)
 
 **Why this is the SECOND choice:**
@@ -471,12 +498,71 @@ Before proceeding to Stage 2, verify:
 - [ ] Profile is smooth (no wiggles or artifacts)
 - [ ] Verification fit χ² similar to original (|Δχ²| < 15, if performed)
 - [ ] [S II] 6716/6731 ratio reasonable (0.5-1.5, for doublet case)
+- [ ] **Portability measured**: the width was re-measured on at least one Balmer
+      line, locally and independently, and it agrees with the template (see below)
+
+### Is the profile portable?  Measure it, do not assume it
+
+This is the check that decides whether the template is worth its cost, and it is
+easy to skip. A template says *every* narrow line has the shape you measured on
+one of them. That is an assumption about the gas, so test it: fit the same
+narrow-line region in another part of the spectrum, with the narrow line left as a
+free Gaussian, and compare widths.
+
+```python
+# Control experiment: narrow H-alpha with its own width, [N II] tied to it,
+# broad H-alpha and the Fe II template as usual.
+ha = galspec.Line_MultiGauss(n_components=1, amp_c=2.3, dv_c=60, sigma_c=280,
+                             wavec=line_wave_dict['Halpha'], name='Narrow')
+n2 = galspec.Line_MultiGauss_doublet(
+    n_components=1, amp_c0=1.0, amp_c1=1.0 / 2.96, dv_c=0, sigma_c=280,
+    wavec0=line_wave_dict['NII_6583'], wavec1=line_wave_dict['NII_6548'],
+    name='NII')
+n2.dv_c.tied    = galspec.tie_MultiGauss_dv_c('Narrow')
+n2.sigma_c.tied = galspec.tie_MultiGauss_sigma_c('Narrow')
+```
+
+Compare the result with the **equivalent Gaussian sigma** of the template --
+`FWHM / 2.3548`, not the core sigma of any single component, because the template
+is not a Gaussian.
+
+Measured example (IRAS 07546+3928, `develop/dev_template/stage1_o3_template.py`):
+
+| line | width | |
+| --- | --- | --- |
+| [O III] template | FWHM 592 km/s -> sigma_eq **251 km/s** | the anchor |
+| narrow H-alpha, free Gaussian | sigma **298 km/s** | FWHM 702 km/s |
+| ratio | **0.84** | [O III] is 16% narrower |
+
+The consequence is quantitative: with the frozen [O III] shape the whole-spectrum
+evidence comes out **232 nats below** a Gaussian model that spends one free width
+on the same lines (130 656 against 130 890), even though the template has three
+fewer parameters and fits [O III] better. The narrow Balmer lines in that object
+really are broader than [O III] -- a known possibility, which is why the check
+exists.
+
+**What to do with a ratio like that.** Either
+
+* anchor the template on the line whose width the *majority of the flux* shares --
+  for a bright Balmer complex that usually means narrow H-alpha or [N II], with the
+  broad component and the Fe II template fitted simultaneously to keep the narrow
+  core clean; or
+* give the template a single width-scaling parameter and let the data decide, at
+  the cost of one parameter (still fewer than a width per line); or
+* keep the [O III] template, and report that the model under-fits the Balmer narrow
+  lines, with the ratio as the measurement that says so.
+
+Do **not** "fix" it by allowing a width per line while calling it a template fit:
+that discards the assumption that made the model cheap, and the evidence will no
+longer tell you anything.
 
 ### Common Issues and Solutions
 
 | Issue | Symptom | Solution |
 |-------|---------|----------|
 | **Peak not at 0** | peak_vel > 10 km/s | Check that `gen_template()` was used (not manual evaluation) |
+| **Width does not port** | template anchored on [O III] under-fits Balmer lines; evidence below a Gaussian model | Measure the width on a Balmer line (above); re-anchor or scale the profile |
+| **Both doublet peaks at one wavelength** | [S II]/[O I] fit is impossible, evidence collapses | Check `wavec0`/`wavec1` in `Line_template_doublet`; a swapped pair puts both peaks on the same wavelength (cost 541 nats when it happened in `stage2_full_template.py`) |
 | **FWHM too large** | FWHM > 800 km/s | Check if broad line contamination present |
 | **χ² mismatch** | |Δχ²| > 15 | Check template was generated correctly |
 | **No plot created** | Missing visualization | Always use `galspec.plot.plot_fit()` to verify fit quality |

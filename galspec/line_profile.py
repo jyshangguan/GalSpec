@@ -7,9 +7,9 @@ from scipy.ndimage import gaussian_filter1d
 from .constants import ls_km
 from .utils import line_wave_dict
 
-line_funcs = ['Line_template', 'Line_GaussHermite', 'Line_GaussHermite_doublet', 
-              'Line_Gaussian', 'Line_MultiGauss', 'Line_MultiGauss_doublet', 
-              'Line_Absorption', 'Line_Absorption_doublet']
+line_funcs = ['Line_template', 'Line_template_doublet', 'Line_GaussHermite',
+              'Line_GaussHermite_doublet', 'Line_Gaussian', 'Line_MultiGauss',
+              'Line_MultiGauss_doublet', 'Line_Absorption', 'Line_Absorption_doublet']
 # wind components carry parameters w0 .. w{MAX_MULTIGAUSS_WINGS-1}
 MAX_MULTIGAUSS_WINGS = 5
 
@@ -160,6 +160,88 @@ class Line_template(Fittable1DModel):
         fltr = (v >= self._vmin) & (v <= self._vmax)
         f[fltr] = amplitude * self._model(v[fltr])
         return f
+
+
+class Line_template_doublet(Fittable1DModel):
+    '''
+    Emission doublet model using an input template.
+
+    The doublet counterpart of :class:`Line_template`, and of
+    :class:`Line_MultiGauss` -> :class:`Line_MultiGauss_doublet`: ``amplitude``
+    splits into ``amp_c0`` / ``amp_c1``, ``wavec`` into ``wavec0`` / ``wavec1``,
+    and the velocity shift is the ``dv_c`` shared by both peaks.  There is no
+    width parameter: the shape is the template.
+
+    Fitting a doublet with two :class:`Line_template` instances needs two
+    bounds-identical ``dv`` parameters that must then be tied together; here the
+    shared shift is structural, which is the reason
+    ``Line_MultiGauss_doublet`` exists next to ``Line_MultiGauss``.
+
+    Parameters
+    ----------
+    template_velc : 1d array
+        Line profile velocity, units: km/s.
+    template_flux : 1d array
+        Line profile flux, arbitrary units.
+    x : array like
+        Wavelength, units: arbitrary.
+    amp_c0 : float
+        The amplitude of the first line.
+    amp_c1 : float
+        The amplitude of the second line.
+    dv_c : float
+        The velocity of the doublet centre offset from ``wavec0``/``wavec1``,
+        units: km/s.  Shared by both peaks.
+    wavec0 : float
+        The central wavelength of the first line, units: same as x.
+    wavec1 : float
+        The central wavelength of the second line, units: same as x.
+
+    Examples
+    --------
+    An [O III] doublet with the atomic ratio imposed::
+
+        o3 = Line_template_doublet(template_velc=velc, template_flux=flux,
+                                   amp_c0=1.9, amp_c1=1.9 / 2.98,
+                                   wavec0=line_wave_dict['OIII_5007'],
+                                   wavec1=line_wave_dict['OIII_4959'], name='OIII')
+        o3.amp_c1.tied = tie_MultiGauss_doublet_ratio('OIII', 2.98)
+    '''
+    amp_c0 = Parameter(default=1, bounds=(0, None))
+    amp_c1 = Parameter(default=1, bounds=(0, None))
+    dv_c = Parameter(default=0, bounds=(-2000, 2000))
+
+    wavec0 = Parameter(default=5000, fixed=True)
+    wavec1 = Parameter(default=5000, fixed=True)
+
+    def __init__(self, template_velc, template_flux, amp_c0=amp_c0, amp_c1=amp_c1,
+                 dv_c=dv_c, wavec0=wavec0, wavec1=wavec1, **kwargs):
+        super().__init__(amp_c0=amp_c0, amp_c1=amp_c1, dv_c=dv_c,
+                         wavec0=wavec0, wavec1=wavec1, **kwargs)
+        template_velc = np.asarray(template_velc, dtype=float)
+        template_flux = np.asarray(template_flux, dtype=float)
+        order = np.argsort(template_velc)
+        self._vmin, self._vmax = np.min(template_velc), np.max(template_velc)
+        self._template_velc = template_velc[order]
+        self._template_flux = template_flux[order]
+        self._model = interp1d(self._template_velc, self._template_flux)
+
+    def evaluate(self, x, amp_c0, amp_c1, dv_c, wavec0, wavec1):
+        '''
+        Template doublet model function.
+        '''
+        v0 = (x - wavec0) / wavec0 * ls_km - dv_c  # convert to velocity (km/s)
+        v1 = (x - wavec1) / wavec1 * ls_km - dv_c
+
+        flux = np.zeros_like(x)
+
+        fltr0 = (v0 >= self._vmin) & (v0 <= self._vmax)
+        flux[fltr0] = amp_c0 * self._model(v0[fltr0])
+
+        fltr1 = (v1 >= self._vmin) & (v1 <= self._vmax)
+        flux[fltr1] += amp_c1 * self._model(v1[fltr1])
+
+        return flux
 
 
 class test(Fittable1DModel):

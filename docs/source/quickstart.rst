@@ -293,28 +293,27 @@ The [S II] doublet fit provides the narrow line template. The profile shows both
        amplitude=17.0, dv=86.0, wavec=wavec_ha, name='nHalpha'
    )
    
-   nn2 = sagan.Line_template(
-       template_velc=velc_temp, template_flux=flux_temp, amplitude=16.5, dv=0, 
-       wavec=wavec_nii_6583, name='NII_6583'
-   ) + sagan.Line_template(
-       template_velc=velc_temp, template_flux=flux_temp, amplitude=5.6, dv=0, 
-       wavec=wavec_nii_6548, name='NII_6548'
+   # A doublet of templated lines is one model: one amplitude, one shift, and the
+   # atomic ratio for the second peak.  Line_template_doublet is exactly the two
+   # Line_template models added together, with the ratio tie already in place.
+   nn2 = sagan.Line_template_doublet(
+       template_velc=velc_temp, template_flux=flux_temp,
+       amp_c0=16.5, amp_c1=16.5 / 2.96, dv_c=0,
+       wavec0=wavec_nii_6583, wavec1=wavec_nii_6548, name='NII'
    )
-   
-   ns2 = sagan.Line_template(
-       template_velc=velc_temp, template_flux=flux_temp, amplitude=5.2, dv=0, 
-       wavec=wavec_sii_6716, name='SII_6716'
-   ) + sagan.Line_template(
-       template_velc=velc_temp, template_flux=flux_temp, amplitude=5.6, dv=0, 
-       wavec=wavec_sii_6731, name='SII_6731'
+
+   # [S II] keeps both peaks free: 6716/6731 is a density diagnostic, not a constant.
+   ns2 = sagan.Line_template_doublet(
+       template_velc=velc_temp, template_flux=flux_temp,
+       amp_c0=5.2, amp_c1=5.6, dv_c=0,
+       wavec0=wavec_sii_6716, wavec1=wavec_sii_6731, name='SII'
    )
 
    m_init = bha + nha + nn2 + ns2
 
-   # Tie parameters
-   for ln in ['NII_6583', 'NII_6548', 'SII_6716', 'SII_6731']:
-       m_init[ln].dv.tied = sagan.tie_template_dv('nHalpha')
-   m_init['NII_6548'].amplitude.tied = sagan.tie_template_amplitude('NII_6583', ratio=2.96)
+   # Tie parameters: every narrow line sits at the velocity of narrow H-alpha
+   for ln in ['NII', 'SII']:
+       m_init[ln].dv_c.tied = sagan.tie_template_dv('nHalpha')
 
    fitter = fitting.LevMarLSQFitter()
    m_fit_ha = fitter(m_init, wave_ha, flux_ha, maxiter=10000)
@@ -357,12 +356,10 @@ Now let's fit the full Hβ region and combine with Hα:
        wavec=wavec_hb, name='nHbeta'
    )
    
-   no3 = sagan.Line_template(
-       template_velc=velc_temp, template_flux=flux_temp, amplitude=16.5, dv=0, 
-       wavec=wavec_oiii_4959, name='OIII_4959'
-   ) + sagan.Line_template(
-       template_velc=velc_temp, template_flux=flux_temp, amplitude=5.6, dv=0, 
-       wavec=wavec_oiii_5007, name='OIII_5007'
+   no3 = sagan.Line_template_doublet(
+       template_velc=velc_temp, template_flux=flux_temp,
+       amp_c0=16.5, amp_c1=16.5 / 2.98, dv_c=0,
+       wavec0=wavec_oiii_5007, wavec1=wavec_oiii_4959, name='OIII'
    )
    
    no3_w = sagan.Line_MultiGauss_doublet(
@@ -372,11 +369,12 @@ Now let's fit the full Hβ region and combine with Hα:
 
    m_init = bhb + nhb + no3 + no3_w + m_fit_ha
 
-   # Tie parameters
-   for ln in ['nHbeta', 'OIII_4959', 'OIII_5007']:
-       m_init[ln].dv.tied = sagan.tie_template_dv('nHalpha')
-   m_init['OIII_4959'].amplitude.tied = sagan.tie_template_amplitude('OIII_5007', ratio=2.98)
-   m_init['[OIII]_w'].dv_c.tied = sagan.tie_MultiGauss_doublet_ratio('[OIII]_w', ratio=2.98)
+   # Tie parameters: the narrow lines move with narrow H-alpha, the [O III] wing's
+   # second peak keeps its atomic ratio, and broad H-beta moves with broad H-alpha
+   m_init['nHbeta'].dv.tied = sagan.tie_template_dv('nHalpha')
+   m_init['OIII'].dv_c.tied = sagan.tie_template_dv('nHalpha')
+   m_init['OIII'].amp_c1.tied = sagan.tie_MultiGauss_doublet_ratio('OIII', ratio=2.98)
+   m_init['[OIII]_w'].amp_c1.tied = sagan.tie_MultiGauss_doublet_ratio('[OIII]_w', ratio=2.98)
    m_init['bHbeta'].dv_c.tied = sagan.tie_MultiGauss_dv_c('bHalpha')
 
    fitter = fitting.LevMarLSQFitter()
@@ -398,18 +396,23 @@ Now let's calculate line fluxes and physical parameters:
 
    from astropy.cosmology import Planck18 as cosmo
 
-   # Calculate line fluxes by integrating
-   def integrate_line_flux(model, wave, scale=1e-17):
-       flux = model(wave) * scale
-       return np.trapz(flux, wave)
+   # Calculate line fluxes by integrating one component over its own window
+   def integrate_line_flux(component, wave, scale=1e-17):
+       """Integral of one component, in erg/s/cm^2.
 
-   # Get fluxes (in erg/s/cm^2)
-   flux_hb = integrate_line_flux(m_fit_hb, 'bHbeta', wave_hb)
-   flux_ha = integrate_line_flux(m_fit_hb, 'bHalpha', wave_ha)
-   flux_o3 = integrate_line_flux(m_fit_hb, 'OIII_5007', wave_ha)
-   flux_n2 = integrate_line_flux(m_fit_hb, 'NII_6583', wave_ha)
-   flux_s2 = integrate_line_flux(m_fit_hb, 'SII_6716', wave_ha) + \
-             integrate_line_flux(m_fit_hb, 'SII_6731', wave_ha)
+       A template line is normalised to unit *peak*, so its integral is the peak
+       times the profile's own area -- not the sigma sqrt(2 pi) of a Gaussian.
+       Integrating the component numerically gets that right for either.
+       """
+       return np.trapezoid(component(np.asarray(wave)) * scale, wave)
+
+   # Get fluxes (in erg/s/cm^2): H-alpha lines in the H-alpha window, the rest in
+   # the H-beta + [O III] window they were fitted on
+   flux_hb = integrate_line_flux(m_fit_hb['bHbeta'], wave_hb)
+   flux_ha = integrate_line_flux(m_fit_hb['bHalpha'], wave_ha)
+   flux_o3 = integrate_line_flux(m_fit_hb['OIII'], wave_hb)
+   flux_n2 = integrate_line_flux(m_fit_hb['NII'], wave_hb)
+   flux_s2 = integrate_line_flux(m_fit_hb['SII'], wave_hb)
 
    print(f"Hβ flux: {flux_hb:.2e} erg/s/cm^2")
    print(f"Hα flux: {flux_ha:.2e} erg/s/cm^2")

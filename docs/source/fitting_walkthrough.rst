@@ -9,7 +9,13 @@ copies of the files in ``example/output/``). The same story is in
 
 IRAS 07546+3928 at z = 0.0953: 4200-6800 A in the rest frame, 57 000 pixels at 0.046 A
 sampling, H-gamma through H-alpha with the strong forbidden lines, fitted in one go
-with 30 free parameters. Full settings on one GPU: 400 live points, ``dlogz = 0.01``.
+with 27 free parameters. Full settings on one GPU: 400 live points, ``dlogz = 0.01``.
+
+Twelve of those 27 are narrow-line parameters -- eleven peaks and one shared shift; the
+narrow *profile* is not fitted at all. It is one measured object, ``example/data/iras07546_narrow_template.txt``,
+extracted from the [O III] doublet by ``develop/dev_template/stage1_o3_template.py``
+and shared by every narrow line, which is what makes the parameter count 27 instead
+of 30. Step 2 below reads it from that file and says why.
 
 .. contents:: On this page
    :local:
@@ -23,7 +29,7 @@ the error array is re-derived from the scatter of the spectrum itself rather tha
 trusted from the header. That last step matters: a wrong error scale makes every
 posterior too narrow or too wide by the same factor.
 
-.. literalinclude:: ../../example/fit_iras07546_jax.py
+.. literalinclude:: ../../example/iras07546_model.py
    :language: python
    :start-after: # %% load
    :end-before: # %% helpers
@@ -32,9 +38,10 @@ posterior too narrow or too wide by the same factor.
 ----------------------------------------------------
 
 The model is a compound astropy model: a power-law continuum, the iron template, and
-one submodel per line. The step itself is two calls; the functions behind them are
-``build_model`` (133 lines of component construction) and ``set_priors`` (76 lines of
-prior recipe, written out on :doc:`priors`).
+one submodel per line. It is built by ``build_model`` and ``set_priors``, which live in
+``example/iras07546_model.py`` so that this example, ``fit_iras07546_jax_tied.py`` and
+``fit_iras07546_jax_toggle.py`` all fit the same thing instead of three copies of it.
+The step in the script is two calls, after the profile is read and reported:
 
 .. literalinclude:: ../../example/fit_iras07546_jax.py
    :language: python
@@ -42,10 +49,19 @@ prior recipe, written out on :doc:`priors`).
    :end-before: # %% step-3-fitter
    :dedent: 4
 
+and the construction itself is the next two blocks, from that module. Seventeen
+components, in the order they are summed:
+
+.. literalinclude:: ../../example/iras07546_model.py
+   :language: python
+   :start-after: # %% model
+   :end-before: # %% priors
+
 ``set_priors`` attaches one prior per free parameter, in four groups: continuum and
-iron, every line peak (log-uniform), narrow kinematics (one shift and one width shared
-by every narrow line, measured from [O III]), and broad kinematics (one width box of
-300-8000 km/s for the core *and* the wind, with each Balmer line keeping its own
+iron, every line peak (log-uniform), narrow kinematics (one shift shared by every
+narrow line, measured from [O III] -- there is no narrow width to give a prior to,
+because the profile in the template carries it), and broad kinematics (one width box
+of 300-8000 km/s for the core *and* the wind, with each Balmer line keeping its own
 amplitude). The recipe is written out on :doc:`priors`, which also explains what each
 shape does and how to make one parameter's prior depend on another's.
 
@@ -72,8 +88,13 @@ than ``dlogz`` of the evidence may remain unseen.
 
 The run prints its own summary::
 
-          log Z = 130889.60 +- 0.62   (66956 iterations, 10.2 min)
-       chi2/dof = 0.307, residual rms 0.55 sigma, worst pixel 3.9 sigma
+      template: iras07546_narrow_template.txt, 8001 points, -4000 to +4000 km/s, FWHM 591 km/s
+
+      model: 17 components, no LSF convolution, 27 free parameters
+             narrow lines are the template: 10 of the 17 components, one shift, no widths
+
+          log Z = 130656.22 +- 0.58   (59928 iterations, 7.5 min)
+       chi2/dof = 0.316, residual rms 0.56 sigma, worst pixel 3.9 sigma
 
 4. Present the results
 ----------------------
@@ -91,37 +112,39 @@ they are computed here rather than sampled.
 .. code-block:: text
 
    parameter                  median         -         +  unit
-   ----------------------------------------------------------------------------
-   Continuum.amplitude       0.54103    0.0003   0.00029  1e-14 erg/s/cm2/A
-   Continuum.alpha            1.0778     0.005    0.0051
-   FeII.amplitude            0.25047    0.0015    0.0015  1e-14 erg/s/cm2/A
-   n_halpha.amplitude         2.3372     0.019     0.018  1e-14 erg/s/cm2/A
-   b_halpha.amp_c              1.523     0.011     0.012  1e-14 erg/s/cm2/A
-   b_halpha.dv_c              187.24       2.4       2.4  km/s
-   b_halpha.sigma_c           1301.5       6.6       6.7  km/s
-   b_halpha.amp_w0           0.10704    0.0018    0.0017  ratio to core
-   b_halpha.dv_w0            -519.32        28        26  km/s
-   b_halpha.sigma_w0          5143.4        67        74  km/s
-   n_hbeta.amplitude         0.58991    0.0082    0.0083  1e-14 erg/s/cm2/A
-   b_hbeta.amp_c             0.62641    0.0039    0.0038  1e-14 erg/s/cm2/A
-   b_hbeta.amp_w0            0.15966    0.0034    0.0034  ratio to core
-   n_hgamma.amplitude        0.17306    0.0066    0.0065  1e-14 erg/s/cm2/A
-   b_hgamma.amp_c            0.29017    0.0036    0.0037  1e-14 erg/s/cm2/A
-   b_hgamma.amp_w0          0.099886    0.0062    0.0066  ratio to core
-   OIII.amp_c0                1.9275    0.0095    0.0096  1e-14 erg/s/cm2/A
-   OIII.dv_c                  70.717      0.95      0.96  km/s
-   OIII.sigma_c               298.88       1.2       1.2  km/s
-   OIII.amp_w0              0.036375    0.0017    0.0017  ratio to core
-   OIII.sigma_w0              1343.9        47        47  km/s
-   NII.amp_c0                0.75139     0.014     0.014  1e-14 erg/s/cm2/A
-   SII.amp_c0               0.022533    0.0019    0.0019  1e-14 erg/s/cm2/A
-   SII.amp_c1               0.053145    0.0019    0.0019  1e-14 erg/s/cm2/A
-   OI.amp_c0                0.062106    0.0021    0.0022  1e-14 erg/s/cm2/A
-   HeII.amplitude           0.033405    0.0041    0.0041  1e-14 erg/s/cm2/A
-   b_heii.amp_c             0.086096    0.0023    0.0023  1e-14 erg/s/cm2/A
-   OIII4363.amplitude       0.045406    0.0045    0.0047  1e-14 erg/s/cm2/A
-   n_hei.amplitude           0.04289    0.0024    0.0026  1e-14 erg/s/cm2/A
-   b_hei.amp_c              0.040666    0.0011    0.0012  1e-14 erg/s/cm2/A
+   Continuum.amplitude        0.5426   0.00026   0.00026  1e-14 erg/s/cm2/A
+   Continuum.alpha            1.0742    0.0042    0.0043
+   FeII.amplitude             0.2472    0.0014    0.0015  1e-14 erg/s/cm2/A
+   n_halpha.amplitude         2.4008     0.022     0.023  1e-14 erg/s/cm2/A
+   b_halpha.amp_c             1.5569     0.013     0.013  1e-14 erg/s/cm2/A
+   b_halpha.dv_c              219.11       2.5       2.5  km/s
+   b_halpha.sigma_c           1181.4       5.4       5.4  km/s
+   b_halpha.amp_w0           0.13518    0.0018    0.0018  ratio to core
+   b_halpha.dv_w0            -436.07        17        18  km/s
+   b_halpha.sigma_w0          4287.6        39        41  km/s
+   n_hbeta.amplitude         0.60638      0.01    0.0099  1e-14 erg/s/cm2/A
+   b_hbeta.amp_c             0.62977    0.0043    0.0045  1e-14 erg/s/cm2/A
+   b_hbeta.amp_w0            0.19426    0.0038    0.0038  ratio to core
+   n_hgamma.amplitude        0.16584    0.0074    0.0075  1e-14 erg/s/cm2/A
+   b_hgamma.amp_c            0.29752    0.0043    0.0041  1e-14 erg/s/cm2/A
+   b_hgamma.amp_w0           0.12879    0.0066    0.0068  ratio to core
+   OIII.amp_c0                2.2621    0.0076    0.0078  1e-14 erg/s/cm2/A
+   OIII.dv_c                  96.928      0.99         1  km/s
+   NII.amp_c0                0.64021     0.015     0.016  1e-14 erg/s/cm2/A
+   SII.amp_c0               0.033557    0.0022    0.0021  1e-14 erg/s/cm2/A
+   SII.amp_c1               0.063444    0.0021    0.0021  1e-14 erg/s/cm2/A
+   OI.amp_c0                0.087252     0.002    0.0019  1e-14 erg/s/cm2/A
+   HeII.amplitude           0.032438    0.0048    0.0047  1e-14 erg/s/cm2/A
+   b_heii.amp_c             0.098174    0.0022    0.0023  1e-14 erg/s/cm2/A
+   OIII4363.amplitude       0.045989    0.0051    0.0048  1e-14 erg/s/cm2/A
+   n_hei.amplitude          0.044449    0.0029    0.0029  1e-14 erg/s/cm2/A
+   b_hei.amp_c              0.040377    0.0013    0.0013  1e-14 erg/s/cm2/A
+
+The table is three rows shorter than the Gaussian model's and has no ``OIII.sigma_c``
+row: the narrow lines contribute one peak each (``amp_c0``, or both peaks for [S II],
+whose ratio is a density diagnostic) and one shared shift. The [S II] ratio that comes
+out is 0.0634/0.0336 = 1.89, which is high for a narrow-line region and is the number
+to check against an electron-density calculation.
 
 The figure: data, model, and residuals in units of the error, with the 1-sigma guides
 drawn so that a good fit is visibly flat and inside them.
@@ -206,12 +229,57 @@ evidence, and the GPU-side arrays needed to resume. Reloading gives a
 What is in the file -- and the one thing that cannot be stored -- is on
 :doc:`jax_gpu`; the priors that went into it are on :doc:`priors`.
 
+6. What the numbers say
+------------------------
+
+The fit prints its own comparison, which is the point of writing the model this way:
+
+.. code-block:: text
+
+     model                       free         ln Z  chi2/dof
+     --------------------------------------------------------
+     published                     30    130889.60     0.307
+    *template                      27    130656.22     0.316
+                                        Delta = -233.38
+
+The published model is the same spectrum, the same continuum, the same broad lines and
+the same priors, with a Gaussian per narrow line and one width shared between them. The
+only difference is the narrow-line profile, so the 233 nats are the price of that
+assumption -- not of the code: the templated model fits [O III] itself better, and a
+second, independently written implementation of the same model agrees to a hundredth of
+a nat. (Re-running this one lands 0.1 nats away, inside its 0.58 error bar -- see
+:doc:`priors` on why the fixed key does not buy bitwise identity.)
+
+The reason is measurable rather than mysterious. Stage 1 of the template extraction
+also fits narrow H-alpha with its own free Gaussian, and gets ``sigma = 298 km/s``
+against an equivalent ``sigma`` of 251 km/s for the [O III] profile -- a ratio of 0.84.
+The narrow Balmer lines in this object are broader than [O III], so a profile measured
+on [O III] and stamped under H-alpha, the strongest narrow line in the spectrum,
+under-fits it: the model overshoots at the line centre and undershoots in the
+shoulders, which is exactly what the H-alpha zoom above shows. A Gaussian model with one
+free common width can split the difference; a frozen profile cannot.
+
+That is a result about IRAS 07546+3928 and a lesson about the method, and it is worth
+knowing before reaching for a template: **measure the profile on the line you trust, then
+check that the other lines share it** -- `develop/dev_template/stage1_o3_template.py`
+prints that ratio next to the template it writes, so the check is one number and not a
+literature search. For the forbidden lines alone, which do share their kinematics, the
+extraction is sound and the model is the right one; for a Balmer-dominated
+narrow-line region, anchor the template on a Balmer line instead.
+
+The [S II] ratio that comes out of the fit is 0.0634/0.0336 = 1.89, measured rather than
+tied (it is a density diagnostic), and the [N II] and [O I] ratios are at their atomic
+values because nothing physical varies them.
+
 Where to go next
 ----------------
 
+* ``example/iras07546_model.py``: the model itself -- the seventeen components, the
+  ties and the priors, shared by all three scripts so that each one runs on its own.
 * ``example/fit_iras07546_jax_tied.py``: the same fit with the Balmer kinematics
   released and centred on H-alpha, which turns "the lines share one profile" into a
   measurement (:doc:`priors` has the construction and the result).
 * ``example/fit_iras07546_jax_toggle.py``: how many broad components the profile needs,
-  decided by the sampler rather than assumed.
+  decided by the sampler rather than assumed -- four on this object, with every sample
+  agreeing (:doc:`priors` has the numbers).
 * :doc:`jax_gpu`: the JAX backend, the batching, and the CPU-versus-GPU comparison.

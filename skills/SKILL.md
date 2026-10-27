@@ -21,7 +21,8 @@ This skill helps with:
 - fitting AGN broad and narrow lines
 - fitting absorption troughs
 - using LSQ, MCMC, or nested sampling
-- tying parameters between components
+- tying parameters, including soft ties via `priors.Normal(mean="other.param")`
+- deciding how many broad/narrow components the data need
 - applying instrumental LSF convolution
 - measuring physical parameters from fitted spectra
 
@@ -80,6 +81,30 @@ relevant documentation.
 - `absorption trough`
 - `broad absorption line`
 
+### Read `function_reference/gpu_jax_fitting.md` first if the request mentions:
+- `JAX`, `jax`, `GPU`, `CUDA`, `nvidia-smi`
+- `jax_models`, `jxm`, `JNesty`, `nested sampling`, `evidence`, `log Z`
+- "make it fast", "large number of components", "many parameters"
+- `batch_size`, `queue_size`, `jit`
+- "how many components", "is a fourth component needed", `SpikeAndSlab`,
+  `toggle prior`, component count, gating
+- a *soft* tie: `priors.Normal(mean="other.param", relative=..., nsigma=...)`,
+  "centre the prior on X", Bayes factors, the pull of one component against another
+- "does this line need a wing/second component", "the forbidden lines have wings",
+  a gated extra component on a single line
+
+The astropy twins (`galspec.*`) and the JAX twins (`galspec.jax_models.*`) share
+class names and keyword arguments, so a model can be moved between backends
+with no rewriting; only the sampler and the array handling differ.
+
+### Always worth a minute, whatever the request
+Before adding any component, bin the residual of the current model in velocity
+around the line and look at its shape.  For a doublet, scale one line by its
+theoretical ratio and overlay the two: a feature that appears in both lines in
+that ratio is real; one that appears in a single line is a local blend, a
+continuum error, or noise.  Forty lines of code, no sampler, and it decides
+whether the extra component is justified at all.
+
 ### Read `function_reference/line_profile_models.md` first if the request is about:
 - a simple single emission line
 - choosing a line-profile class
@@ -87,7 +112,7 @@ relevant documentation.
 - basic component behavior
 
 ### Read `function_reference/parameter_tying.md` first if the request is about:
-- tying parameters
+- hard ties (`tied=`, `tie_*` helpers) between parameters of one or several models
 - shared velocities or widths
 - doublet ratios
 - linking absorption parameters across lines
@@ -108,7 +133,10 @@ When this skill is used:
    - instrumental resolution or LSF information
 4. Choose model components appropriate for the task.
 5. Start with an LSQ fit to obtain reasonable initial parameters.
-6. Refine with MCMC or dynesty if uncertainty estimation is needed.
+6. Refine with MCMC or dynesty if uncertainty estimation is needed.  If a GPU
+   is available, use the JAX twins plus `JNesty_Fit` instead -- the model is
+   identical and the sampler is 10-100x faster
+   (`function_reference/gpu_jax_fitting.md`).
 7. Clearly report:
    - model components
    - parameter ties
@@ -120,10 +148,26 @@ When this skill is used:
 
 - Use `Line_MultiGauss_doublet` for forbidden-line doublets such as
   `[S II]`, `[N II]`, and `[O III]`.
-- Use `Line_template` for narrow-line template fitting.
+- Use `Line_template` for narrow-line template fitting, and
+  `Line_template_doublet` for a doublet of templated lines (it is
+  `Line_MultiGauss_doublet` with the Gaussian replaced by the measured profile:
+  `amp_c0`/`amp_c1`/`dv_c`/`wavec0`/`wavec1`, and no width).
+- Before freezing a narrow-line template, **check that the other narrow lines
+  actually share its width**. Measure the width on at least one Balmer line
+  locally and compare; on IRAS 07546+3928 the [O III]-anchored profile is 16%
+  narrower than narrow Hα, and a frozen template then under-fits Hα/Hβ/[N II] and
+  loses evidence against a Gaussian model with one free common width.
 - Use `Line_MultiGauss` for broad permitted lines such as Hα and Hβ.
 - Use `Line_Absorption` for absorption components.
 - Apply LSF convolution when required by the instrument or data product.
+- Set the error budget from the data, not from the pipeline: measure the
+  line-free scatter, scale the formal errors, add a percentage floor, and check
+  whether the residual scatter is *correlated* (telluric bands, sky
+  subtraction) -- correlated residuals need a wavelength-dependent floor, not a
+  larger constant one.
+- If the residuals are dominated by residual telluric absorption, fix the
+  errors, do not add physics: atmospheric features sit at fixed **observed**
+  wavelengths, so convert before blaming the object.
 - Prefer LSQ initialization before MCMC unless the user explicitly asks
   otherwise.
 - Tie parameters where physically justified to reduce degeneracy.

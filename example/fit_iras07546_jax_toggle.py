@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """How many Gaussian components do the broad Balmer lines need?
 
-The published fit gives each broad Balmer line a core and one wind: two components,
-a fixed number.  This script lets the data decide instead, by putting a prior on each
+``fit_iras07546_jax.py`` gives each broad Balmer line a core and one wind: two
+components, a fixed number.  This script lets the data decide instead, by putting a prior on each
 wing amplitude that has a finite chance of being *exactly* zero -- a spike and slab.
 That fraction of the prior volume switches the wing off completely, so a single run
 with a fixed number of parameters explores "how many components does this profile
@@ -26,8 +26,14 @@ Why the evidence is not comparable
 ----------------------------------
 The model is a mixture of sub-models, so its normalisation is not the same integral as
 a plain prior over the same parameters.  The ln Z printed here says how much better one
-*number of components* fits, not how it compares with the published fit.  Quote the
-component count from here, and the evidence from a plain-prior refit at that count.
+*number of components* fits, not how it compares with the hard-tie fit of
+``fit_iras07546_jax.py``.  Quote the component count from here, and the evidence from a
+plain-prior refit at that count.
+
+The narrow lines are the same measured template as in the other two examples -- one
+measured profile, one shift, no widths (``example/iras07546_model.py``) -- so what is
+being decided here is the shape of the *broad* lines only, and the model builds on
+exactly the fit that ``fit_iras07546_jax.py`` performs.
 
 Running it
 ----------
@@ -57,7 +63,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import fit_iras07546_jax as plain
+import iras07546_model as shared          # the model all three examples fit
 
 import galspec
 from galspec import priors
@@ -65,7 +71,7 @@ from galspec.jnesty_fit import JNesty_Fit, jax_devices_summary
 from galspec.jnesty_fit_io import load_jnesty_fit_from_fits, save_jnesty_fit_to_fits
 
 # %% settings
-OUTPUT_DIR = plain.OUTPUT_DIR
+OUTPUT_DIR = shared.OUTPUT_DIR
 PREFIX = "iras07546_jax_toggle_"
 
 #: Wings after the core, so four components per broad Balmer line.
@@ -76,12 +82,15 @@ P_OFF = (0.2, 0.5, 0.7)
 MIN_WING_FRACTION = 0.03
 #: The lines that get wings (the He lines keep one broad Gaussian).
 WINGED_LINES = ("halpha", "hbeta", "hgamma")
-#: The published fit, for the closing comparison: its own file when it is there, and
-#: the numbers `example/output/` gives when it is not.
+#: The hard-tie fit of ``fit_iras07546_jax.py``, for the closing comparison: its own
+#: file when it is there, and the numbers that file prints when it is not.
+#: The hard-tie fit the closing comparison quotes: its own FITS when that is on disk,
+#: and the numbers that travel with the shared model when it is not -- so this script
+#: runs first, on its own.
 PUBLISHED_FIT = OUTPUT_DIR / "iras07546_jax_fit.fits"
-PUBLISHED = {"free_parameters": 30, "log_evidence": 130889.60, "chi2_dof": 0.307}
+PUBLISHED = shared.REFERENCE["template"]
 
-NLIVE = 1000                   # 40 free parameters: 400 was measured to be too few
+NLIVE = 1000                   # 37 free parameters: 400 was measured to be too few
 DLOGZ = 0.01
 MAX_ITERATIONS = 400_000
 DEVICE = "auto"
@@ -199,7 +208,7 @@ def plot_components(fit, wave, flux, model_best, error, outfile):
     colours = ["#2b6cb0", "#2f855a", "#b7791f", "#805ad5", "#c53030"]
     fig, (ax, axr) = plt.subplots(2, 1, figsize=(9.2, 4.8), sharex=True,
                                   gridspec_kw={"height_ratios": [3, 1], "hspace": 0.06})
-    wavec = plain.LINE_WAVE["Halpha"]
+    wavec = shared.LINE_WAVE["Halpha"]
     x = np.linspace(wavec - 400.0, wavec + 400.0, 1500)
     sel = (wave > x[0]) & (wave < x[-1])
     ax.plot(wave[sel], flux[sel], color="0.15", lw=0.8, label="data")
@@ -236,7 +245,7 @@ def base_scale():
     Amplitudes are in 1e-14 erg/s/cm2/A at 6563 A, so the result is in
     1e-14 erg/s/cm2 x (km/s) / (km/s); the tables divide by 1e3 to quote 1e-17.
     """
-    return plain.LINE_WAVE["Halpha"] / 299792.458
+    return shared.LINE_WAVE["Halpha"] / 299792.458
 
 
 # %% toggle-priors
@@ -258,7 +267,7 @@ def toggle_priors(model, flux):
     ``develop/dev_jax/prior_api_report.py`` compares its prior transform with the
     pre-prior-API spelling.
     """
-    plain.set_priors(model, flux)          # core and wing already share 300-8000 km/s
+    shared.set_priors(model, flux)          # core and wing already share 300-8000 km/s
     for line in WINGED_LINES:
         for i in range(N_WINGS):
             model.set_prior(f"b_{line}.amp_w{i}",
@@ -272,23 +281,23 @@ def main() -> int:
     nl, dlogz = (200, 0.2) if QUICK else (NLIVE, DLOGZ)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     print("=" * 78)
-    print("IRAS 07546+3928: how many Gaussian components do the broad lines need?")
+    print("IRAS 07546+3928: how many broad Gaussian components does the spectrum need?")
     print("=" * 78)
 
     # ---- 1. Load the spectrum ------------------------------------------------------
-    wave, flux, error = plain.load_spectrum()
+    wave, flux, error = shared.load_spectrum()
     print(f"\ndata:  {wave.size:,} pixels, {wave[0]:.0f}-{wave[-1]:.0f} A (rest frame), "
           f"peak {flux.max():.2f}")
 
     # ---- 2. Build the model, and gate every wing amplitude at zero -----------------
-    model = toggle_priors(plain.build_model(n_wings=N_WINGS), flux)
+    model = toggle_priors(shared.build_model(n_wings=N_WINGS), flux)
     print(f"\nmodel: {len(model.free_param_names)} free parameters, "
           f"{1 + N_WINGS} components per broad Balmer line")
     print(f"       wings off a priori: p_off = "
           + ", ".join(f"{p:.1f}" for p in P_OFF)
           + f" (of {len(WINGED_LINES) * N_WINGS} gated amplitudes)")
     print(f"       a wing counts above {MIN_WING_FRACTION * 100:.0f}% of the core peak")
-    missing = [q for q in plain.free_qualified_names(model) if model.get_prior(q) is None]
+    missing = [q for q in shared.free_qualified_names(model) if model.get_prior(q) is None]
     if missing:
         raise RuntimeError(f"no prior given for these free parameters: {missing}")
 
@@ -374,15 +383,15 @@ def main() -> int:
     print(f"\n  (a wing counts above {MIN_WING_FRACTION * 100:.0f}% of the core peak; "
           f"effective components = {k_min + 1})")
 
-    # the caveat, and the published numbers to compare against
+    # the caveat, and the hard-tie numbers to compare against
     evidence, parameters, source = (PUBLISHED["log_evidence"],
-                                    PUBLISHED["free_parameters"], "documented")
+                                    PUBLISHED["free_parameters"], "shared reference")
     if PUBLISHED_FIT.exists():
         reference = load_jnesty_fit_from_fits(PUBLISHED_FIT)
         evidence, parameters, source = (reference.log_evidence, reference.ndim,
                                         PUBLISHED_FIT.name)
         del reference
-    print(f"\n  the published two-component fit: {parameters} free parameters, "
+    print(f"\n  the hard-tie fit: {parameters} free parameters, "
           f"ln Z = {evidence:.2f}, chi2/dof = {PUBLISHED['chi2_dof']:.3f}  [{source}]")
     print(f"  this run: {fit.ndim} free parameters, "
           f"ln Z = {fit.log_evidence:.2f} +- {fit.log_evidence_err:.2f}")
@@ -393,7 +402,7 @@ def main() -> int:
     # figures
     ax, _ = galspec.plot.plot_fit(wave, flux, model_best, error=error,
                                   residual_in_sigma=True, xlabel="Rest wavelength  [A]",
-                                  ylabel=plain.FLUX_LABEL,
+                                  ylabel=shared.FLUX_LABEL,
                                   legend_kwargs={"fontsize": 10, "ncol": 2})
     ax.figure.set_size_inches(15, 7)
     ax.set_title(f"IRAS 07546+3928: {1 + N_WINGS} components per broad Balmer line, "
@@ -402,7 +411,7 @@ def main() -> int:
     plt.close(ax.figure)
 
     keep = [i for i, name in enumerate(fit.full_param_names)
-            if name in plain.CORNER_PARAMS
+            if name in shared.CORNER_PARAMS
             or name.split(".")[-1].startswith("amp_w")]
     labels = getattr(fit, "param_labels", None) or list(fit.full_param_names)
     import corner
@@ -413,18 +422,23 @@ def main() -> int:
     corner_fig.savefig(OUTPUT_DIR / f"{PREFIX}corner.png", dpi=110, bbox_inches="tight")
     plt.close(corner_fig)
     galspec.plot.plot_posterior_hist(
-        fit, params=plain.HIST_PARAMS, ncols=4, bins=40,
+        fit, params=shared.HIST_PARAMS, ncols=4, bins=40,
         title="IRAS 07546+3928: with the wings gated, marginal posteriors",
         filename=str(OUTPUT_DIR / f"{PREFIX}histograms.png"))
 
     # the answer as a picture: the posterior of the component count, and the wings
     fig, (left, right) = plt.subplots(1, 2, figsize=(12, 4.4),
                                       gridspec_kw={"width_ratios": [1.1, 1]})
-    counts = np.arange(N_WINGS + 2)
-    left.bar(counts, np.append(p_needed, 0.0), color="#2b6cb0", width=0.65)
-    left.bar(counts, np.append(p_wings - p_needed, 0.0), bottom=np.append(p_needed, 0.0),
+    # the posterior is indexed by *wings*; the axis is *components*, which is wings + 1,
+    # because the core is always there -- otherwise the bar for "three wings" sits under
+    # a title that says four, which is how this plot was mislabelled once
+    wings = np.arange(N_WINGS + 2)
+    components = wings + 1
+    left.bar(components, np.append(p_needed, 0.0), color="#2b6cb0", width=0.65)
+    left.bar(components, np.append(p_wings - p_needed, 0.0),
+             bottom=np.append(p_needed, 0.0),
              color="#bee3f8", width=0.65, label="not bigger than the floor")
-    left.set_xticks(counts)
+    left.set_xticks(components)
     left.set_xlabel("number of components per broad Balmer line")
     left.set_ylabel("posterior probability")
     left.set_title(f"P(N): {k_min + 1} components are enough", fontsize=10)

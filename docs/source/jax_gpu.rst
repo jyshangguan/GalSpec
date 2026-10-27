@@ -49,8 +49,8 @@ What is available
      - ``Line_MultiGauss``, ``Line_MultiGauss_doublet``
    * - ``galspec.Line_Absorption``, ``Line_Absorption_doublet``
      - ``Line_Absorption``, ``Line_Absorption_doublet``
-   * - ``galspec.Line_template``
-     - ``Line_template``
+   * - ``galspec.Line_template``, ``galspec.Line_template_doublet``
+     - ``Line_template``, ``Line_template_doublet``
    * - ``galspec.Line_Exponential``
      - ``Line_Exponential``
    * - ``galspec.IronTemplate``
@@ -651,10 +651,12 @@ of H-alpha) and the fixed doublet ratios.  For the timing comparison the
 [S II] 6716/6731 ratio is tied too; physically it should not be (it is an
 electron-density diagnostic, not a fixed number), and the worked example in
 ``example/fit_iras07546_jax.py`` leaves it free, models each Balmer line as two
-separate models (a narrow ``Line_Gaussian`` tied to [O III] and a broad
+separate models (a narrow ``Line_template`` line tied to [O III] and a broad
 ``Line_MultiGauss`` with a core and a wind), fits He I 5876 the same way, and ties
 the iron template's kernel to the broad H-alpha component by component, which is
-why that fit covers 4200-6800 A with 30 free parameters over seventeen models. The
+why that fit covers 4200-6800 A with 27 free parameters over seventeen models -- the
+narrow lines are one measured profile rather than a Gaussian each, so they cost a
+peak and a shift instead of a peak, a width and a shift. The
 benchmark model is also convolved with
 the SDSS line-spread function (Gaussian, R = 2000 at 5500 A): at 0.046 A sampling
 the instrument, not the gas, sets the width of the narrow cores, so convolving

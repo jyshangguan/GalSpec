@@ -693,9 +693,11 @@ def _load_example():
 def test_example_grows_the_broad_lines_and_pins_down_every_prior():
     """``n_wings`` adds components, nothing else, and every one of them has a prior.
 
-    The published fit has 30 free parameters and one wind per Balmer line.  Asking
-    for four components must add exactly 5 parameters per extra wing -- three on
-    broad H-alpha (an amplitude, a shift and a width) and one amplitude per remaining
+    The example puts the narrow lines on a measured template, so it has 27 free
+    parameters -- three fewer than the published fit's 30, because the four doublets
+    lose their width and [O III] loses its two wind components.  Asking for four
+    components must still add exactly 5 parameters per extra wing -- three on broad
+    H-alpha (an amplitude, a shift and a width) and one amplitude per remaining
     Balmer line, whose shifts and widths are tied to H-alpha -- and every free
     parameter must carry a prior, or the fit refuses to start.
     """
@@ -703,11 +705,22 @@ def test_example_grows_the_broad_lines_and_pins_down_every_prior():
     flux = np.linspace(0.4, 2.2, 500)
 
     default = example.build_model()
-    assert len(default.free_param_names) == 30, len(default.free_param_names)
+    assert len(default.free_param_names) == 27, len(default.free_param_names)
     assert default["b_halpha"].n_components == 2
+    # every narrow line is the template: an amplitude for a singlet, or the atomic
+    # ratio for the second peak of a doublet, and no width anywhere
+    narrow = [name for name in default.submodel_names
+              if type(default[name]).__name__ in ("Line_template",
+                                                  "Line_template_doublet")]
+    assert len(narrow) == 10, narrow
+    # six singlets, four doublets -- the ten narrow lines of the published fit
+    assert sum(type(default[name]).__name__ == "Line_template"
+               for name in narrow) == 6, narrow
+    assert default["OIII"].param_names == ("amp_c0", "amp_c1", "dv_c", "wavec0",
+                                           "wavec1")
 
     wide = example.build_model(n_wings=3)
-    assert len(wide.free_param_names) == 40, len(wide.free_param_names)
+    assert len(wide.free_param_names) == 37, len(wide.free_param_names)
     for line in ("b_halpha", "b_hbeta", "b_hgamma"):
         assert wide[line].n_components == 4, (line, wide[line].n_components)
     # He I 5876 and He II 4686 keep a single broad Gaussian
@@ -734,11 +747,11 @@ def test_example_grows_the_broad_lines_and_pins_down_every_prior():
         assert not missing, (count, missing)
         # each wing costs five free parameters: three on broad H-alpha and one
         # amplitude per remaining Balmer line (their shifts and widths are tied)
-        assert len(model.free_param_names) == 25 + 5 * count, count
+        assert len(model.free_param_names) == 22 + 5 * count, count
 
     # releasing the broad ties frees exactly the eight shared parameters
     released = example.build_model(tie_broad=False)
-    assert len(released.free_param_names) == 38, len(released.free_param_names)
+    assert len(released.free_param_names) == 35, len(released.free_param_names)
 
     print(f"  example: {len(default.free_param_names)} -> {len(wide.free_param_names)} "
           f"free parameters for 1 -> 3 wings (5 per extra wing)")

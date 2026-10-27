@@ -37,7 +37,7 @@ sys.path.insert(0, str(ROOT / "develop" / "dev_jax"))
 import galspec                                   # noqa: E402
 from astropy.modeling import models as amodels   # noqa: E402
 from galspec import jax_models as jxm            # noqa: E402
-from galspec.jax_models.functional import gaussian_smooth1d  # noqa: E402
+from galspec.jax_models.functional import gaussian_smooth1d, LS_KM  # noqa: E402
 
 import jax                                       # noqa: E402
 import jax.numpy as jnp                          # noqa: E402
@@ -70,6 +70,15 @@ def _random_theta(model, rng, n):
 def _set_jax_from_theta(model, theta):
     model.set_free_params(theta)
     return model
+
+
+#: A template with substructure, so a wrong index shows up as a wrong shoulder.
+#: Uniformly spaced (what ``Line_MultiGauss_doublet.gen_template`` produces), which
+#: is the case the affine fast path in ``jax_models.Line_template`` handles.
+PROFILE_VEL = np.linspace(-4000.0, 4000.0, 8001)
+PROFILE_FLUX = (np.exp(-0.5 * (PROFILE_VEL / 260.0) ** 2)
+                + 0.09 * np.exp(-0.5 * ((PROFILE_VEL + 620.0) / 900.0) ** 2))
+PROFILE_FLUX = PROFILE_FLUX / PROFILE_FLUX.max()
 
 
 # --------------------------------------------------------------------------------------
@@ -183,6 +192,19 @@ LEAF_CASES = [
      lambda: __import__("astropy.modeling.models", fromlist=["x"]).Polynomial1D(
          degree=3, c0=1.0, c1=2e-4, c2=-1e-8, c3=1e-12),
      lambda: jxm.Polynomial1D(degree=3, c0=1.0, c1=2e-4, c2=-1e-8, c3=1e-12)),
+    ("Polynomial1D(3, domain/window)",
+     lambda: __import__("astropy.modeling.models", fromlist=["x"]).Polynomial1D(
+         degree=3, domain=[4930.0, 5060.0], window=[-1.0, 1.0],
+         c0=0.6, c1=0.02, c2=-0.01, c3=0.004),
+     lambda: jxm.Polynomial1D(degree=3, domain=(4930.0, 5060.0), window=(-1.0, 1.0),
+                              c0=0.6, c1=0.02, c2=-0.01, c3=0.004)),
+    ("Line_template_doublet",
+     lambda: galspec.Line_template_doublet(
+         template_velc=PROFILE_VEL, template_flux=PROFILE_FLUX,
+         amp_c0=1.9, amp_c1=0.6, dv_c=45.0, wavec0=5007.0, wavec1=4959.0),
+     lambda: jxm.Line_template_doublet(
+         template_velc=PROFILE_VEL, template_flux=PROFILE_FLUX,
+         amp_c0=1.9, amp_c1=0.6, dv_c=45.0, wavec0=5007.0, wavec1=4959.0)),
     ("WindowedPowerLaw1D",
      lambda: galspec.WindowedPowerLaw1D(amplitude=1.3, x_0=4500.0, alpha=1.4),
      lambda: jxm.WindowedPowerLaw1D(amplitude=1.3, x_0=4500.0, alpha=1.4)),
@@ -331,6 +353,138 @@ def test_line_template_matches_cpu():
     jax_model = jxm.Line_template(template_velc=vel, template_flux=tflux,
                                   amplitude=2.0, dv=120.0, wavec=6563.0)
     assert _rel_diff(cpu(wave), jax_model(wave)) < RTOL
+
+
+def test_line_template_non_uniform_grid_matches_cpu():
+    """A non-uniform grid takes the ``jnp.interp`` fallback, not the affine index.
+
+    The fallback has to reproduce the CPU ``interp1d`` to the same tolerance, or a
+    template that is not a ``linspace`` would silently fit a different profile.
+    """
+    wave = np.linspace(6400, 6720, 400)
+    # uniformly spaced on each half, but not on the whole: not a linspace
+    vel = np.concatenate([np.linspace(-7000.0, -1.0, 300), np.linspace(0.0, 7000.0, 500)])
+    tflux = np.exp(-0.5 * (vel / 850.0) ** 2)
+    cpu = galspec.Line_template(template_velc=vel, template_flux=tflux,
+                                amplitude=2.0, dv=120.0, wavec=6563.0)
+    jax_model = jxm.Line_template(template_velc=vel, template_flux=tflux,
+                                  amplitude=2.0, dv=120.0, wavec=6563.0)
+    assert jax_model._uniform is False
+    assert _rel_diff(cpu(wave), jax_model(wave)) < RTOL
+
+
+def test_template_fast_path_matches_interp():
+    """The affine lookup and ``jnp.interp`` must agree on a uniform grid.
+
+    This is the optimisation that makes a template-based spectrum affordable: at
+    57 000 pixels ``jnp.interp``'s ``searchsorted`` costs 5.3 ms per line on a CPU
+    and 0.6 ms on a GPU, the gather 0.16 ms.  It is only usable if it is exact, so
+    it is checked here at several grid spacings against the general path.
+    """
+    from galspec.jax_models.functional import velocity
+    from galspec.jax_models.line_profile import _template_interp
+
+    wave = jnp.asarray(np.linspace(4850.0, 5160.0, 20000))
+    for step in (2.0, 1.0, 0.5):
+        vel = np.arange(-3000.0, 3000.0 + step / 2.0, step)
+        tflux = (np.exp(-0.5 * (vel / 300.0) ** 2)
+                 + 0.03 * np.exp(-0.5 * ((vel + 500.0) / 1200.0) ** 2))
+        model = jxm.Line_template(template_velc=vel, template_flux=tflux,
+                                  amplitude=1.0, dv=17.0, wavec=5007.0)
+        assert model._uniform is True
+        fast = model.evaluate(wave, {"amplitude": 1.0, "dv": 17.0, "wavec": 5007.0})
+        v = velocity(wave, 5007.0) - 17.0
+        slow = _template_interp(v, model._template_velc, model._template_flux,
+                                model._vmin, model._vmax, False, 0.0)
+        assert _rel_diff(fast, slow) < 1e-12, f"step={step}"
+
+
+def test_line_template_doublet_is_two_single_templates():
+    """The doublet is exactly two single-line templates sharing one shift.
+
+    Both backends: the model exists so that the shared shift is *structural*
+    instead of a tie a reader has to notice, and it must not be a different model.
+    """
+    wave = np.linspace(4900.0, 5060.0, 3000)
+    for make_single, make_doublet in (
+            (lambda **kw: galspec.Line_template(**kw),
+             lambda **kw: galspec.Line_template_doublet(**kw)),
+            (lambda **kw: jxm.Line_template(**kw),
+             lambda **kw: jxm.Line_template_doublet(**kw))):
+        common = dict(template_velc=PROFILE_VEL, template_flux=PROFILE_FLUX)
+        doublet = make_doublet(amp_c0=2.0, amp_c1=0.7, dv_c=45.0,
+                               wavec0=5007.0, wavec1=4959.0, **common)
+        first = make_single(amplitude=2.0, dv=45.0, wavec=5007.0, **common)
+        second = make_single(amplitude=0.7, dv=45.0, wavec=4959.0, **common)
+        combined = np.asarray(first(wave)) + np.asarray(second(wave))
+        assert _rel_diff(doublet(wave), combined) < 1e-14
+
+
+def test_gen_template_matches_cpu():
+    """``gen_template`` gives the same kernel on both backends.
+
+    The JAX method is host-side numpy over the leaf's own values, which is what
+    lets a JNesty fit hand its [O III] profile to ``Line_template``.
+    """
+    v = np.linspace(-4000.0, 4000.0, 1601)
+    cases = [
+        (lambda: galspec.Line_MultiGauss(
+            n_components=3, amp_c=2.0, dv_c=40.0, sigma_c=280.0, wavec=5007.0,
+            amp_w0=0.25, dv_w0=-400.0, sigma_w0=900.0,
+            amp_w1=0.05, dv_w1=150.0, sigma_w1=2000.0),
+         lambda: jxm.Line_MultiGauss(
+            n_components=3, amp_c=2.0, dv_c=40.0, sigma_c=280.0, wavec=5007.0,
+            amp_w0=0.25, dv_w0=-400.0, sigma_w0=900.0,
+            amp_w1=0.05, dv_w1=150.0, sigma_w1=2000.0)),
+        (lambda: galspec.Line_MultiGauss_doublet(
+            n_components=2, amp_c0=2.0, amp_c1=0.67, dv_c=40.0, sigma_c=280.0,
+            wavec0=5007.0, wavec1=4959.0,
+            amp_w0=0.25, dv_w0=-400.0, sigma_w0=900.0),
+         lambda: jxm.Line_MultiGauss_doublet(
+            n_components=2, amp_c0=2.0, amp_c1=0.67, dv_c=40.0, sigma_c=280.0,
+            wavec0=5007.0, wavec1=4959.0,
+            amp_w0=0.25, dv_w0=-400.0, sigma_w0=900.0)),
+    ]
+    for make_cpu, make_jax in cases:
+        cpu, jax_model = make_cpu(), make_jax()
+        for normalized in (True, False):
+            assert _rel_diff(cpu.gen_template(v, normalized=normalized),
+                             jax_model.gen_template(v, normalized=normalized)) < 1e-13
+
+    # the doublet's kernel is the *single-line* profile: centred on the core (the
+    # broad wing pulls the peak a few km/s, well inside the core width), and with
+    # nothing left at the doublet separation, i.e. no second line baked in
+    doublet = cases[1][0]()
+    kernel = doublet.gen_template(v)
+    peak = float(v[int(np.argmax(kernel))])
+    assert abs(peak) < 0.25 * doublet.sigma_c.value, peak
+    assert kernel.max() == 1.0 and kernel.min() >= 0.0
+    separation = (5007.0 - 4959.0) / 5007.0 * LS_KM
+    at_second_line = float(np.interp(separation, v, kernel))
+    assert at_second_line < 1e-3, at_second_line
+
+
+def test_gen_template_reads_tied_values_from_the_owner():
+    """A tied parameter is not read at its construction default.
+
+    ``amp_c1`` is tied to ``amp_c0 / 2.98`` in the model but holds ``1.0`` on the
+    leaf until the compound syncs.  ``gen_template`` must see the tied value --
+    the peak of the kernel is what ``Line_template``'s amplitude multiplies, and a
+    stale value would silently scale every narrow line.
+    """
+    line = jxm.Line_MultiGauss_doublet(
+        n_components=1, amp_c0=3.0, amp_c1=3.0 / 2.98, dv_c=0.0, sigma_c=200.0,
+        wavec0=5007.0, wavec1=4959.0, name="OIII")
+    line.amp_c1.tied = jxm.tie.tie_MultiGauss_doublet_ratio("OIII", 2.98)
+    continuum = jxm.Const1D(amplitude=1.0, name="Cont")
+    model = continuum + line
+
+    model["OIII"].amp_c0.value = 5.0
+    v = np.linspace(-1000.0, 1000.0, 201)
+    kernel = model["OIII"].gen_template(v, normalized=False)
+    # peak is amp_c0, and it must be the *fitted* 5.0 after the sync
+    assert abs(kernel.max() - 5.0) < 1e-12, kernel.max()
+    assert abs(float(model["OIII"].amp_c1.value) - 5.0 / 2.98) < 1e-12
 
 
 # --------------------------------------------------------------------------------------

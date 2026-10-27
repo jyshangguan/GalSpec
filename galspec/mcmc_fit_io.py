@@ -683,7 +683,7 @@ def extract_special_data(model, has_conv=False, conv_info=None):
     
     # Line_template: needs template_velc and template_flux
     # Use short names to avoid FITS extension truncation
-    if class_name == 'Line_template':
+    if class_name in ('Line_template', 'Line_template_doublet'):
         if hasattr(model, '_template_velc'):
             special['velc'] = np.asarray(model._template_velc)
         if hasattr(model, '_template_flux'):
@@ -889,7 +889,7 @@ def deserialize_single_model(node, special_data=None, param_values=None):
     init_params = {}
     
     # Handle special initialization requirements
-    if class_name == 'Line_template':
+    if class_name in ('Line_template', 'Line_template_doublet'):
         # Requires template_velc and template_flux
         # DO NOT pass parameter values here, only template data
         if 'velc' in special_data and 'flux' in special_data:
@@ -968,7 +968,7 @@ def deserialize_single_model(node, special_data=None, param_values=None):
                     param.tied = tied_callable
     
     # Restore/recreate computed private attributes
-    if class_name == 'Line_template':
+    if class_name in ('Line_template', 'Line_template_doublet'):
         # Verify the interp1d object was created properly during __init__
         # If not, recreate it explicitly
         if not hasattr(model, '_model') or model._model is None:

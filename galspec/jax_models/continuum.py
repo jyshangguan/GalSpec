@@ -24,6 +24,21 @@ __all__ = [
 ]
 
 
+def _domain_pair(value, default: Tuple[float, float]) -> Tuple[float, float]:
+    """Normalise an astropy-style ``domain``/``window`` argument to two floats.
+
+    Accepts ``None`` (use ``default``), any 2-sequence, or a numpy array -- the
+    serialiser stores these as arrays and hands them back that way, so the
+    constructor has to take them without complaint.
+    """
+    if value is None:
+        return tuple(float(v) for v in default)          # type: ignore[return-value]
+    pair = tuple(float(v) for v in value)
+    if len(pair) != 2:
+        raise ValueError(f"expected two numbers, got {value!r}")
+    return pair                                          # type: ignore[return-value]
+
+
 class PowerLaw1D(JaxModel):
     """``amplitude * (x / x_0) ** (-alpha)`` -- matches ``astropy.models.PowerLaw1D``."""
 
@@ -84,20 +99,45 @@ class Linear1D(JaxModel):
 
 
 class Polynomial1D(JaxModel):
-    """Polynomial continuum ``sum_i c_i x**i`` -- matches ``astropy.models.Polynomial1D``.
+    """Polynomial continuum ``sum_i c_i u**i`` -- matches ``astropy.models.Polynomial1D``.
 
     The degree is fixed at construction time (like the astropy model), which
     keeps the parameter vector length static for ``jit``.
+
+    ``domain`` and ``window`` implement astropy's linear mapping of the abscissa
+    before the polynomial is evaluated::
+
+        u = window[0] + (x - domain[0]) * (window[1] - window[0])
+                            / (domain[1] - domain[0])
+
+    They are not decoration.  A local continuum over 4920-5080 A evaluated on the
+    raw wavelength needs ``c3 ~ 1e-11`` for the cubic term to contribute at the
+    flux level of the data (``x**3 ~ 1e11``), so no single prior shape fits every
+    order and the sampler has to find four coefficients spanning eleven decades.
+    Mapping that window onto ``[-1, 1]`` puts every coefficient at the scale of the
+    flux itself: ``Polynomial1D(degree=3, domain=(4920, 5080), window=(-1, 1))``,
+    after which ``Uniform(-2, 2)`` is a sensible prior for all four.  The defaults
+    ``domain = window = (-1, -1)`` are astropy's, and make the map the identity, so
+    an existing model keeps its exact behaviour.
     """
 
     model_kind = "Polynomial1D"
 
-    def __init__(self, degree: int = 1, name: Optional[str] = None,
-                 fixed: Optional[dict] = None, bounds: Optional[dict] = None, **kwargs):
+    def __init__(self, degree: int = 1, domain=None, window=None,
+                 name: Optional[str] = None, fixed: Optional[dict] = None,
+                 bounds: Optional[dict] = None, **kwargs):
         degree = int(degree)
         if degree < 0:
             raise ValueError("degree must be >= 0")
         self.degree = degree
+        self.domain = _domain_pair(domain, (-1.0, -1.0))
+        self.window = _domain_pair(window, (-1.0, -1.0))
+        # astropy's defaults are domain = window = (-1, -1), and an unchanged
+        # domain maps onto itself, i.e. the polynomial is evaluated on the raw
+        # abscissa.  Only a *degenerate* domain that would actually be mapped is
+        # an error.
+        if self.domain != self.window and self.domain[0] == self.domain[1]:
+            raise ValueError(f"domain must span a range, got {self.domain}")
         self._param_specs = tuple(
             ParamSpec(f"c{i}", 1.0 if i == 0 else 0.0) for i in range(degree + 1))
         super().__init__(name=name, fixed=fixed, bounds=bounds, **kwargs)
@@ -106,10 +146,18 @@ class Polynomial1D(JaxModel):
     def PARAMS(self):  # type: ignore[override]
         return self._param_specs
 
+    def _mapped(self, x):
+        """The abscissa the polynomial is written in (astropy's ``domain`` map)."""
+        if self.domain == self.window:
+            return x
+        (d0, d1), (w0, w1) = self.domain, self.window
+        return w0 + (x - d0) * (w1 - w0) / (d1 - d0)
+
     def evaluate(self, x, p):
-        out = jnp.zeros_like(x)
+        u = self._mapped(x)
+        out = jnp.zeros_like(u)
         for i in range(self.degree + 1):
-            out = out + p[f"c{i}"] * x ** i
+            out = out + p[f"c{i}"] * u ** i
         return out
 
 

@@ -76,6 +76,7 @@ from .line_profile import (  # noqa: E402
     Line_MultiGauss,
     Line_MultiGauss_doublet,
     Line_template,
+    Line_template_doublet,
 )
 from .iron_template import IronTemplate, IronTemplate_new, IronTemplate_tied  # noqa: E402
 from .stellar import Multi_StarSpectrum, StarSpectrum  # noqa: E402
@@ -103,7 +104,8 @@ MODELS = {
         WindowedPowerLaw1D, WindowedLinear, Gaussian1D,
         Line_Gaussian, Line_GaussHermite, Line_GaussHermite_doublet,
         Line_MultiGauss, Line_MultiGauss_doublet, Line_Absorption,
-        Line_Absorption_doublet, Line_template, Line_Exponential,
+        Line_Absorption_doublet, Line_template, Line_template_doublet,
+        Line_Exponential,
         IronTemplate, IronTemplate_tied, StarSpectrum, Multi_StarSpectrum,
     )
 }
@@ -118,7 +120,8 @@ __all__ = [
     # lines
     "Line_Gaussian", "Line_GaussHermite", "Line_GaussHermite_doublet",
     "Line_MultiGauss", "Line_MultiGauss_doublet", "Line_Absorption",
-    "Line_Absorption_doublet", "Line_template", "Line_Exponential",
+    "Line_Absorption_doublet", "Line_template", "Line_template_doublet",
+    "Line_Exponential",
     # templates / stellar
     "IronTemplate", "IronTemplate_new", "IronTemplate_tied",
     "StarSpectrum", "Multi_StarSpectrum",

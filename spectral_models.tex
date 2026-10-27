@@ -63,6 +63,66 @@ F_{{\rm wind},j,i}(\lambda) = A_{{\rm c},j} \cdot a_{\rm w,i} \exp\left[-\frac{1
 
 Here, $v_j(\lambda) = c(\lambda - \lambda_j)/\lambda_j$ for $j = 0, 1$ represents the velocity offset from each line center, and $A_{{\rm c},0}$ and $A_{{\rm c},1}$ are the individual core amplitudes for the two lines. Crucially, all velocity components ($v_{\rm c}$, $\Delta v_{\rm w,i}$) and velocity dispersions ($\sigma_{\rm c}$, $\sigma_{\rm w,i}$) are shared between the two lines, ensuring kinematic coupling while allowing independent amplitudes.
 
+\subsection{Line\_template}
+
+The \texttt{Line\_template} class replaces the analytic profile with a measured
+one: a tabulated velocity profile $P(v)$, normalised to unit peak, is evaluated at
+the velocity offset implied by the wavelength.
+
+\begin{equation}
+F(\lambda) = A \cdot P\!\left(v(\lambda) - \Delta v\right),
+\qquad v(\lambda) = c\,\frac{\lambda - \lambda_{\rm c}}{\lambda_{\rm c}}
+\end{equation}
+
+Here $A$ is the peak flux density at the line centre and $\Delta v$ a velocity
+shift. The shape carries no parameters. For lines whose intrinsic profile is known
+from a stronger line in the same spectrum -- the standard case for the narrow
+forbidden lines of an AGN -- this is the cheapest available model of the profile:
+one amplitude and one shift per line, and a width that is a measurement rather
+than a fitted number.
+
+Because $P$ is normalised to unit peak, the integrated flux is $A$ times the area
+of $P$ under $v$, not $A\sigma\sqrt{2\pi}$:
+
+\begin{equation}
+\int F(\lambda)\, d\lambda = A \int P(v)\, \frac{\lambda_{\rm c}}{c}\, dv
+\end{equation}
+
+On a uniform velocity grid the evaluation is an affine gather,
+$P(v) = {\rm grid}[\,\lfloor (v - v_0)/\Delta v \rfloor\,]$, which costs little more
+than the Gaussian it replaces; a non-uniform grid falls back to linear
+interpolation.
+
+\subsection{Line\_template\_doublet}
+
+The \texttt{Line\_template\_doublet} class is to \texttt{Line\_template} what
+\texttt{Line\_MultiGauss\_doublet} is to \texttt{Line\_MultiGauss}: the same
+profile stamped at two wavelengths, sharing one velocity shift and $-$ for a
+doublet whose ratio is fixed by atomic physics $-$ one amplitude.
+
+\begin{equation}
+F(\lambda) = A_0 \cdot P\!\left(v_0(\lambda) - \Delta v_{\rm c}\right)
+           + A_1 \cdot P\!\left(v_1(\lambda) - \Delta v_{\rm c}\right)
+\end{equation}
+
+There is no $\sigma_{\rm c}$ parameter: the width is in $P$. The second amplitude
+is usually eliminated by the atomic ratio $R$ in the direction the spectrum has it,
+$A_1 = A_0 / R$, which leaves the model with as many free parameters as a single
+line. Ratios that are physically interesting rather than fixed $-$ [S~II]
+$\lambda$6716/$\lambda$6731 is the density diagnostic $-$ are left free.
+
+\begin{center}
+\begin{tabular}{lll}
+\hline
+\texttt{Line\_MultiGauss\_doublet} & \texttt{Line\_template\_doublet} & \\
+\hline
+$A_{{\rm c},0}$, $A_{{\rm c},1}$ & \texttt{amp\_c0}, \texttt{amp\_c1} & peaks \\
+$v_{\rm c}$ & \texttt{dv\_c} & one shift, both lines \\
+$\sigma_{\rm c}$ & -- & in the tabulated profile \\
+\hline
+\end{tabular}
+\end{center}
+
 \subsection{Line\_GaussHermite}
 
 The \texttt{Line\_GaussHermite} class models a single emission line with a fourth-order Gauss--Hermite expansion, allowing controlled deviations from a pure Gaussian profile. The model is:

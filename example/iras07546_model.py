@@ -73,15 +73,17 @@ PHOTON_FRACTION = 0.05         # 5% of the flux: photon noise of the source itse
 #: agree to 0.01 nats, which is the point of the fixed key: two implementations, one
 #: number.  What the fixed key does *not* buy is bitwise identity: three runs of this
 #: example gave 130 656.34, 130 656.22 and 130 658.06, from the last bits of a GPU
-#: sum feeding the sampler's ordering.  So quote the evidence to about a nat -- the
-#: difference this model is judged on is two hundred of them.
+#: sum feeding the sampler's ordering.  Re-extracting the narrow-line profile (a new
+#: error model, a slightly different fit of the same window) moved this number by 19
+#: nats, so compare evidence only between models fitted on the same template file.
+#: Quote it to about a nat -- the difference this model is judged on is two hundred.
 REFERENCE = {
     "published": {"free_parameters": 30, "log_evidence": 130889.60,
                   "log_evidence_error": 0.62, "chi2_dof": 0.307,
                   "minutes": 10.2},
-    "template": {"free_parameters": 27, "log_evidence": 130658.06,
-                 "log_evidence_error": 0.58, "chi2_dof": 0.316,
-                 "minutes": 7.4},
+    "template": {"free_parameters": 27, "log_evidence": 130677.27,
+                 "log_evidence_error": 0.58, "chi2_dof": 0.315,
+                 "minutes": 11.7},
 }
 
 N_WINGS = 1                    # wind components after the broad core
@@ -213,9 +215,196 @@ class _TieFrom:
 
 
 # %% model
-# ---- 2. Build the model ------------------------------------------------------------
+# ---- 2. Build the model, one piece at a time --------------------------------------
+#: The order the seventeen components are summed in.  It is also the order of
+#: ``model.submodel_names`` and of every figure legend, so narrow and broad lines
+#: alternate: a reader looks for [O III] next to H-beta, not in a block at the end.
+SUMMATION_ORDER = ("Continuum", "FeII",
+                   "n_halpha", "b_halpha", "n_hbeta", "b_hbeta",
+                   "n_hgamma", "b_hgamma", "OIII", "NII", "SII", "OI",
+                   "HeII", "b_heii", "OIII4363", "n_hei", "b_hei")
+
+
+def wing_defaults(n_wings, amp_w0):
+    """Starting values for the wind components: index 0 is the wind, the rest are
+    extra wings.  A ``Line_MultiGauss`` is the core plus one Gaussian per wind."""
+    out = {}
+    for i in range(n_wings):
+        out[f"amp_w{i}"] = amp_w0 if i == 0 else 0.05
+        out[f"dv_w{i}"] = 0.0
+        out[f"sigma_w{i}"] = 6000.0 if i == 0 else 9000.0
+    return out
+
+
+def build_continuum():
+    """The power-law continuum, anchored at 5500 A.
+
+    One amplitude and one slope over 2600 A.  It is the only component that is not a
+    line, and the iron template below is the only other thing that is not a line --
+    which is why the two are judged together by ``Continuum.alpha``.
+    """
+    return jxm.PowerLaw1D(amplitude=0.55, x_0=5500.0, alpha=1.0,
+                          fixed={"x_0": True}, name="Continuum")
+
+
+def build_broad_lines(n_wings=N_WINGS):
+    """Everything that comes from the broad-line region, keyed by submodel name.
+
+    Each Balmer line is ``Line_MultiGauss(n_components=1 + n_wings)``: a core plus
+    ``n_wings`` winds.  The wind *amplitudes* stay free per line -- that is the
+    Balmer decrement, and it is a measurement -- while shifts and widths are tied to
+    broad H-alpha by :func:`tie_broad_lines`.  He I 5876 and He II 4686 are weak
+    enough that they are left as one Gaussian each, shape tied to H-alpha's core.
+    """
+    b_halpha = jxm.Line_MultiGauss(n_components=1 + n_wings, amp_c=0.65, dv_c=0.0,
+                                   sigma_c=1500.0, wavec=LINE_WAVE["Halpha"],
+                                   name="b_halpha", **wing_defaults(n_wings, 0.10))
+    b_hbeta = jxm.Line_MultiGauss(n_components=1 + n_wings, amp_c=0.22, dv_c=0.0,
+                                  sigma_c=1500.0, wavec=LINE_WAVE["Hbeta"],
+                                  name="b_hbeta", **wing_defaults(n_wings, 0.20))
+    b_hgamma = jxm.Line_MultiGauss(n_components=1 + n_wings, amp_c=0.10, dv_c=0.0,
+                                   sigma_c=1500.0, wavec=LINE_WAVE["Hgamma"],
+                                   name="b_hgamma", **wing_defaults(n_wings, 0.20))
+    b_hei = jxm.Line_MultiGauss(n_components=1, amp_c=0.06, dv_c=0.0, sigma_c=1500.0,
+                                wavec=LINE_WAVE["HeI_5876"], name="b_hei")
+    b_heii = jxm.Line_MultiGauss(n_components=1, amp_c=0.05, dv_c=0.0, sigma_c=1500.0,
+                                 wavec=LINE_WAVE["HeII_4686"], name="b_heii")
+    return {"b_halpha": b_halpha, "b_hbeta": b_hbeta, "b_hgamma": b_hgamma,
+            "b_hei": b_hei, "b_heii": b_heii}
+
+
+def build_narrow_lines(template):
+    """The ten narrow lines, all on the measured profile.
+
+    ``template`` is ``(velocity, flux)`` from :func:`load_template`.  A singlet is
+    ``Line_template``; a doublet is ``Line_template_doublet``, where the second peak
+    keeps either an atomic ratio ([O III] 5007/4959 by 2.98, [N II] by 2.96, [O I]
+    by 3.00) or its own amplitude ([S II], because 6716/6731 is a density
+    diagnostic).  No width is fitted anywhere: the profile carries it.
+    """
+    velc, tflux = template
+
+    def singlet(**kwargs):
+        return jxm.Line_template(template_velc=velc, template_flux=tflux, **kwargs)
+
+    def doublet(**kwargs):
+        return jxm.Line_template_doublet(template_velc=velc, template_flux=tflux,
+                                         **kwargs)
+
+    return {
+        "n_halpha": singlet(amplitude=2.2, dv=0.0,
+                            wavec=LINE_WAVE["Halpha"], name="n_halpha"),
+        "n_hbeta": singlet(amplitude=0.8, dv=0.0,
+                           wavec=LINE_WAVE["Hbeta"], name="n_hbeta"),
+        "n_hgamma": singlet(amplitude=0.4, dv=0.0,
+                            wavec=LINE_WAVE["Hgamma"], name="n_hgamma"),
+        "n_hei": singlet(amplitude=0.12, dv=0.0,
+                         wavec=LINE_WAVE["HeI_5876"], name="n_hei"),
+        "HeII": singlet(amplitude=0.08, dv=0.0,
+                        wavec=LINE_WAVE["HeII_4686"], name="HeII"),
+        "OIII4363": singlet(amplitude=0.05, dv=0.0,
+                            wavec=LINE_WAVE["OIII_4363"], name="OIII4363"),
+        "OIII": doublet(amp_c0=1.8, amp_c1=1.8 / 2.98, dv_c=0.0,
+                        wavec0=LINE_WAVE["OIII_5007"],
+                        wavec1=LINE_WAVE["OIII_4959"], name="OIII"),
+        "NII": doublet(amp_c0=1.0, amp_c1=1.0 / 2.96, dv_c=0.0,
+                       wavec0=LINE_WAVE["NII_6583"],
+                       wavec1=LINE_WAVE["NII_6548"], name="NII"),
+        "SII": doublet(amp_c0=0.10, amp_c1=0.10, dv_c=0.0,
+                       wavec0=LINE_WAVE["SII_6716"],
+                       wavec1=LINE_WAVE["SII_6731"], name="SII"),
+        "OI": doublet(amp_c0=0.05, amp_c1=0.05 / 3.0, dv_c=0.0,
+                      wavec0=LINE_WAVE["OI_6300"],
+                      wavec1=LINE_WAVE["OI_6364"], name="OI"),
+    }
+
+
+def build_iron_template(n_wings=N_WINGS):
+    """The iron pseudo-continuum, broadened by broad H-alpha's own profile.
+
+    ``IronTemplate_tied`` convolves the optical Fe II template with a
+    ``Line_MultiGauss`` kernel it does not own: every kernel parameter is tied to
+    broad H-alpha by :func:`tie_iron_template`, and because a MultiGauss is a
+    weighted sum whose convolution is renormalised, the core amplitude cancels.  The
+    iron therefore costs **one** free parameter, its amplitude.
+    """
+    iron = jxm.IronTemplate_tied(n_components=1 + n_wings, amplitude=0.2, z=0.0,
+                                 dv_c=0.0, sigma_c=1500.0, name="FeII",
+                                 **wing_defaults(n_wings, 0.10))
+    iron.z.fixed = True                    # the redshift is the rest frame we fitted in
+    return iron
+
+
+def tie_narrow_lines(narrow, reference=NARROW_REFERENCE):
+    """One velocity for all ten narrow lines, and the doublet ratios.
+
+    A tie is a callable read at evaluation time, so ``narrow`` may be tied before the
+    compound model exists: the lambda-like ``jxm.tie.*`` objects look the reference
+    up by name.  Tying every shift to [O III] is what turns eleven peaks into one
+    measurement of the narrow-line-region systemic velocity -- an assumption worth
+    stating out loud, because a line that really sits at another velocity is absorbed
+    into its amplitude and into the residual, and the model cannot report it.
+    """
+    for name in ("n_halpha", "n_hbeta", "n_hgamma", "n_hei", "HeII", "OIII4363"):
+        narrow[name].dv.tied = jxm.tie.tie_MultiGauss_dv_c(reference)
+    for name in ("NII", "SII", "OI"):
+        narrow[name].dv_c.tied = jxm.tie.tie_MultiGauss_dv_c(reference)
+
+    # the second peak of a forbidden doublet, from atomic physics
+    narrow["OIII"].amp_c1.tied = jxm.tie.tie_MultiGauss_doublet_ratio("OIII", 2.98)
+    narrow["NII"].amp_c1.tied = jxm.tie.tie_MultiGauss_doublet_ratio("NII", 2.96)
+    narrow["OI"].amp_c1.tied = jxm.tie.tie_MultiGauss_doublet_ratio("OI", 3.00)
+    return narrow
+
+
+def tie_broad_lines(broad, n_wings=N_WINGS):
+    """H-beta and H-gamma follow broad H-alpha, component by component.
+
+    Core shift and width, and then every wind's shift, width -- and, through the
+    caller's choice, nothing else: the amplitudes stay free, because the Balmer
+    decrement is a measurement.  ``tie_broad=False`` (the tied example) drops this
+    for H-beta and H-gamma and puts a Gaussian prior on the difference instead.
+    """
+    for name in ("b_hbeta", "b_hgamma"):
+        line = broad[name]
+        line.dv_c.tied = jxm.tie.tie_MultiGauss_dv_c("b_halpha")
+        line.sigma_c.tied = jxm.tie.tie_MultiGauss_sigma_c("b_halpha")
+        for i in range(n_wings):
+            getattr(line, f"dv_w{i}").tied = getattr(
+                jxm.tie, f"tie_MultiGauss_dv_w{i}")("b_halpha")
+            getattr(line, f"sigma_w{i}").tied = getattr(
+                jxm.tie, f"tie_MultiGauss_sigma_w{i}")("b_halpha")
+    for name in ("b_hei", "b_heii"):
+        broad[name].dv_c.tied = jxm.tie.tie_MultiGauss_dv_c("b_halpha")
+        broad[name].sigma_c.tied = jxm.tie.tie_MultiGauss_sigma_c("b_halpha")
+    return broad
+
+
+def tie_iron_template(iron):
+    """The iron kernel **is** broad H-alpha: every component, every parameter.
+
+    This is the strongest statement in the model.  The iron lines come from the same
+    broad-line region as H-alpha, so they are broadened by its profile; tying them
+    component by component means the iron cannot absorb a velocity structure that the
+    Balmer line does not have.  The alternative -- a free kernel width -- is what let
+    the iron absorb Fe II flux into a fake wind in earlier fits.
+    """
+    iron.dv_c.tied = jxm.tie.tie_MultiGauss_dv_c("b_halpha")
+    iron.sigma_c.tied = jxm.tie.tie_MultiGauss_sigma_c("b_halpha")
+    for i in range(iron.n_components - 1):
+        for stem in ("amp_w", "dv_w", "sigma_w"):
+            getattr(iron, f"{stem}{i}").tied = getattr(
+                jxm.tie, f"tie_MultiGauss_{stem}{i}")("b_halpha")
+    return iron
+
+
 def build_model(template=None, n_wings=N_WINGS, tie_broad=True):
     """Seventeen components, summed; then the ties that make them physical.
+
+    This is the five-line composition of the four pieces above -- the function the
+    three example scripts call.  Read it as the contract between them: the pieces are
+    independent enough to run (and draw) on their own, and only this ordering is
+    shared.
 
     ``template`` is ``(velocity, flux)`` -- the narrow-line profile.  When it is
     omitted the committed file is read, so the model can be built and its prior
@@ -237,121 +426,27 @@ def build_model(template=None, n_wings=N_WINGS, tie_broad=True):
     """
     if template is None:
         template = load_template()
-    velc, tflux = template
 
-    def wing_defaults(amp_w0):
-        """Initial wind components: component 0 is the wind, i>0 are extra wings."""
-        out = {}
-        for i in range(n_wings):
-            out[f"amp_w{i}"] = amp_w0 if i == 0 else 0.05
-            out[f"dv_w{i}"] = 0.0
-            out[f"sigma_w{i}"] = 6000.0 if i == 0 else 9000.0
-        return out
+    pieces = {"Continuum": build_continuum(),
+              "FeII": build_iron_template(n_wings)}
+    narrow = build_narrow_lines(template)
+    broad = build_broad_lines(n_wings)
+    pieces.update(narrow)
+    pieces.update(broad)
 
-    # -- continuum: a power law anchored at 5500 A, plus the iron pseudo-continuum --
-    continuum = jxm.PowerLaw1D(amplitude=0.55, x_0=5500.0, alpha=1.0,
-                               fixed={"x_0": True}, name="Continuum")
-    # The iron template is broadened by the profile of broad H-alpha itself, tied
-    # component by component below.  A Line_MultiGauss already is a weighted sum and
-    # the convolution renormalises it, so the core amplitude cancels and only the
-    # wind ratio survives as a weight: the iron has one free parameter, its amplitude.
-    iron = jxm.IronTemplate_tied(n_components=1 + n_wings, amplitude=0.2, z=0.0,
-                                 dv_c=0.0, sigma_c=1500.0, name="FeII",
-                                 **wing_defaults(0.10))
-    iron.z.fixed = True
+    model = pieces[SUMMATION_ORDER[0]]
+    for name in SUMMATION_ORDER[1:]:
+        model = model + pieces[name]
 
-    # -- the narrow lines: one frozen profile, one amplitude each -------------------
-    n_halpha = jxm.Line_template(template_velc=velc, template_flux=tflux,
-                                 amplitude=2.2, dv=0.0,
-                                 wavec=LINE_WAVE["Halpha"], name="n_halpha")
-    n_hbeta = jxm.Line_template(template_velc=velc, template_flux=tflux,
-                                amplitude=0.8, dv=0.0,
-                                wavec=LINE_WAVE["Hbeta"], name="n_hbeta")
-    n_hgamma = jxm.Line_template(template_velc=velc, template_flux=tflux,
-                                 amplitude=0.4, dv=0.0,
-                                 wavec=LINE_WAVE["Hgamma"], name="n_hgamma")
-    n_hei = jxm.Line_template(template_velc=velc, template_flux=tflux,
-                              amplitude=0.12, dv=0.0,
-                              wavec=LINE_WAVE["HeI_5876"], name="n_hei")
-    he2 = jxm.Line_template(template_velc=velc, template_flux=tflux,
-                            amplitude=0.08, dv=0.0,
-                            wavec=LINE_WAVE["HeII_4686"], name="HeII")
-    o3_4363 = jxm.Line_template(template_velc=velc, template_flux=tflux,
-                                amplitude=0.05, dv=0.0,
-                                wavec=LINE_WAVE["OIII_4363"], name="OIII4363")
-
-    # -- the broad lines: unchanged from the published fit -------------------------
-    b_halpha = jxm.Line_MultiGauss(n_components=1 + n_wings, amp_c=0.65, dv_c=0.0,
-                                   sigma_c=1500.0, wavec=LINE_WAVE["Halpha"],
-                                   name="b_halpha", **wing_defaults(0.10))
-    b_hbeta = jxm.Line_MultiGauss(n_components=1 + n_wings, amp_c=0.22, dv_c=0.0,
-                                  sigma_c=1500.0, wavec=LINE_WAVE["Hbeta"],
-                                  name="b_hbeta", **wing_defaults(0.20))
-    b_hgamma = jxm.Line_MultiGauss(n_components=1 + n_wings, amp_c=0.10, dv_c=0.0,
-                                   sigma_c=1500.0, wavec=LINE_WAVE["Hgamma"],
-                                   name="b_hgamma", **wing_defaults(0.20))
-    b_hei = jxm.Line_MultiGauss(n_components=1, amp_c=0.06, dv_c=0.0, sigma_c=1500.0,
-                                wavec=LINE_WAVE["HeI_5876"], name="b_hei")
-    b_heii = jxm.Line_MultiGauss(n_components=1, amp_c=0.05, dv_c=0.0, sigma_c=1500.0,
-                                 wavec=LINE_WAVE["HeII_4686"], name="b_heii")
-
-    # -- the forbidden lines, as template doublets ---------------------------------
-    # [N II] and [O I] ratios are atomic physics; [S II] is not -- its ratio is a
-    # density diagnostic, so both peaks stay free and the ratio comes out of the fit.
-    o3 = jxm.Line_template_doublet(template_velc=velc, template_flux=tflux,
-                                   amp_c0=1.8, amp_c1=1.8 / 2.98, dv_c=0.0,
-                                   wavec0=LINE_WAVE["OIII_5007"],
-                                   wavec1=LINE_WAVE["OIII_4959"], name="OIII")
-    n2 = jxm.Line_template_doublet(template_velc=velc, template_flux=tflux,
-                                   amp_c0=1.0, amp_c1=1.0 / 2.96, dv_c=0.0,
-                                   wavec0=LINE_WAVE["NII_6583"],
-                                   wavec1=LINE_WAVE["NII_6548"], name="NII")
-    s2 = jxm.Line_template_doublet(template_velc=velc, template_flux=tflux,
-                                   amp_c0=0.10, amp_c1=0.10, dv_c=0.0,
-                                   wavec0=LINE_WAVE["SII_6716"],
-                                   wavec1=LINE_WAVE["SII_6731"], name="SII")
-    o1 = jxm.Line_template_doublet(template_velc=velc, template_flux=tflux,
-                                   amp_c0=0.05, amp_c1=0.05 / 3.0, dv_c=0.0,
-                                   wavec0=LINE_WAVE["OI_6300"],
-                                   wavec1=LINE_WAVE["OI_6364"], name="OI")
-
-    model = (continuum + iron + n_halpha + b_halpha + n_hbeta + b_hbeta
-             + n_hgamma + b_hgamma + o3 + n2 + s2 + o1 + he2 + b_heii
-             + o3_4363 + n_hei + b_hei)
-
-    # -- ties: every narrow line sits at the velocity of [O III] -------------------
-    # The widths are not tied because there is nothing left to tie: the profile is
-    # the template, and stage 1 already fixed its width on [O III].
-    for line in (n_halpha, n_hbeta, n_hgamma, n_hei, he2, o3_4363):
-        line.dv.tied = jxm.tie.tie_MultiGauss_dv_c(NARROW_REFERENCE)
-    for line in (n2, s2, o1):
-        line.dv_c.tied = jxm.tie.tie_MultiGauss_dv_c(NARROW_REFERENCE)
-
-    # -- ties: broad lines share one velocity structure, not one peak --------------
-    for line in (b_hbeta, b_hgamma) if tie_broad else ():
-        line.dv_c.tied = jxm.tie.tie_MultiGauss_dv_c("b_halpha")
-        line.sigma_c.tied = jxm.tie.tie_MultiGauss_sigma_c("b_halpha")
-        for i in range(n_wings):
-            getattr(line, f"dv_w{i}").tied = getattr(
-                jxm.tie, f"tie_MultiGauss_dv_w{i}")("b_halpha")
-            getattr(line, f"sigma_w{i}").tied = getattr(
-                jxm.tie, f"tie_MultiGauss_sigma_w{i}")("b_halpha")
-    for line in (b_hei, b_heii):
-        line.dv_c.tied = jxm.tie.tie_MultiGauss_dv_c("b_halpha")
-        line.sigma_c.tied = jxm.tie.tie_MultiGauss_sigma_c("b_halpha")
-
-    # -- ties: the iron kernel IS the broad H-alpha profile ------------------------
-    iron.dv_c.tied = jxm.tie.tie_MultiGauss_dv_c("b_halpha")
-    iron.sigma_c.tied = jxm.tie.tie_MultiGauss_sigma_c("b_halpha")
-    for i in range(n_wings):
-        for stem in ("amp_w", "dv_w", "sigma_w"):
-            getattr(iron, f"{stem}{i}").tied = getattr(
-                jxm.tie, f"tie_MultiGauss_{stem}{i}")("b_halpha")
-
-    # -- ties: doublet ratios fixed by atomic physics ------------------------------
-    o3.amp_c1.tied = jxm.tie.tie_MultiGauss_doublet_ratio("OIII", 2.98)
-    n2.amp_c1.tied = jxm.tie.tie_MultiGauss_doublet_ratio("NII", 2.96)
-    o1.amp_c1.tied = jxm.tie.tie_MultiGauss_doublet_ratio("OI", 3.00)
+    tie_narrow_lines(narrow)
+    if tie_broad:
+        tie_broad_lines(broad, n_wings)
+    else:
+        broad["b_hei"].dv_c.tied = jxm.tie.tie_MultiGauss_dv_c("b_halpha")
+        broad["b_hei"].sigma_c.tied = jxm.tie.tie_MultiGauss_sigma_c("b_halpha")
+        broad["b_heii"].dv_c.tied = jxm.tie.tie_MultiGauss_dv_c("b_halpha")
+        broad["b_heii"].sigma_c.tied = jxm.tie.tie_MultiGauss_sigma_c("b_halpha")
+    tie_iron_template(pieces["FeII"])
 
     # display names, so the figure legend says which line it is
     for name in model.submodel_names:

@@ -56,6 +56,127 @@ DEVICE = "auto"                # "gpu", "cpu" or "auto"
 QUICK = False                  # True -> nlive 120, dlogz 0.5 (a rough answer)
 
 
+# %% model-pieces
+# ---- one figure per piece of the model ---------------------------------------------
+#: The component palette has a grey in it, which disappears against the grey data
+#: line; the panels below draw components only, so they skip it.
+_PREVIEW_COLOURS = tuple(colour for colour in galspec.plot._COMPONENT_COLORS
+                         if colour != "#7f7f7f")
+
+
+def plot_model_pieces(model, wave, flux, output_dir):
+    """Four small figures, one per chunk of ``build_model``.
+
+    Drawn from the *fitted* parameters, so each chunk's contribution to the total
+    figure can be seen on its own: the continuum, the broad lines, the narrow lines
+    and the iron pseudo-continuum.  The broad and narrow panels carry a second axis in
+    which the components are aligned on their peaks and normalised -- the narrow one
+    is how "one measured profile" is a picture and not a claim.
+
+    Separate from ``main`` so a saved fit can be re-rendered without refitting.
+    """
+    wave = np.asarray(wave, dtype=float)
+    flux = np.asarray(flux, dtype=float)
+
+    def piece(tag, curves, xlim, ylim=None, title=""):
+        fig, ax = plt.subplots(figsize=(7.6, 3.6), constrained_layout=True)
+        ax.step(wave, flux, where="mid", lw=0.6, color="0.6", label="Data")
+        for label, y, colour in curves:
+            ax.plot(wave, y, lw=1.3, color=colour, label=label)
+        if ylim is not None:
+            ax.set_ylim(*ylim)
+        ax.set_xlim(*xlim)
+        ax.set_xlabel("Rest wavelength  [A]")
+        ax.set_ylabel(FLUX_LABEL)
+        if title:
+            ax.set_title(title, fontsize=11)
+        ax.legend(loc="upper left", fontsize=8, frameon=False)
+        out = Path(output_dir) / f"iras07546_jax_model_{tag}.png"
+        fig.savefig(out, dpi=130, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  wrote {out}")
+
+    piece("continuum",
+          [("Power law", np.asarray(model["Continuum"](wave)), "#2b6cb0")],
+          (4200, 6800), ylim=(0.0, 1.6),
+          title="The continuum: one power law, anchored at 5500 A")
+
+    # the broad lines, the same two panels: where they sit, and what the ties do --
+    # the shift and width are shared, the two amplitudes are not (Balmer decrement)
+    broad_names = ("b_halpha", "b_hbeta", "b_hgamma", "b_hei", "b_heii")
+    fig, (ax, axb) = plt.subplots(1, 2, figsize=(13.0, 3.8), constrained_layout=True,
+                                  gridspec_kw={"width_ratios": [2.2, 1.0]})
+    ax.step(wave, flux, where="mid", lw=0.6, color="0.6", label="Data")
+    total = np.zeros_like(wave)
+    for index, name in enumerate(broad_names):
+        line = model[name]
+        colour = _PREVIEW_COLOURS[index]
+        y = np.asarray(line(wave))
+        total = total + y
+        ax.plot(wave, y, lw=1.1, color=colour, label=line.label or name)
+        velocity = 2.998e5 * (wave - float(line.wavec.value)) / float(line.wavec.value)
+        axb.plot(velocity - velocity[int(np.argmax(y))], y / max(y.max(), 1e-12),
+                 lw=1.1, color=colour)
+    ax.plot(wave, total, color="C3", lw=1.2, label="Sum of the broad lines")
+    ax.set_xlim(4200, 6800)
+    ax.set_ylim(0.0, 2.2)
+    ax.set_xlabel("Rest wavelength  [A]")
+    ax.set_ylabel(FLUX_LABEL)
+    ax.legend(loc="upper left", fontsize=8, frameon=False)
+    axb.set_xlim(-2000, 2000)
+    axb.set_ylim(0.0, 1.05)
+    axb.set_xlabel("velocity from the line centre  [km/s]")
+    axb.set_ylabel("each line, normalised to its peak")
+    axb.set_title("the same shift and width; the wind is free", fontsize=9)
+    out = Path(output_dir) / "iras07546_jax_model_broad.png"
+    fig.savefig(out, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  wrote {out}")
+
+    # the narrow lines in two panels: where they sit, and the point of the template --
+    # aligned on their own peaks and normalised, all ten are the same curve
+    narrow_names = ("n_halpha", "n_hbeta", "n_hgamma", "n_hei", "HeII", "OIII4363",
+                    "OIII", "NII", "SII", "OI")
+    fig, (ax, axn) = plt.subplots(1, 2, figsize=(13.0, 3.8), constrained_layout=True,
+                                  gridspec_kw={"width_ratios": [2.2, 1.0]})
+    ax.step(wave, flux, where="mid", lw=0.6, color="0.6", label="Data")
+    for index, name in enumerate(narrow_names):
+        line = model[name]
+        colour = _PREVIEW_COLOURS[index]
+        ax.plot(wave, np.asarray(line(wave)), lw=1.0, color=colour,
+                label=line.label or name)
+        centre = float(line.wavec0.value if "wavec0" in line.param_names
+                       else line.wavec.value)
+        velocity = 2.998e5 * (wave - centre) / centre
+        y = np.asarray(line(wave))
+        # align on the peak, not on the nominal wavelength: [S II] puts its larger
+        # amplitude on the redder member of the pair
+        axn.plot(velocity - velocity[int(np.argmax(y))], y / max(y.max(), 1e-12),
+                 lw=1.1, color=colour)
+    ax.set_xlim(4230, 5100)
+    ax.set_ylim(0.0, 2.4)
+    ax.set_xlabel("Rest wavelength  [A]")
+    ax.set_ylabel(FLUX_LABEL)
+    ax.legend(loc="upper left", fontsize=7, ncol=2, frameon=False)
+    axn.set_xlim(-2000, 1600)
+    axn.set_ylim(0.0, 1.08)
+    axn.set_xlabel("velocity from the line centre  [km/s]")
+    axn.set_ylabel("each line, normalised to its peak")
+    axn.set_title("one profile; doublets keep their atomic separation",
+                  fontsize=9)
+    axn.axhline(0.5, color="0.75", lw=0.7, ls=":")
+    out = Path(output_dir) / "iras07546_jax_model_narrow.png"
+    fig.savefig(out, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  wrote {out}")
+
+    iron = np.asarray(model["FeII"](wave))
+    piece("iron",
+          [("Fe II pseudo-continuum", iron, "#b7791f")],
+          (4200, 5600), ylim=(0.0, float(iron.max()) * 1.15),
+          title="The Fe II pseudo-continuum: one number, the amplitude")
+
+
 # ---- main: the four steps of a fit, top to bottom ----------------------------------
 def main() -> int:
     print("=" * 78)
@@ -71,11 +192,12 @@ def main() -> int:
 
     # %% step-2-model
     # ---- 2. Load the narrow-line profile, build the model, give every parameter a prior
-    # The profile is the one thing this model does not fit.  It comes from stage 1,
-    # which fitted the [O III] doublet alone: two components of known ratio, a
-    # polynomial continuum and an explicit Fe II component, with the evidence choosing
-    # between two and three kinematic components.  Everything about the narrow lines
-    # below is that profile plus an amplitude.
+    # The profile is the one thing this model does not fit.  It comes from step 2
+    # (fit_iras07546_o3_template.py), which fitted the [O III] doublet in a 160 A
+    # window: a polynomial local continuum, an explicit Fe II component, and a doublet
+    # with a core and two winds, the 5007/4959 ratio tied at 2.98.  The number of
+    # kinematic components was chosen by evidence there, not here.  Everything about
+    # the narrow lines below is that one profile plus an amplitude.
     template = load_template()
     tvel, tflux = template
     print(f"\ntemplate: {TEMPLATE_FILE.name}, {tvel.size} points, "
@@ -131,10 +253,14 @@ def main() -> int:
     # one width shared between them: the only difference is the narrow-line profile.
     # Nested sampling compares models by their evidence, so this is the number that
     # says whether freezing the shape was worth three fewer parameters.
-    template_row = REFERENCE["template"]
+    # this run's own numbers, so the table cannot go stale either
+    chi2_dof_run = float(np.sum(residual ** 2) / dof)
+    template_row = dict(REFERENCE["template"], free_parameters=len(theta),
+                        log_evidence=fit.log_evidence, chi2_dof=chi2_dof_run)
+    rows = dict(REFERENCE, template=template_row)
     print(f"\n  {'model':26s} {'free':>5s} {'ln Z':>12s} {'chi2/dof':>9s}")
     print("  " + "-" * 56)
-    for label, row in REFERENCE.items():
+    for label, row in rows.items():
         mark = "*" if label == "template" else " "
         print(f" {mark}{label:26s} {row['free_parameters']:5d} "
               f"{row['log_evidence']:12.2f} {row['chi2_dof']:9.3f}")
@@ -145,8 +271,8 @@ def main() -> int:
         print("  lines are ~16% broader than [O III], and a frozen [O III] shape cannot")
         print("  follow them.  What it buys is three fewer parameters, a better fit to")
         print("  [O III] itself, and a profile that is measured rather than assumed --")
-        print("  stage 1 measures that ratio and prints it; see also")
-        print("  develop/dev_template/README.md.")
+        print("  fit_iras07546_o3_template.py writes the file, and the portability check")
+        print("  in develop/dev_template/stage1_o3_template.py measures that ratio.")
 
     # %% step-6-figure
     # the fit itself: every component, and the residuals in units of the error.
@@ -167,6 +293,9 @@ def main() -> int:
     fig_path = OUTPUT_DIR / "iras07546_jax_fit.png"
     fig.savefig(fig_path, dpi=150, bbox_inches="tight")
     print(f"\n  wrote {fig_path}")
+
+    # %% step-6b-model-pieces
+    plot_model_pieces(model_best, wave, flux, OUTPUT_DIR)
 
     # %% step-7-zooms
     # and three zooms, where the lines actually are

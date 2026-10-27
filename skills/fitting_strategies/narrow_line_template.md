@@ -526,17 +526,19 @@ Compare the result with the **equivalent Gaussian sigma** of the template --
 `FWHM / 2.3548`, not the core sigma of any single component, because the template
 is not a Gaussian.
 
-Measured example (IRAS 07546+3928, `develop/dev_template/stage1_o3_template.py`):
+Measured example (IRAS 07546+3928, tallied from
+`example/fit_iras07546_o3_template.py` and the portability check in the local
+`develop/dev_template/stage1_o3_template.py`):
 
 | line | width | |
 | --- | --- | --- |
-| [O III] template | FWHM 592 km/s -> sigma_eq **251 km/s** | the anchor |
-| narrow H-alpha, free Gaussian | sigma **298 km/s** | FWHM 702 km/s |
+| [O III] template | FWHM 588 km/s -> sigma_eq **250 km/s** | the anchor |
+| narrow H-alpha, free Gaussian | sigma **~300 km/s** | FWHM ~700 km/s |
 | ratio | **0.84** | [O III] is 16% narrower |
 
 The consequence is quantitative: with the frozen [O III] shape the whole-spectrum
-evidence comes out **232 nats below** a Gaussian model that spends one free width
-on the same lines (130 656 against 130 890), even though the template has three
+evidence comes out **212 nats below** a Gaussian model that spends one free width
+on the same lines (130 677 against 130 890), even though the template has three
 fewer parameters and fits [O III] better. The narrow Balmer lines in that object
 really are broader than [O III] -- a known possibility, which is why the check
 exists.

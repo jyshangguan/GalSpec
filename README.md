@@ -164,27 +164,26 @@ be masked, is now covered by fitting He I 5876.
 The narrow lines are the part that is worth reading twice, because they are not
 Gaussians and they are not fitted. All ten of them are instances of **one measured
 profile**, `example/data/iras07546_narrow_template.txt`: 8 001 numbers on a 1 km/s
-velocity grid, extracted by `develop/dev_template/stage1_o3_template.py` from the
+velocity grid, extracted by `example/fit_iras07546_o3_template.py` from the
 [O III] 4959/5007 doublet alone. Each narrow line then contributes one number -- its
 peak -- plus one velocity shift shared by all ten, and no width at all. Where a
 Gaussian model spends a shift, a width and eight peaks (14 numbers), this spends 11,
-which is where the three fewer parameters come from. Stage 1 of that extraction is a
-local fit in a 160 A window with a polynomial continuum, an explicit Fe II component
-and two or three kinematic components, with the evidence choosing between them; see
-`develop/dev_template/README.md`.
+which is where the three fewer parameters come from. That extraction is a local fit in a
+160 A window with a polynomial continuum, an explicit Fe II component and three
+kinematic components (a core and two winds; the count was chosen by evidence in the
+scan in `develop/dev_template/`, a local script, not part of this repository).
 
 The trade is explicit and the example prints it. The frozen profile still describes
-the window it was measured on -- chi2/dof 0.102, against 0.056 for the free fit, on
-3 499 degrees of freedom -- so the extraction is self-consistent; but it assumes
-the Balmer and forbidden narrow lines share
-[O III]'s *shape*, and in this object they do not: the same local treatment applied
-to H-alpha gives `sigma = 298 km/s`, against an equivalent `sigma` of 250 km/s for the
-[O III] profile. The Balmer narrow lines are about 16% broader, so a frozen [O III]
-shape under-fits them, and the evidence comes out **lower** than the Gaussian model's
--- 130 658.06 +- 0.58 against 130 889.60 +- 0.62, for 27 parameters against 30, and
-chi2/dof 0.316 against 0.307. That is a measurement of this object, not a defect of
-the method; stage 1 reports the ratio so that the assumption is checked before it is
-relied on.
+the window it was measured on -- chi2/dof 0.086 over 3 499 degrees of freedom -- so the
+extraction is self-consistent; but it assumes the Balmer and forbidden narrow lines
+share [O III]'s *shape*, and in this object they do not: the same local treatment
+applied to H-alpha gives a width of about 300 km/s, against an equivalent `sigma` of
+250 km/s for the [O III] profile. The Balmer narrow lines are about 16% broader, so a
+frozen [O III] shape under-fits them, and the evidence comes out **lower** than the
+Gaussian model's -- 130 677.27 +- 0.58 against 130 889.60 +- 0.62, for 27 parameters
+against 30, and chi2/dof 0.315 against 0.307. That is a measurement of this object, not
+a defect of the method; the extraction prints the profile's FWHM next to the template it
+writes, so the assumption is checked before it is relied on.
 
 The doublet ratios are tied at their atomic values except [S II], whose 6716/6731
 ratio is a density diagnostic and is therefore measured. The Fe II template is
@@ -221,11 +220,11 @@ answer by `develop/dev_jax/broad_line_components.py`, whose write-up is
 `docs/source/priors.rst` (section "Worked example: switching a component off"),
 together with the mock calibration. On IRAS 07546+3928 that run reports **four**
 components -- a core plus three wings -- and it is not a marginal call: every one of
-215 659 equally weighted samples has all three wings on and above the 3%-of-core
+211 675 equally weighted samples has all three wings on and above the 3%-of-core
 amplitude floor (posterior probability 1.000, against 0.84 for the Gaussian
 narrow-line model of the earlier example, whose narrow-line mismatch was being paid
-for out of the widest wing). It improves chi2/dof from 0.316 to 0.191, and costs
-50 min at `NLIVE = 1000` for 37 free parameters.
+for out of the widest wing). It improves chi2/dof from 0.315 to 0.191, and costs
+49 min at `NLIVE = 1000` for 37 free parameters.
 
 Whether broad H-beta and H-gamma really have *the same shape* as broad H-alpha is
 the question of `example/fit_iras07546_jax_tied.py`. Instead of tying their shifts
@@ -247,15 +246,15 @@ more than five widths out" (the default, seven, is where the Gaussian has run ou
 The fit then reports the difference per component, in km/s and in units of that
 width -- the pull -- so "similar" becomes
 a measurement rather than an assumption. On this object the narrow **cores** come back
-consistent with H-alpha's (pulls -0.72 and -0.41 tie widths): for them the hard tie was
+consistent with H-alpha's (pulls -0.81 and -0.46 tie widths): for them the hard tie was
 right. The four **wind** parameters are where the lines differ -- H-beta's wind is
-within a third of a tie width of H-alpha's, but H-gamma's is 64% broader and 520 km/s
-bluer, at +3.18 of its five-width window -- and no parameter sits against a hard limit
+within a third of a tie width of H-alpha's, but H-gamma's is 60% broader and 504 km/s
+bluer, at +2.99 of its five-width window -- and no parameter sits against a hard limit
 any more, which is what the previous, Gaussian narrow-line model produced (its two wind
 widths piled up on the 8000 km/s ceiling; see `docs/source/priors.rst` for that
-history). The evidence is **+880 nats higher** than the hard tie's rather than the 21
-lower a needless freedom would cost, and chi2/dof falls from 0.316 to 0.284: over
-57 000 pixels that is +914 nats of likelihood against the 21 the extra prior volume
+history). The evidence is **+833 nats higher** than the hard tie's rather than the 21
+lower a needless freedom would cost, and chi2/dof falls from 0.315 to 0.285: over
+57 000 pixels that is +863 nats of likelihood against the 21 the extra prior volume
 costs, so the gain is the better fit and not a book-keeping effect. JNesty seeds from a
 fixed key, so a rerun draws the same live points; the evidence still comes back inside
 its error bar rather than bitwise (three runs of the 27-parameter fit span 1.8 nats).

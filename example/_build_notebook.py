@@ -560,6 +560,19 @@ without covering the data."""),
 
     ("code", "step-6-figure"),
 
+    ("md", """### The pieces, drawn on their own
+
+The figure above multiplies the components together, which is what the fit is judged on but
+not what the model is built from. `plot_model_pieces` draws the four chunks of
+`build_model()` from the *fitted* parameters: the continuum, the broad lines, the narrow
+lines (twice -- where they sit, and aligned on their peaks to show they are one curve), and
+the iron pseudo-continuum. These are the figures the walkthrough uses to explain the model
+piece by piece."""),
+
+    ("code", "model-pieces"),
+
+    ("code", "step-6b-model-pieces"),
+
     ("md", """### Zooms
 
 The whole-spectrum figure is crowded; the same function, called on a wavelength window, shows
@@ -600,16 +613,17 @@ written in the corner, so nothing is hidden by the zoom."""),
   is tied to them, that caveat propagates to the iron profile too. They are also *exchangeable*
   (see the priors section), which is why the wind amplitude carries the bounded ratio prior.
 * Without the LSF folded in, the narrow profile includes the instrument (~150 km/s FWHM, small
-  next to ~592 km/s but not zero). Subtract it in quadrature if you need the gas kinematics alone.
+  next to ~588 km/s but not zero). Subtract it in quadrature if you need the gas kinematics alone.
 * The narrow lines share one *shape* by construction, and that assumption is measurably wrong
   here: the same local treatment applied to H-alpha (its own Gaussian, [N II] tied to it) gives
-  `sigma = 298 km/s`, while the [O III] profile has an equivalent `sigma` of 250 km/s. The
+  a width of about 300 km/s, while the [O III] profile has an equivalent `sigma` of 250 km/s. The
   Balmer narrow lines are about 16% broader than [O III]. So this model *under-fits* H-alpha,
   H-beta and [N II], and its evidence comes out **lower** than the Gaussian model's despite
-  having three fewer parameters -- 130 658 against 130 890, chi2/dof 0.316 against 0.307.
+  having three fewer parameters -- 130 677 against 130 890, chi2/dof 0.315 against 0.307.
   That is a statement about this
   object, not about the method: measure the profile on the line you trust and check, as
-  `stage1_o3_template.py` does, that the other lines agree with it before freezing it.
+  `example/fit_iras07546_o3_template.py` does, that the other lines agree with it before freezing
+  it.
 * The [S II] ratio is measured, not assumed, because it is a density diagnostic: I(6716)/I(6731)
   near 1.3 means low-density gas, near 0.5 high-density. Turning it into an electron density
   needs a temperature and the atomic data, which is beyond a line-profile fit.

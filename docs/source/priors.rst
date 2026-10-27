@@ -215,71 +215,70 @@ parameters (H-beta and H-gamma, core and wind, width and shift) split three ways
      - fractional
      - pull
    * - ``b_hbeta.sigma_c``
-     - 1 208.8
-     - 1 032.4
-     - -176.4
-     - -14.6%
-     - -0.73
+     - 1 227.6
+     - 1 029.4
+     - -198.2
+     - -16.1%
+     - -0.81
    * - ``b_hbeta.dv_c``
-     - 246.6
-     - 109.6
-     - -137.0
-     - -55.6%
-     - -2.27
+     - 234.8
+     - 102.2
+     - -132.7
+     - -56.5%
+     - -2.16
    * - ``b_hbeta.sigma_w0``
-     - 4 178.7
-     - 3 922.0
-     - -256.6
-     - -6.1%
-     - -0.31
+     - 4 214.2
+     - 3 978.2
+     - -235.4
+     - -5.6%
+     - -0.28
    * - ``b_hbeta.dv_w0``
-     - -397.5
-     - -861.0
-     - -463.3
-     - -116.5%
-     - -2.22
+     - -398.4
+     - -770.5
+     - -372.6
+     - -93.5%
+     - -1.77
    * - ``b_hgamma.sigma_c``
-     - 1 208.8
-     - 1 109.1
-     - -99.5
-     - -8.2%
-     - -0.41
+     - 1 227.6
+     - 1 114.6
+     - -112.8
+     - -9.2%
+     - -0.46
    * - ``b_hgamma.dv_c``
-     - 246.6
-     - 222.1
-     - -24.4
-     - -9.9%
-     - -0.40
+     - 234.8
+     - 218.9
+     - -15.9
+     - -6.8%
+     - -0.26
    * - ``b_hgamma.sigma_w0``
-     - 4 178.7
-     - 6 773.7
-     - +2 595.0
-     - +62.1%
-     - **+3.11**
+     - 4 214.2
+     - 6 732.7
+     - +2 522.9
+     - +59.9%
+     - **+2.99**
    * - ``b_hgamma.dv_w0``
-     - -397.5
-     - -907.1
-     - -509.6
-     - -128.1%
-     - -2.44
+     - -398.4
+     - -903.2
+     - -504.3
+     - -126.6%
+     - -2.39
 
-The four **core** parameters agree with H-alpha's -- pulls inside 0.8 for the widths
-and 2.3 for the shifts -- so for the narrow cores the hard tie was right and could
+The four **core** parameters agree with H-alpha's -- pulls inside 0.9 for the widths
+and 2.2 for the shifts -- so for the narrow cores the hard tie was right and could
 have stayed. The four **wind** parameters are where the two lines differ: H-beta's
-wind is H-alpha's within a third of a tie width in width and 2.2 in shift, but
-H-gamma's is 62% broader and 509 km/s bluer, at +3.11 of its five-width window.
+wind is H-alpha's within a third of a tie width in width and 1.8 in shift, but
+H-gamma's is 60% broader and 504 km/s bluer, at +2.99 of its five-width window.
 
-The soft fit comes out **+880.17 +- 0.70** above the hard tie: the eight parameters
-bought about 915 nats of likelihood (``chi2/dof`` 0.316 -> 0.284 over 56 921 degrees
-of freedom, worth ``0.5 x 1 830 = +915``) and cost 21.5 in prior volume.
-915 - 21.5 = 893 against the measured 880, which agrees to the accuracy of a chi2/dof
-printed to three digits (0.001 of it is 57 nats). The evidence went into the
-likelihood, not into book-keeping.
+The soft fit comes out **+833.21 +- 0.71** above the hard tie: the eight parameters
+bought about 863 nats of likelihood (``chi2/dof`` 0.315 -> 0.285 over 56 921 degrees
+of freedom) and cost 21.2 in prior volume. 863 - 21.2 = 842 against the measured 833,
+which agrees to the accuracy of a chi2/dof printed to three digits (0.001 of it is
+57 nats). The evidence went into the likelihood, not into book-keeping.
 
 Two things about that number are worth stating plainly, because it is larger than the
 pulls suggest and it is the kind of result that gets over-read:
 
-* **A 3.1-sigma pull plus an 880-nat evidence gain is not a contradiction.** The pulls
+* **A 3.0-sigma pull plus an 833-nat evidence gain is not a contradiction.** The pulls
   are per parameter and are measured relative to H-alpha's *value*; the evidence is
   the joint likelihood gain from re-shaping three line profiles at once, and a change
   of a few per cent in a broad wing that spans 1 500 A moves a lot of pixels. The
@@ -289,7 +288,7 @@ pulls suggest and it is the kind of result that gets over-read:
   two wind widths piled up on the 8 000 km/s ceiling of the width prior, which is a
   prior artefact and not a measurement; with the narrow lines described by the
   measured [O III] template (see :doc:`fitting_walkthrough`) the released widths come
-  out at 3 922 +- 83 and 6 774 +- 320 km/s, both inside the box, with 0% of their
+  out at 3 978 +- 94 and 6 733 +- 330 km/s, both inside the box, with none of their
   posterior against either wall. The released parameters are therefore measurements,
   which they were not before.
 
@@ -305,24 +304,24 @@ move is the honest error bar on the tie assumption:
      - soft tie
      - difference
    * - ``b_halpha.sigma_c``
-     - 1 182 +- 6
-     - 1 209 +- 8
-     - 27 (3 sigma)
+     - 1 194 +- 6
+     - 1 228 +- 8
+     - 34 (3 sigma)
    * - ``b_halpha.sigma_w0``
-     - 4 289 +- 40
-     - 4 179 +- 53
-     - 110 (2 sigma)
+     - 4 316 +- 41
+     - 4 214 +- 61
+     - 102 (2 sigma)
 
-Two per cent, and the shifts move by less (246.6 against 219.2). So the answer is not
+Three per cent, and the shifts move by less (234.8 against 209.4). So the answer is not
 sensitive to whether the tie holds -- what is sensitive is the evidence, and that is
 the quantity the tie was deciding.
 
 A gain that size is worth checking against the sampler before it is quoted, and the
 control is cheap. JNesty seeds its live points from a fixed key, so a rerun visits the
-same live points -- but bitwise identity is not what comes back. This fit has been run
-twice on the same GPU and gave 131 538.93 and 131 538.48: 0.45 nats apart, inside the
-error bar, from the last bits of a GPU sum feeding the sampler's ordering. The 27
-parameter fit repeats to about the same tolerance (three runs span 1.8 nats). What also
+same live points -- but bitwise identity is not what comes back: two runs of this fit
+on the same GPU differed by 0.45 nats, which is inside the error bar, from the last
+bits of a GPU sum feeding the sampler's ordering. The 27-parameter fit repeats to about
+the same tolerance (three runs span 1.8 nats). What also
 matters is the live-point count: rerunning the hard-tie fit at 1 000 points instead of
 400 moved it by 2 nats with the same posteriors. So the honest error on a single
 evidence is a few nats rather than the 0.6 the run reports -- and this difference is
@@ -402,7 +401,7 @@ The recipe, as ``example/fit_iras07546_jax_toggle.py`` applies it:
    needs (1.000 for four); right, the probability that each of the three wings is on.
 
 The answer on IRAS 07546+3928: the run asked for at most four broad components and
-returned **four** -- a core plus three wings. All 215 659 equally weighted samples have
+returned **four** -- a core plus three wings. All 211 675 equally weighted samples have
 all three wings on *and* all three above the 3% floor, so ``P(3 wings) = 1.000`` and
 every Bayes factor is unbounded above: with the narrow lines described by the measured
 template rather than a Gaussian each, the count is not a marginal call at all. (The
@@ -420,30 +419,30 @@ width, broad H-alpha comes out as:
      - share of the broad flux
    * - core
      - 1.000
-     - 2 059
-     - +309
+     - 2 047
+     - +312
      - 47.0%
    * - wing 1
-     - 0.083
-     - 2 511
-     - -890
-     - 4.8%
+     - 0.091
+     - 2 498
+     - -908
+     - 5.1%
    * - wing 2
-     - 0.266
-     - 5 337
-     - +17
-     - 32.3%
+     - 0.272
+     - 5 298
+     - +12
+     - 32.5%
    * - wing 3
-     - 0.037
-     - 18 826
-     - -3 731
-     - 16.0%
+     - 0.038
+     - 18 827
+     - -3 590
+     - 16.2%
 
 Two caveats come with that answer. The pedestal (wing 3) sits on the width ceiling --
-18 826 km/s of FWHM is 7 994 km/s of sigma against the 8 000 km/s bound -- so how wide
+18 827 km/s of FWHM is 7 995 km/s of sigma against the 8 000 km/s bound -- so how wide
 it is, and possibly how many components describe the base of the line, is limited by the
 adopted range rather than by the data. And the count is floor-sensitive in the expected
-way: the pedestal peaks at 3.7% of the core, just above the 3% floor, so at a 5% floor
+way: the pedestal peaks at 3.8% of the core, just above the 3% floor, so at a 5% floor
 the count is three and at 10% it is two -- not because the pedestal is noise (its Bayes
 factor is unbounded) but because a coarser floor is a different definition of "a
 component".

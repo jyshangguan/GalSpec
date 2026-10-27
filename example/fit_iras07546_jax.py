@@ -155,7 +155,7 @@ def main() -> int:
     fig = plt.figure(figsize=(17.0, 8.0))
     ax = fig.add_axes([0.055, 0.20, 0.80, 0.72])
     axr = fig.add_axes([0.055, 0.07, 0.80, 0.13])
-    galspec.plot.plot_fit(wave, flux, model_best, ax=ax, axr=axr, error=error,
+    galspec.plot.plot_fit_jax(wave, flux, model_best, ax=ax, axr=axr, error=error,
                           residual_in_sigma=True,
                           xlabel="Rest wavelength  [A]", ylabel=FLUX_LABEL,
                           legend_kwargs={"fontsize": 10, "ncol": 2,
@@ -171,7 +171,7 @@ def main() -> int:
     # %% step-7-zooms
     # and three zooms, where the lines actually are
     for tag, title, xlim, ylim in ZOOMS:
-        ax, _ = galspec.plot.plot_fit(wave, flux, model_best, error=error,
+        ax, _ = galspec.plot.plot_fit_jax(wave, flux, model_best, error=error,
                                       xlim=xlim, ylim0=ylim, ylim1=(-8, 8),
                                       residual_in_sigma=True,
                                       xlabel="Rest wavelength  [A]", ylabel=FLUX_LABEL,

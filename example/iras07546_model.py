@@ -71,16 +71,17 @@ PHOTON_FRACTION = 0.05         # 5% of the flux: photon noise of the source itse
 #: used 400 live points and dlogz 0.01.  The template model has been implemented
 #: twice -- here and in develop/dev_template/stage2_full_template.py -- and the two
 #: agree to 0.01 nats, which is the point of the fixed key: two implementations, one
-#: number.  Re-running this example gives 130 656.22 rather than 130 656.34 -- 0.12
-#: nats, from the last bits of a GPU sum feeding the sampler's ordering -- so quote
-#: the evidence to a decimal, not a hundredth.
+#: number.  What the fixed key does *not* buy is bitwise identity: three runs of this
+#: example gave 130 656.34, 130 656.22 and 130 658.06, from the last bits of a GPU
+#: sum feeding the sampler's ordering.  So quote the evidence to about a nat -- the
+#: difference this model is judged on is two hundred of them.
 REFERENCE = {
     "published": {"free_parameters": 30, "log_evidence": 130889.60,
                   "log_evidence_error": 0.62, "chi2_dof": 0.307,
                   "minutes": 10.2},
-    "template": {"free_parameters": 27, "log_evidence": 130656.22,
+    "template": {"free_parameters": 27, "log_evidence": 130658.06,
                  "log_evidence_error": 0.58, "chi2_dof": 0.316,
-                 "minutes": 7.5},
+                 "minutes": 7.4},
 }
 
 N_WINGS = 1                    # wind components after the broad core

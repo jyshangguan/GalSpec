@@ -515,9 +515,11 @@ peaked.
 Drawing twenty components
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``galspec.plot.plot_fit`` draws every component, the total model and the residual
-panel from one call.  Two conventions in it exist because a twenty-component fit
-broke the defaults:
+``galspec.plot.plot_fit_jax`` draws every component, the total model and the residual
+panel from one call -- for a JAX model.  (``plot_fit`` is the astropy counterpart;
+the two are the same figure, and the reason they are two functions is at the end of
+this section.)  Two conventions in it exist because a twenty-component fit broke the
+defaults:
 
 * **Colours.**  matplotlib's ten-colour cycle is not enough for twenty components:
   two unrelated lines end up in the same colour, and the worst case is a line
@@ -532,6 +534,39 @@ broke the defaults:
 
 The legend is placed by the caller: with twenty entries, ``bbox_to_anchor`` outside
 the axes is the only way to keep it from covering the data.
+
+Multi-Gaussian lines are broken into their Gaussians
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``Line_MultiGauss`` and ``Line_MultiGauss_doublet`` are sums: a core plus one per
+wind, and (for a doublet) one of each under each line.  ``plot_fit_jax`` draws every
+one of them as a dashed curve in the colour of the component it belongs to, so the
+broad H-alpha core and its wind can be told apart in the figure instead of only in
+the parameter table::
+
+    model["b_halpha"].n_components       # 2 in the worked example: core + one wind
+    model["b_halpha"].subcomponents      # [Line_Gaussian(core), Line_Gaussian(wind0)]
+
+``subcomponents`` is a property on the JAX models, mirroring the astropy property of
+the same name: it returns ``galspec.Line_Gaussian`` objects carrying the *absolute*
+amplitude (the stored wind amplitudes are relative to the core) and the *absolute*
+shift ``dv_c + dv_w{i}``, so ``sum(part(wave) for part in m.subcomponents)`` is the
+component itself, to 1e-16.  It reads the current parameter values, which is why
+``plot_fit_jax`` first asks the compound model to write its tied parameters back --
+otherwise a tied amplitude would be drawn at its construction default.
+
+Why not one function
+~~~~~~~~~~~~~~~~~~~~
+
+``plot_fit`` cannot do this for a JAX model, and the failure is silent.  Its test is
+``isinstance(m, galspec.Line_MultiGauss)``, against the *astropy* class;
+``galspec.jax_models.Line_MultiGauss`` is a different class that happens to have the
+same name, so the branch is never taken and the dashed curves simply do not appear.
+Everything else about a JAX model duck-types -- iteration yields the leaves, they
+have ``name`` and ``label``, calling one evaluates it -- which is exactly why the
+omission is easy to miss.  Hence two functions with the same signature: pass an
+astropy model to ``plot_fit``, a JAX model (or a ``JNesty_Fit``) to
+``plot_fit_jax``.
 
 Saving a fit, and what lives on the GPU
 ---------------------------------------

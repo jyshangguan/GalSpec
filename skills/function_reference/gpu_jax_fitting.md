@@ -329,33 +329,45 @@ pass `wave=` explicitly if the stored grid was rebinned.
 
 ## 9. Making a figure from a JAX fit
 
-`galspec.plot.plot_fit` is astropy-based, so build a CPU twin at the best
-sample and pass that:
+Pass the JAX model straight to `plot_fit_jax`:
 
 ```python
-model_jax, _, theta = fit.get_best_fit()
-resolved = model_jax.param_dict()
-
-parts = list(galspec_build_model(...))          # same model, astropy classes
-model_cpu = parts[0]
-for p in parts[1:]:
-    model_cpu = model_cpu + p
-for flat, qualified in zip(model_jax.param_names, model_jax.qualified_param_names):
-    sub, par = qualified.split(".", 1)
-    getattr(model_cpu[sub], par).value = resolved[flat]
+model_jax, _, theta = fit.get_best_fit()        # also sets the current values
+ax, axr = galspec.plot.plot_fit_jax(wave, flux, model_jax, error=error,
+                                    residual_in_sigma=True,
+                                    xlabel="Rest wavelength  [A]")
 ```
 
-Always check the parity before trusting the figure:
+Same signature and same figure as `plot_fit`, plus two things it cannot do for a
+JAX model:
+
+- it refreshes tied parameters first (`model.sync_tied_values()`), because a JAX
+  leaf keeps its own storage and a tied one holds its construction default until
+  something writes the tie back;
+- it breaks `Line_MultiGauss` / `Line_MultiGauss_doublet` into their Gaussians as
+  dashed curves, via the model's `subcomponents` property (core, then one per wind;
+  a doublet gets one of each under each line).
+
+```python
+model_jax["b_halpha"].n_components      # 2
+parts = model_jax["b_halpha"].subcomponents   # [Line_Gaussian(core), Line_Gaussian(wind0)]
+assert np.allclose(sum(p(wave) for p in parts), model_jax["b_halpha"](wave))
+```
+
+Do **not** pass a JAX model to `plot_fit`: its `isinstance(m, Line_MultiGauss)`
+test is against the *astropy* class, so the dashed subcomponents silently vanish
+(everything else duck-types, which is what makes the bug quiet).
+
+A `JNesty_Fit` works too — `plot_fit_jax(wave, flux, fit, ...)` calls
+`get_best_fit()` itself.
+
+If you need an astropy twin anyway (to hand the model to code that only accepts
+astropy models), build it and check the parity rather than assuming it:
 
 ```python
 dev = np.max(np.abs(model_cpu(wave) - model_jax.flux(wave, theta))) / np.max(np.abs(model_jax.flux(wave, theta)))
 assert dev < 1e-6, dev
 ```
-
-If the model contains a template that is not an analytic astropy component
-(e.g. Fe II broadened by the fitted profile), the cleanest route is to evaluate
-the JAX model twice — once with the template amplitude set to zero — and insert
-the difference as a tabulated astropy component.
 
 ## 10. Checklist
 

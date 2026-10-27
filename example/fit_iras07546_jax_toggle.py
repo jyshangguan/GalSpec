@@ -400,7 +400,7 @@ def main() -> int:
           "from a\n   plain-prior refit at that count.)")
 
     # figures
-    ax, _ = galspec.plot.plot_fit(wave, flux, model_best, error=error,
+    ax, _ = galspec.plot.plot_fit_jax(wave, flux, model_best, error=error,
                                   residual_in_sigma=True, xlabel="Rest wavelength  [A]",
                                   ylabel=shared.FLUX_LABEL,
                                   legend_kwargs={"fontsize": 10, "ncol": 2})

@@ -541,10 +541,16 @@ other instruments."""),
 
     ("md", """## 8. The fit, drawn with GalSpec's own plotting function
 
-`galspec.plot.plot_fit` takes the fitted JAX model directly and draws the data, the total
+`galspec.plot.plot_fit_jax` takes the fitted JAX model directly and draws the data, the total
 model, **every component**, the dashed sub-components of each multi-Gaussian line (so the
-broad core and wind of each Balmer line can be told apart) and the residual panel. The narrow
-lines appear as they are in the model: one profile each, no hidden sub-structure.
+broad core and wind of each Balmer line can be told apart) and the residual panel. The
+decomposition comes from the model itself -- `Line_MultiGauss.subcomponents` returns the
+Gaussians it sums, as `galspec.Line_Gaussian` objects, exactly like the astropy model's
+property of that name. `plot_fit` cannot do that for a JAX model: it tests
+`isinstance(m, Line_MultiGauss)` against the astropy class, and a JAX leaf is an instance of a
+different class with the same name, so the dashed curves would silently go missing.
+
+The narrow lines appear as they are in the model: one profile each, no hidden sub-structure.
 
 Two details of the figure are deliberate. The residual panel is drawn in **units of sigma**
 (`residual_in_sigma=True`), so a residual of 3 means three error bars and the stated rms can be
@@ -600,7 +606,7 @@ written in the corner, so nothing is hidden by the zoom."""),
   `sigma = 298 km/s`, while the [O III] profile has an equivalent `sigma` of 250 km/s. The
   Balmer narrow lines are about 16% broader than [O III]. So this model *under-fits* H-alpha,
   H-beta and [N II], and its evidence comes out **lower** than the Gaussian model's despite
-  having three fewer parameters -- 130 656 against 130 890, chi2/dof 0.316 against 0.307.
+  having three fewer parameters -- 130 658 against 130 890, chi2/dof 0.316 against 0.307.
   That is a statement about this
   object, not about the method: measure the profile on the line you trust and check, as
   `stage1_o3_template.py` does, that the other lines agree with it before freezing it.

@@ -188,7 +188,7 @@ released parameter costs
 
    \Delta \ln Z \;\approx\; \ln \frac{\sigma_{\rm tie}\sqrt{2\pi}}{\sigma_{\rm post}} ,
 
-which for the eight parameters is +21.2 *if the tie is right* (the script computes it
+which for the eight parameters is +21.5 *if the tie is right* (the script computes it
 from each parameter's own posterior width). A drop of that size is the expected cost of
 a freedom the data did not need; a rise means the likelihood gained more than the prior
 volume cost, i.e. the tie was wrong.
@@ -215,82 +215,71 @@ parameters (H-beta and H-gamma, core and wind, width and shift) split three ways
      - fractional
      - pull
    * - ``b_hbeta.sigma_c``
-     - 1 207.8
-     - 1 034.2
-     - -173.5
-     - -14.4%
-     - -0.72
+     - 1 208.8
+     - 1 032.4
+     - -176.4
+     - -14.6%
+     - -0.73
    * - ``b_hbeta.dv_c``
-     - 246.8
-     - 110.3
-     - -136.5
-     - -55.3%
-     - -2.26
+     - 246.6
+     - 109.6
+     - -137.0
+     - -55.6%
+     - -2.27
    * - ``b_hbeta.sigma_w0``
-     - 4 173.0
-     - 3 938.5
-     - -233.1
-     - -5.6%
-     - -0.28
+     - 4 178.7
+     - 3 922.0
+     - -256.6
+     - -6.1%
+     - -0.31
    * - ``b_hbeta.dv_w0``
      - -397.5
-     - -869.6
-     - -471.8
-     - -118.7%
-     - -2.26
+     - -861.0
+     - -463.3
+     - -116.5%
+     - -2.22
    * - ``b_hgamma.sigma_c``
-     - 1 207.8
-     - 1 109.9
-     - -98.4
-     - -8.1%
+     - 1 208.8
+     - 1 109.1
+     - -99.5
+     - -8.2%
      - -0.41
    * - ``b_hgamma.dv_c``
-     - 246.8
+     - 246.6
      - 222.1
-     - -24.8
-     - -10.0%
-     - -0.41
+     - -24.4
+     - -9.9%
+     - -0.40
    * - ``b_hgamma.sigma_w0``
-     - 4 173.0
-     - 6 824.6
-     - +2 653.4
-     - +63.6%
-     - **+3.18**
+     - 4 178.7
+     - 6 773.7
+     - +2 595.0
+     - +62.1%
+     - **+3.11**
    * - ``b_hgamma.dv_w0``
      - -397.5
-     - -920.3
-     - -523.1
-     - -131.6%
-     - -2.51
+     - -907.1
+     - -509.6
+     - -128.1%
+     - -2.44
 
-The four **core** parameters agree with H-alpha's -- pulls inside 1.0 for the widths
+The four **core** parameters agree with H-alpha's -- pulls inside 0.8 for the widths
 and 2.3 for the shifts -- so for the narrow cores the hard tie was right and could
 have stayed. The four **wind** parameters are where the two lines differ: H-beta's
-wind is H-alpha's within a third of a tie width in width and 2.3 in shift, but
-H-gamma's is 64% broader and 520 km/s bluer, at +3.18 of its five-width window.
+wind is H-alpha's within a third of a tie width in width and 2.2 in shift, but
+H-gamma's is 62% broader and 509 km/s bluer, at +3.11 of its five-width window.
 
-The evidence moves too, and its sign has to be read carefully. For a Gaussian of width
-:math:`\sigma_{\rm tie}` against a posterior of width :math:`\sigma_{\rm post}`, each
-released parameter costs
-
-.. math::
-
-   \Delta \ln Z \;\approx\; \ln \frac{\sigma_{\rm tie}\sqrt{2\pi}}{\sigma_{\rm post}} ,
-
-which for these eight parameters is +21.2 *if the tie is right* (the script computes
-it from each parameter's own posterior width). A drop of that size is the expected
-cost of a freedom the data did not need; a rise means the likelihood gained more than
-the prior volume cost, i.e. the tie was wrong. The soft fit comes out **+882.26 +-
-0.71** above the hard tie: the eight parameters bought 914 nats of likelihood
-(``chi2/dof`` 0.316 -> 0.284 over 56 921 degrees of freedom, worth
-``0.5 x 1 828 = +914``) and cost 21 in prior volume. 914 - 21 = 893 against the
-measured 883, which agrees to the accuracy of a chi2/dof printed to three digits
-(0.001 of it is 57 nats). The evidence went into the likelihood, not into book-keeping.
+The soft fit comes out **+880.17 +- 0.70** above the hard tie: the eight parameters
+bought about 915 nats of likelihood (``chi2/dof`` 0.316 -> 0.284 over 56 921 degrees
+of freedom, worth ``0.5 x 1 830 = +915``) and cost 21.5 in prior volume.
+915 - 21.5 = 893 against the measured 880, which agrees to the accuracy of a chi2/dof
+printed to three digits (0.001 of it is 57 nats). The evidence went into the
+likelihood, not into book-keeping.
 
 Two things about that number are worth stating plainly, because it is larger than the
 pulls suggest and it is the kind of result that gets over-read:
 
-* **A 3.2-sigma pull plus a 883-nat evidence gain is not a contradiction.** The pulls
+* **A 3.1-sigma pull plus an 880-nat evidence gain is not a contradiction.** The pulls
   are per parameter and are measured relative to H-alpha's *value*; the evidence is
   the joint likelihood gain from re-shaping three line profiles at once, and a change
   of a few per cent in a broad wing that spans 1 500 A moves a lot of pixels. The
@@ -300,7 +289,7 @@ pulls suggest and it is the kind of result that gets over-read:
   two wind widths piled up on the 8 000 km/s ceiling of the width prior, which is a
   prior artefact and not a measurement; with the narrow lines described by the
   measured [O III] template (see :doc:`fitting_walkthrough`) the released widths come
-  out at 3 939 +- 87 and 6 825 +- 387 km/s, both inside the box, with 0% of their
+  out at 3 922 +- 83 and 6 774 +- 320 km/s, both inside the box, with 0% of their
   posterior against either wall. The released parameters are therefore measurements,
   which they were not before.
 
@@ -317,14 +306,14 @@ move is the honest error bar on the tie assumption:
      - difference
    * - ``b_halpha.sigma_c``
      - 1 182 +- 6
-     - 1 208 +- 8
-     - 26 (3 sigma)
+     - 1 209 +- 8
+     - 27 (3 sigma)
    * - ``b_halpha.sigma_w0``
-     - 4 290 +- 40
-     - 4 173 +- 56
-     - 117 (2 sigma)
+     - 4 289 +- 40
+     - 4 179 +- 53
+     - 110 (2 sigma)
 
-Two per cent, and the shifts move by less (246.8 against 219.1). So the answer is not
+Two per cent, and the shifts move by less (246.6 against 219.2). So the answer is not
 sensitive to whether the tie holds -- what is sensitive is the evidence, and that is
 the quantity the tie was deciding.
 
@@ -332,8 +321,8 @@ A gain that size is worth checking against the sampler before it is quoted, and 
 control is cheap. JNesty seeds its live points from a fixed key, so a rerun visits the
 same live points -- but bitwise identity is not what comes back. This fit has been run
 twice on the same GPU and gave 131 538.93 and 131 538.48: 0.45 nats apart, inside the
-error bar, from the last bits of a GPU sum feeding the sampler's ordering. (The 27
-parameter fit repeats more tightly: 0.12 nats.) What also
+error bar, from the last bits of a GPU sum feeding the sampler's ordering. The 27
+parameter fit repeats to about the same tolerance (three runs span 1.8 nats). What also
 matters is the live-point count: rerunning the hard-tie fit at 1 000 points instead of
 400 moved it by 2 nats with the same posteriors. So the honest error on a single
 evidence is a few nats rather than the 0.6 the run reports -- and this difference is

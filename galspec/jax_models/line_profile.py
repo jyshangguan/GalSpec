@@ -266,6 +266,42 @@ class Line_MultiGauss(JaxModel):
                 flux = flux / peak
         return flux
 
+    @property
+    def subcomponents(self) -> Optional[list]:
+        """The Gaussians this model sums, as ``galspec.Line_Gaussian`` objects.
+
+        The counterpart of the astropy model's property, and the reason
+        :func:`galspec.plot.plot_fit_jax` can draw one dashed curve per component:
+        a JAX compound model carries no astropy class hierarchy, so the same test
+        (``isinstance(m, Line_MultiGauss)``) cannot be made inside ``plot_fit``.
+
+        The core comes first, then one entry per wind, with the *absolute* amplitude
+        (the stored wind amplitudes are relative to the core) and the *absolute*
+        velocity shift ``dv_c + dv_w{i}``.  Returns ``None`` for a one-component
+        model, matching the astropy property.
+
+        Values are read from the current parameters, so call this after the fit has
+        put its best fit back on the model (``JNesty_Fit.get_best_fit()`` does) --
+        tied parameters are re-read from the owning compound model first.
+        """
+        if self.n_components == 1:
+            return None
+        from ..line_profile import Line_Gaussian as _CpuGaussian
+
+        self.refresh_from_owner()
+        v = self._values
+        wavec = v["wavec"]
+        components = [_CpuGaussian(amplitude=v["amp_c"], dv=v["dv_c"],
+                                   sigma=v["sigma_c"], wavec=wavec,
+                                   name=f"{self.name}: core")]
+        for i in range(self.n_components - 1):
+            components.append(_CpuGaussian(
+                amplitude=v["amp_c"] * v[f"amp_w{i}"],
+                dv=v["dv_c"] + v[f"dv_w{i}"],
+                sigma=v[f"sigma_w{i}"], wavec=wavec,
+                name=f"{self.name}: wind{i}"))
+        return components
+
 
 class Line_MultiGauss_doublet(JaxModel):
     """Doublet with core + wind Gaussian components -- ``galspec.Line_MultiGauss_doublet``."""
@@ -359,6 +395,41 @@ class Line_MultiGauss_doublet(JaxModel):
             if peak > 0.0:
                 flux = flux / peak
         return flux
+
+    @property
+    def subcomponents(self) -> Optional[list]:
+        """The Gaussians this doublet sums, as ``galspec.Line_Gaussian`` objects.
+
+        Both peaks share one width and one shift, so each wind contributes *two*
+        components -- one under each line of the doublet -- with amplitudes relative
+        to the corresponding core amplitude.  Returns ``None`` for a one-component
+        model.  See :attr:`Line_MultiGauss.subcomponents`.
+        """
+        if self.n_components == 1:
+            return None
+        from ..line_profile import Line_Gaussian as _CpuGaussian
+
+        self.refresh_from_owner()
+        v = self._values
+        dv = v["dv_c"]
+        sigma = v["sigma_c"]
+        components = [
+            _CpuGaussian(amplitude=v["amp_c0"], dv=dv, sigma=sigma,
+                         wavec=v["wavec0"], name=f"{self.name}: core0"),
+            _CpuGaussian(amplitude=v["amp_c1"], dv=dv, sigma=sigma,
+                         wavec=v["wavec1"], name=f"{self.name}: core1"),
+        ]
+        for i in range(self.n_components - 1):
+            amp = v[f"amp_w{i}"]
+            dv_w = dv + v[f"dv_w{i}"]
+            sigma_w = v[f"sigma_w{i}"]
+            components.append(_CpuGaussian(amplitude=v["amp_c0"] * amp, dv=dv_w,
+                                           sigma=sigma_w, wavec=v["wavec0"],
+                                           name=f"{self.name}: wind0{i}"))
+            components.append(_CpuGaussian(amplitude=v["amp_c1"] * amp, dv=dv_w,
+                                           sigma=sigma_w, wavec=v["wavec1"],
+                                           name=f"{self.name}: wind1{i}"))
+        return components
 
 
 class Line_Absorption(JaxModel):

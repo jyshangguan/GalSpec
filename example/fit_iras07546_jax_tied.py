@@ -350,7 +350,7 @@ def main() -> int:
               f"the same\n       live points; two runs of this fit differed by 0.45 "
               f"nats, inside that bar.)")
     # figures: the fit, the zooms, the posteriors, and the pulls themselves
-    ax, _ = galspec.plot.plot_fit(wave, flux, model_best, error=error,
+    ax, _ = galspec.plot.plot_fit_jax(wave, flux, model_best, error=error,
                                   residual_in_sigma=True, xlabel="Rest wavelength  [A]",
                                   ylabel=shared.FLUX_LABEL,
                                   legend_kwargs={"fontsize": 10, "ncol": 2})
@@ -360,7 +360,7 @@ def main() -> int:
     ax.figure.savefig(OUTPUT_DIR / f"{PREFIX}fit.png", dpi=150, bbox_inches="tight")
     plt.close(ax.figure)
     for tag, title, xlim, ylim in shared.ZOOMS[:2]:
-        ax, _ = galspec.plot.plot_fit(wave, flux, model_best, error=error,
+        ax, _ = galspec.plot.plot_fit_jax(wave, flux, model_best, error=error,
                                       xlim=xlim, ylim0=ylim, ylim1=(-8, 8),
                                       residual_in_sigma=True,
                                       xlabel="Rest wavelength  [A]",

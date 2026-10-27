@@ -93,7 +93,7 @@ The run prints its own summary::
       model: 17 components, no LSF convolution, 27 free parameters
              narrow lines are the template: 10 of the 17 components, one shift, no widths
 
-          log Z = 130656.22 +- 0.58   (59928 iterations, 7.5 min)
+          log Z = 130658.06 +- 0.58   (59064 iterations, 7.4 min)
        chi2/dof = 0.316, residual rms 0.56 sigma, worst pixel 3.9 sigma
 
 4. Present the results
@@ -112,33 +112,33 @@ they are computed here rather than sampled.
 .. code-block:: text
 
    parameter                  median         -         +  unit
-   Continuum.amplitude        0.5426   0.00026   0.00026  1e-14 erg/s/cm2/A
-   Continuum.alpha            1.0742    0.0042    0.0043
-   FeII.amplitude             0.2472    0.0014    0.0015  1e-14 erg/s/cm2/A
-   n_halpha.amplitude         2.4008     0.022     0.023  1e-14 erg/s/cm2/A
+   Continuum.amplitude       0.54261   0.00027   0.00026  1e-14 erg/s/cm2/A
+   Continuum.alpha            1.0744    0.0044    0.0042
+   FeII.amplitude             0.2472    0.0015    0.0015  1e-14 erg/s/cm2/A
+   n_halpha.amplitude          2.402     0.025     0.023  1e-14 erg/s/cm2/A
    b_halpha.amp_c             1.5569     0.013     0.013  1e-14 erg/s/cm2/A
-   b_halpha.dv_c              219.11       2.5       2.5  km/s
-   b_halpha.sigma_c           1181.4       5.4       5.4  km/s
-   b_halpha.amp_w0           0.13518    0.0018    0.0018  ratio to core
-   b_halpha.dv_w0            -436.07        17        18  km/s
-   b_halpha.sigma_w0          4287.6        39        41  km/s
-   n_hbeta.amplitude         0.60638      0.01    0.0099  1e-14 erg/s/cm2/A
-   b_hbeta.amp_c             0.62977    0.0043    0.0045  1e-14 erg/s/cm2/A
-   b_hbeta.amp_w0            0.19426    0.0038    0.0038  ratio to core
-   n_hgamma.amplitude        0.16584    0.0074    0.0075  1e-14 erg/s/cm2/A
-   b_hgamma.amp_c            0.29752    0.0043    0.0041  1e-14 erg/s/cm2/A
-   b_hgamma.amp_w0           0.12879    0.0066    0.0068  ratio to core
-   OIII.amp_c0                2.2621    0.0076    0.0078  1e-14 erg/s/cm2/A
-   OIII.dv_c                  96.928      0.99         1  km/s
-   NII.amp_c0                0.64021     0.015     0.016  1e-14 erg/s/cm2/A
-   SII.amp_c0               0.033557    0.0022    0.0021  1e-14 erg/s/cm2/A
-   SII.amp_c1               0.063444    0.0021    0.0021  1e-14 erg/s/cm2/A
-   OI.amp_c0                0.087252     0.002    0.0019  1e-14 erg/s/cm2/A
-   HeII.amplitude           0.032438    0.0048    0.0047  1e-14 erg/s/cm2/A
-   b_heii.amp_c             0.098174    0.0022    0.0023  1e-14 erg/s/cm2/A
-   OIII4363.amplitude       0.045989    0.0051    0.0048  1e-14 erg/s/cm2/A
-   n_hei.amplitude          0.044449    0.0029    0.0029  1e-14 erg/s/cm2/A
-   b_hei.amp_c              0.040377    0.0013    0.0013  1e-14 erg/s/cm2/A
+   b_halpha.dv_c               219.2       2.6       2.4  km/s
+   b_halpha.sigma_c           1181.6       5.5       5.5  km/s
+   b_halpha.amp_w0           0.13507    0.0018    0.0018  ratio to core
+   b_halpha.dv_w0            -436.26        18        19  km/s
+   b_halpha.sigma_w0            4289        40        41  km/s
+   n_hbeta.amplitude         0.60651    0.0096    0.0099  1e-14 erg/s/cm2/A
+   b_hbeta.amp_c             0.62953    0.0043    0.0044  1e-14 erg/s/cm2/A
+   b_hbeta.amp_w0            0.19428    0.0038     0.004  ratio to core
+   n_hgamma.amplitude        0.16586     0.008    0.0073  1e-14 erg/s/cm2/A
+   b_hgamma.amp_c            0.29774    0.0042    0.0041  1e-14 erg/s/cm2/A
+   b_hgamma.amp_w0           0.12861    0.0067    0.0069  ratio to core
+   OIII.amp_c0                 2.262    0.0079    0.0077  1e-14 erg/s/cm2/A
+   OIII.dv_c                  96.972      0.99         1  km/s
+   NII.amp_c0                0.64011     0.016     0.016  1e-14 erg/s/cm2/A
+   SII.amp_c0               0.033524    0.0022    0.0023  1e-14 erg/s/cm2/A
+   SII.amp_c1               0.063369    0.0021    0.0022  1e-14 erg/s/cm2/A
+   OI.amp_c0                 0.08715     0.002     0.002  1e-14 erg/s/cm2/A
+   HeII.amplitude           0.032375    0.0047    0.0046  1e-14 erg/s/cm2/A
+   b_heii.amp_c             0.098156    0.0021    0.0022  1e-14 erg/s/cm2/A
+   OIII4363.amplitude       0.045979    0.0049    0.0048  1e-14 erg/s/cm2/A
+   n_hei.amplitude           0.04446     0.003     0.003  1e-14 erg/s/cm2/A
+   b_hei.amp_c               0.04042    0.0014    0.0015  1e-14 erg/s/cm2/A
 
 The table is three rows shorter than the Gaussian model's and has no ``OIII.sigma_c``
 row: the narrow lines contribute one peak each (``amp_c0``, or both peaks for [S II],
@@ -147,7 +147,9 @@ out is 0.0634/0.0336 = 1.89, which is high for a narrow-line region and is the n
 to check against an electron-density calculation.
 
 The figure: data, model, and residuals in units of the error, with the 1-sigma guides
-drawn so that a good fit is visibly flat and inside them.
+drawn so that a good fit is visibly flat and inside them. The dashed curves are the
+sub-components of the multi-Gaussian lines -- broad H-alpha's core and its wind, one
+curve each -- which ``plot_fit_jax`` takes from ``model[...].subcomponents``.
 
 .. literalinclude:: ../../example/fit_iras07546_jax.py
    :language: python
@@ -158,8 +160,10 @@ drawn so that a good fit is visibly flat and inside them.
 .. figure:: _static/example_figures/iras07546_jax_fit.png
    :width: 100%
 
-   The full 4200-6800 A window: data, total model, and every component underneath it.
-   The lower panel is the residual in units of the error, with the +-1 sigma guides.
+   The full 4200-6800 A window: data, total model, and every component underneath it,
+   with the broad lines' cores and winds drawn as dashed curves in the colour of the
+   line they belong to. The lower panel is the residual in units of the error, with the
+   +-1 sigma guides.
 
 Three windows: 870 A, 380 A and 250 A wide, against the 2600 A in the figure above.
 On that page a 700 km/s narrow core is two pixels; here it is a profile, and the wings
@@ -180,7 +184,8 @@ of the broad lines are visible at all.
    :width: 95%
 
    H-alpha with [N II] and [S II]. The narrow lines sit on broad wings that the model
-   does not try to fit with the same component.
+   does not try to fit with the same component, and the two dashed purple curves are
+   broad H-alpha's core and wind, drawn separately.
 
 .. figure:: _static/example_figures/iras07546_jax_fit_HeI_NaD.png
    :width: 95%
@@ -239,12 +244,12 @@ The fit prints its own comparison, which is the point of writing the model this 
      model                       free         ln Z  chi2/dof
      --------------------------------------------------------
      published                     30    130889.60     0.307
-    *template                      27    130656.22     0.316
-                                        Delta = -233.38
+    *template                      27    130658.06     0.316
+                                        Delta = -231.54
 
 The published model is the same spectrum, the same continuum, the same broad lines and
 the same priors, with a Gaussian per narrow line and one width shared between them. The
-only difference is the narrow-line profile, so the 233 nats are the price of that
+only difference is the narrow-line profile, so the 232 nats are the price of that
 assumption -- not of the code: the templated model fits [O III] itself better, and a
 second, independently written implementation of the same model agrees to a hundredth of
 a nat. (Re-running this one lands 0.1 nats away, inside its 0.58 error bar -- see
@@ -267,7 +272,7 @@ literature search. For the forbidden lines alone, which do share their kinematic
 extraction is sound and the model is the right one; for a Balmer-dominated
 narrow-line region, anchor the template on a Balmer line instead.
 
-The [S II] ratio that comes out of the fit is 0.0634/0.0336 = 1.89, measured rather than
+The [S II] ratio that comes out of the fit is 0.0634/0.0335 = 1.89, measured rather than
 tied (it is a density diagnostic), and the [N II] and [O I] ratios are at their atomic
 values because nothing physical varies them.
 

@@ -171,7 +171,7 @@ the Balmer and forbidden narrow lines share
 to H-alpha gives `sigma = 298 km/s`, against an equivalent `sigma` of 250 km/s for the
 [O III] profile. The Balmer narrow lines are about 16% broader, so a frozen [O III]
 shape under-fits them, and the evidence comes out **lower** than the Gaussian model's
--- 130 656.22 +- 0.58 against 130 889.60 +- 0.62, for 27 parameters against 30, and
+-- 130 658.06 +- 0.58 against 130 889.60 +- 0.62, for 27 parameters against 30, and
 chi2/dof 0.316 against 0.307. That is a measurement of this object, not a defect of
 the method; stage 1 reports the ratio so that the assumption is checked before it is
 relied on.
@@ -193,8 +193,9 @@ scatter plus **5% of the flux** in quadrature, which stands for the photon noise
 of the source.
 
 The model is not convolved with the LSF (this spectrum grossly oversamples the
-instrument); the fit is drawn with `galspec.plot.plot_fit`, so every component and
-the sigma-scaled residuals appear in one figure, the marginals are drawn with
+instrument); the fit is drawn with `galspec.plot.plot_fit_jax`, so every component,
+the dashed sub-components of each multi-Gaussian line and the sigma-scaled residuals
+appear in one figure, the marginals are drawn with
 `galspec.plot.plot_posterior_hist` (axis from the posterior, not the prior), and
 the whole run is written to a FITS file that
 `galspec.jnesty_fit_io.load_jnesty_fit_from_fits` turns back into a working fit.
@@ -214,7 +215,7 @@ components -- a core plus three wings -- and it is not a marginal call: every on
 amplitude floor (posterior probability 1.000, against 0.84 for the Gaussian
 narrow-line model of the earlier example, whose narrow-line mismatch was being paid
 for out of the widest wing). It improves chi2/dof from 0.316 to 0.191, and costs
-54.7 min at `NLIVE = 1000` for 37 free parameters.
+50 min at `NLIVE = 1000` for 37 free parameters.
 
 Whether broad H-beta and H-gamma really have *the same shape* as broad H-alpha is
 the question of `example/fit_iras07546_jax_tied.py`. Instead of tying their shifts
@@ -242,12 +243,12 @@ within a third of a tie width of H-alpha's, but H-gamma's is 64% broader and 520
 bluer, at +3.18 of its five-width window -- and no parameter sits against a hard limit
 any more, which is what the previous, Gaussian narrow-line model produced (its two wind
 widths piled up on the 8000 km/s ceiling; see `docs/source/priors.rst` for that
-history). The evidence is **+883 nats higher** than the hard tie's rather than the 21
+history). The evidence is **+880 nats higher** than the hard tie's rather than the 21
 lower a needless freedom would cost, and chi2/dof falls from 0.316 to 0.284: over
 57 000 pixels that is +914 nats of likelihood against the 21 the extra prior volume
 costs, so the gain is the better fit and not a book-keeping effect. JNesty seeds from a
 fixed key, so a rerun draws the same live points; the evidence still comes back inside
-its error bar rather than bitwise (two runs of this fit: 131 538.93 and 131 538.48).
+its error bar rather than bitwise (three runs of the 27-parameter fit span 1.8 nats).
 The control that matters is the live-point count, and rerunning the hard tie at 1000
 points instead of 400 moved it by 2 nats -- two orders of magnitude inside this
 difference. So the tie is too strong, and

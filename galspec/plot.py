@@ -11,7 +11,8 @@ mpl.rc("ytick.major", width=1., size=8)
 mpl.rc("xtick.minor", width=1., size=5)
 mpl.rc("ytick.minor", width=1., size=5)
 
-__all__ = ['plot_fit', 'plot_fit_new', 'plot_posterior_hist', 'reorder_legend',
+__all__ = ['plot_fit', 'plot_fit_jax', 'plot_fit_new', 'plot_posterior_hist',
+           'reorder_legend',
            'plot_narrow_line_diagnostic', 'plot_narrow_line_template_validation']
 
 #: Colours cycled through for the individual model components by :func:`plot_fit`.
@@ -904,3 +905,203 @@ def plot_narrow_line_template_validation(wave, flux, ferr,
     plt.savefig(filename, dpi=150, bbox_inches='tight')
 
     return fig, axes
+
+def plot_fit_jax(wave, flux, model, weight=None, ax=None, axr=None, xlim=None,
+                 ylim0=None, ylim1=None, xlabel=None, ylabel=None,
+                 legend_kwargs=None, plot_weight=True, ignore_list=None,
+                 legend_map=None, mask_list=None, error=None,
+                 residual_in_sigma=False, subcomponent_kwargs=None):
+    '''Plot a fit of a **JAX** model: data, total, every submodel, residuals.
+
+    The same figure :func:`plot_fit` draws, for the models in
+    :mod:`galspec.jax_models`.  Two things differ, and both come from what a JAX
+    model is rather than from how it is drawn:
+
+    * **Evaluation.**  ``model(wave)`` on a JAX model uses the *current* parameter
+      values, so a fit has to put its best fit back on the model first --
+      ``JNesty_Fit.get_best_fit()`` does.  Tied parameters are re-read from the
+      owning compound model at the top of this function, so a tied ``amp_c1`` shows
+      the fitted value and not its construction default.
+    * **Subcomponents.**  A ``Line_MultiGauss`` or ``Line_MultiGauss_doublet`` is a
+      sum of Gaussians, and those are drawn as dashed curves under the component
+      they belong to -- the core, then one per wind.  ``plot_fit`` cannot do this
+      for a JAX model: its test is ``isinstance(m, Line_MultiGauss)`` against the
+      *astropy* class, while a JAX leaf is an instance of
+      :class:`galspec.jax_models.Line_MultiGauss`, a different class with the same
+      name.  Here the test is against the JAX class, and the decomposition comes
+      from the model's own ``subcomponents`` property.
+
+    Parameters
+    ----------
+    wave : array like
+        Wavelength.
+    flux : array like
+        Flux.
+    model : JaxModel or JNesty_Fit
+        The model, carrying the parameter values to draw.  A fit object is also
+        accepted, in which case ``get_best_fit()`` is called for you.
+    weight : array like, optional
+        Weight, drawn on a twin axis when ``plot_weight`` is True.
+    ax, axr : matplotlib.axes.Axes, optional
+        Axes of the main and residual panels.  Both or neither.
+    xlim, ylim0, ylim1 : tuple, optional
+        Limits of the wavelength axis, the main panel and the residual panel.
+    xlabel, ylabel : string, optional
+        Axis labels.
+    legend_kwargs : dict, optional
+        Passed to ``ax.legend``; ``ncol`` defaults to a count that fits the model.
+    plot_weight : bool, optional
+        Draw the weight array on a twin axis (default True).
+    ignore_list : list of str, optional
+        Submodels not to draw.
+    legend_map : dict, optional
+        ``{(color, label): [submodel names]}`` overrides, as in :func:`plot_fit`.
+    mask_list : list of tuple, optional
+        Wavelength ranges to blank out of the data and the residual.
+    error : array like, optional
+        Uncertainty of ``flux``.  Required by ``residual_in_sigma``.
+    residual_in_sigma : bool, optional
+        Draw ``(data - model) / error`` with guides at +/-1 sigma.
+    subcomponent_kwargs : dict, optional
+        Style of the dashed subcomponent curves, e.g. ``{"lw": 0.6}``.  Defaults to
+        ``{"lw": 0.5, "ls": "--"}``.
+
+    Returns
+    -------
+    ax : matplotlib.axes.Axes
+        Axes of the main panel.
+    axr : matplotlib.axes.Axes
+        Axes of the residual panel.
+
+    Examples
+    --------
+    >>> model_best, _, _ = fit.get_best_fit()          # sets the current values
+    >>> ax, axr = galspec.plot_fit_jax(wave, flux, model_best, error=error,
+    ...                                residual_in_sigma=True)
+    '''
+    from .jax_models.line_profile import (Line_MultiGauss as _JaxMultiGauss,
+                                          Line_MultiGauss_doublet as _JaxMultiGaussDoublet)
+
+    # a fit object is a convenience: the figure is drawn from the model it carries
+    if not hasattr(model, "submodel_names") and hasattr(model, "get_best_fit"):
+        model = model.get_best_fit()[0]
+
+    # astropy shares parameters between a compound model and its submodels; here the
+    # leaves have their own storage, so the tied ones are written back before drawing
+    sync = getattr(model, "sync_tied_values", None)
+    if callable(sync):
+        sync()
+
+    if ax is None:
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_axes([0.05, 0.2, 0.9, 0.75])
+        axr = fig.add_axes([0.05, 0.05, 0.9, 0.15])
+    else:
+        assert axr is not None, 'Please provide the axes of the residual panel!'
+    axr.sharex(ax)
+
+    if ignore_list is None:
+        ignore_list = ['multi']
+    elif 'multi' not in ignore_list:
+        ignore_list.append('multi')
+
+    if legend_map is None:
+        legend_map = {}
+    legend_dict = _map_legend(model, legend_map, ignore_list)
+
+    wave = np.asarray(wave, dtype=float)
+    flux = np.asarray(flux, dtype=float)
+    flux_model = np.asarray(model(wave), dtype=float)
+    flux_res = flux - flux_model
+
+    if weight is not None:
+        flux_model = np.where(np.asarray(weight) == 0, np.nan, flux_model)
+        flux_res = np.where(np.asarray(weight) == 0, np.nan, flux_res)
+
+    if mask_list is not None:
+        flux = flux.copy()
+        for mask_range in mask_list:
+            mask = (wave >= mask_range[0]) & (wave <= mask_range[1])
+            flux = np.where(mask, np.nan, flux)
+            flux_res = np.where(mask, np.nan, flux_res)
+
+    ax.step(wave, flux, lw=1, color='k', label='Data')
+
+    if (weight is not None) & plot_weight:
+        axt = ax.twinx()
+        axt.step(wave, weight, lw=1, color='gray')
+        axt.set_ylabel('Weight', fontsize=16)
+        axt.minorticks_on()
+
+    ax.plot(wave, flux_model, lw=2, color='C3', alpha=0.7, label='Total model')
+
+    if 'multi' in model.submodel_names:
+        m_multi = np.asarray(model['multi'](wave), dtype=float)
+    else:
+        m_multi = None
+
+    sub_style = {'lw': 0.5, 'ls': '--'}
+    sub_style.update(subcomponent_kwargs or {})
+
+    for m in model:
+        if m.name in ignore_list:
+            continue
+
+        y = np.asarray(m(wave), dtype=float)
+        if m_multi is not None:
+            y = y * m_multi
+
+        color, label = legend_dict[m.name]
+        ax.plot(wave, y, lw=1, color=color, label=label)
+
+        if isinstance(m, (_JaxMultiGauss, _JaxMultiGaussDoublet)):
+            if m.n_components > 1:
+                for msub in m.subcomponents:
+                    ysub = np.asarray(msub(wave), dtype=float)
+                    if m_multi is not None:
+                        ysub = ysub * m_multi
+                    ax.plot(wave, ysub, color=color, **sub_style)
+
+    if residual_in_sigma:
+        if error is None:
+            raise ValueError("residual_in_sigma=True needs the `error` array")
+        flux_res = flux_res / np.asarray(error, dtype=float)
+        axr.step(wave, flux_res, lw=1, color='k')
+        axr.axhline(0, color='k', ls='--', lw=1.0)
+        for level in (-1, 1):
+            axr.axhline(level, color='gray', ls=':', lw=1.0)
+    else:
+        axr.step(wave, flux_res, lw=1, color='k')
+        axr.axhline(0, color='k', ls='--', lw=1.0)
+
+    ax.tick_params(labelbottom=False)
+    if xlim is not None:
+        ax.set_xlim(xlim)
+    if ylim0 is not None:
+        ax.set_ylim(ylim0)
+    if ylim1 is not None:
+        axr.set_ylim(ylim1)
+    if xlabel is not None:
+        axr.set_xlabel(xlabel, fontsize=24)
+    if ylabel is not None:
+        ax.set_ylabel(ylabel, fontsize=24)
+    axr.set_ylabel(r'Res./$\sigma$' if residual_in_sigma else r'Res.', fontsize=24)
+
+    ax.minorticks_on()
+    axr.minorticks_on()
+
+    if legend_kwargs is None:
+        legend_kwargs = {}
+    if 'loc' not in legend_kwargs:
+        legend_kwargs['loc'] = 'upper left'
+    if 'handlelength' not in legend_kwargs:
+        legend_kwargs['handlelength'] = 1.0
+    if 'columnspacing' not in legend_kwargs:
+        legend_kwargs['columnspacing'] = 0.5
+    if 'fontsize' not in legend_kwargs:
+        legend_kwargs['fontsize'] = 16
+    if 'ncol' not in legend_kwargs:
+        legend_kwargs['ncol'] = model.n_submodels // 3 + 1
+    ax.legend(**legend_kwargs)
+
+    return ax, axr

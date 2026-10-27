@@ -189,6 +189,15 @@ develop/dev_jax/results/report/*
 !develop/dev_jax/results/report/img/
 develop/dev_jax/results/report/img/*
 !develop/dev_jax/results/report/img/*.png
+!develop/dev_template/
+develop/dev_template/*
+!develop/dev_template/README.md
+!develop/dev_template/*.py
+!develop/dev_template/output/
+develop/dev_template/output/*
+!develop/dev_template/output/*.png
+!develop/dev_template/output/narrow_template.txt
+!develop/dev_template/output/stage*_results.json
 .vscode/*
 
 # Large data files - downloaded automatically

@@ -129,17 +129,52 @@ The JAX models are verified against the CPU models by
 GPU and CPU fits are guaranteed to be solving the same problem.
 
 A complete worked example lives in `example/fit_iras07546_jax.py` (script,
-about 10 min on one GPU) and `example/fit_iras07546_jax.ipynb` (the same fit broken
-into annotated cells). It fits **4200-6800 A** of IRAS 07546+3928 (rest frame,
+about 8 min on one GPU) and `example/fit_iras07546_jax.ipynb` (the same fit broken
+into annotated cells). The model they fit is in `example/iras07546_model.py`, which
+the three example scripts share, so each one runs on its own -- from the repository
+root, with nothing but the two data files that travel with it:
+
+```bash
+python example/fit_iras07546_jax.py           # the hard ties
+python example/fit_iras07546_jax_tied.py      # broad kinematics released, soft-tied
+python example/fit_iras07546_jax_toggle.py    # how many broad components?
+```
+
+The example fits **4200-6800 A** of IRAS 07546+3928 (rest frame,
 56 956 pixels, H-gamma to [S II]) in one go: a power-law continuum plus an Fe II
-template, H-alpha/H-beta/H-gamma each modelled **twice** (a narrow `Line_Gaussian`
-and a broad `Line_MultiGauss` with a core and a wind), He I 5876 and He II 4686
-with one broad Gaussian each, [O III] with a broad wing, and [N II], [S II], [O I]
-and [O III] 4363 -- 30 free parameters describing seventeen models, with every
-narrow line tied to the [O III] kinematics, the broad components tied across the
+template, H-alpha/H-beta/H-gamma each modelled **twice** (a narrow `Line_template`
+line and a broad `Line_MultiGauss` with a core and a wind), He I 5876 and He II 4686
+with one broad Gaussian each, [O III] 4363 as a single templated line, and
+[O III], [N II], [S II], [O I] as templated doublets -- 27 free parameters
+describing seventeen models, with the broad components tied across the
 three Balmer lines, and no least-squares step anywhere. Nothing blueward of H-gamma or redward of
 [S II] is modelled, so no window has to be masked; the Na D region, which used to
 be masked, is now covered by fitting He I 5876.
+
+The narrow lines are the part that is worth reading twice, because they are not
+Gaussians and they are not fitted. All ten of them are instances of **one measured
+profile**, `example/data/iras07546_narrow_template.txt`: 8 001 numbers on a 1 km/s
+velocity grid, extracted by `develop/dev_template/stage1_o3_template.py` from the
+[O III] 4959/5007 doublet alone. Each narrow line then contributes one number -- its
+peak -- plus one velocity shift shared by all ten, and no width at all. Where a
+Gaussian model spends a shift, a width and eight peaks (14 numbers), this spends 11,
+which is where the three fewer parameters come from. Stage 1 of that extraction is a
+local fit in a 160 A window with a polynomial continuum, an explicit Fe II component
+and two or three kinematic components, with the evidence choosing between them; see
+`develop/dev_template/README.md`.
+
+The trade is explicit and the example prints it. The frozen profile still describes
+the window it was measured on -- chi2/dof 0.102, against 0.056 for the free fit, on
+3 499 degrees of freedom -- so the extraction is self-consistent; but it assumes
+the Balmer and forbidden narrow lines share
+[O III]'s *shape*, and in this object they do not: the same local treatment applied
+to H-alpha gives `sigma = 298 km/s`, against an equivalent `sigma` of 250 km/s for the
+[O III] profile. The Balmer narrow lines are about 16% broader, so a frozen [O III]
+shape under-fits them, and the evidence comes out **lower** than the Gaussian model's
+-- 130 656.22 +- 0.58 against 130 889.60 +- 0.62, for 27 parameters against 30, and
+chi2/dof 0.316 against 0.307. That is a measurement of this object, not a defect of
+the method; stage 1 reports the ratio so that the assumption is checked before it is
+relied on.
 
 The doublet ratios are tied at their atomic values except [S II], whose 6716/6731
 ratio is a density diagnostic and is therefore measured. The Fe II template is
@@ -174,10 +209,12 @@ returns a posterior on the number of components. It is calibrated on mocks with 
 answer by `develop/dev_jax/broad_line_components.py`, whose write-up is
 `docs/source/priors.rst` (section "Worked example: switching a component off"),
 together with the mock calibration. On IRAS 07546+3928 that run reports **four**
-components -- a core plus three
-wings, with posterior probability 0.84 at the 3%-of-core amplitude floor (0.97
-counting any excursion off zero) -- and improves chi2/dof from 0.307 (the
-published two-component fit) to 0.195.
+components -- a core plus three wings -- and it is not a marginal call: every one of
+215 659 equally weighted samples has all three wings on and above the 3%-of-core
+amplitude floor (posterior probability 1.000, against 0.84 for the Gaussian
+narrow-line model of the earlier example, whose narrow-line mismatch was being paid
+for out of the widest wing). It improves chi2/dof from 0.316 to 0.191, and costs
+54.7 min at `NLIVE = 1000` for 37 free parameters.
 
 Whether broad H-beta and H-gamma really have *the same shape* as broad H-alpha is
 the question of `example/fit_iras07546_jax_tied.py`. Instead of tying their shifts
@@ -198,21 +235,23 @@ a width is allowed to differ by 20% of H-alpha's width, a shift by 5% of it, and
 more than five widths out" (the default, seven, is where the Gaussian has run out).
 The fit then reports the difference per component, in km/s and in units of that
 width -- the pull -- so "similar" becomes
-a measurement rather than an assumption. On this object the narrow cores come back
-consistent with H-alpha's (pulls -0.40 and -0.65 tie widths) and the two **wing**
-components do not: their widths sit against the 8000 km/s ceiling of the width prior
-(pulls +4.94 and +4.91 -- every sample of H-beta's wind above 7895 km/s, where the
-five-width window would have allowed 10 300), and H-gamma's wind shift moves to -4.60.
-The evidence is **1263 nats higher** than the hard tie's rather than the 29 lower a
-needless freedom would cost, and chi2/dof falls from 0.307 to 0.261: over 57 000
-pixels that is about +1300 nats of likelihood against the 29 the extra prior volume
-costs, so the gain is the better fit and not a book-keeping effect (rerunning the hard
-tie with 1000 live points moves its evidence by 2 nats, and repeating a run at 400
-moves it by a few, so both are converged to well inside this difference).
-The freedom is spent on the wings, which the fit broadens to a FWHM of ~19 000 km/s --
-one Gaussian absorbing the broad excess that the component-count model above needs
-three wings for (chi2/dof 0.195). So the tie is too strong, but a wider wind is not
-the right thing to replace it with.
+a measurement rather than an assumption. On this object the narrow **cores** come back
+consistent with H-alpha's (pulls -0.72 and -0.41 tie widths): for them the hard tie was
+right. The four **wind** parameters are where the lines differ -- H-beta's wind is
+within a third of a tie width of H-alpha's, but H-gamma's is 64% broader and 520 km/s
+bluer, at +3.18 of its five-width window -- and no parameter sits against a hard limit
+any more, which is what the previous, Gaussian narrow-line model produced (its two wind
+widths piled up on the 8000 km/s ceiling; see `docs/source/priors.rst` for that
+history). The evidence is **+883 nats higher** than the hard tie's rather than the 21
+lower a needless freedom would cost, and chi2/dof falls from 0.316 to 0.284: over
+57 000 pixels that is +914 nats of likelihood against the 21 the extra prior volume
+costs, so the gain is the better fit and not a book-keeping effect. JNesty seeds from a
+fixed key, so a rerun draws the same live points; the evidence still comes back inside
+its error bar rather than bitwise (two runs of this fit: 131 538.93 and 131 538.48).
+The control that matters is the live-point count, and rerunning the hard tie at 1000
+points instead of 400 moved it by 2 nats -- two orders of magnitude inside this
+difference. So the tie is too strong, and
+the released parameters are measurements.
 `develop/dev_jax/tied_prior_report.py` validates the mechanism on mocks whose answer
 is known and writes the result up (`develop/dev_jax/io_test/tied_prior.html`;
 the construction is also on `docs/source/priors.rst`, section "Worked example: a
@@ -226,13 +265,26 @@ centre. `priors.Uniform`, `priors.LogUniform`, `priors.Normal` and
 (`develop/dev_jax/io_test/prior_api.html`) -- the new spelling reproduces the old
 unit-cube map bit for bit on all three examples, so no published evidence moves.
 
-## Example Notebooks
+## Example notebooks
 
 The `example/` directory contains detailed notebooks demonstrating:
 - Continuum fitting with stellar templates
 - Emission line fitting for AGN
 - Absorption line and BAL fitting
 - Physical parameter estimation
+
+The IRAS 07546+3928 set is one object fitted three ways, and each of the three
+scripts is self-contained -- it imports `example/iras07546_model.py` and reads the
+spectrum and narrow-line template from `example/data/`, so nothing has to be run
+first and no script depends on another script's output files:
+
+| file | what it decides |
+|---|---|
+| `fit_iras07546_jax.py` | the fiducial fit: 27 free parameters, one measured narrow profile, broad lines tied to H-alpha |
+| `fit_iras07546_jax_tied.py` | whether broad H-beta and H-gamma really share H-alpha's shape (35 parameters, Gaussian priors instead of ties) |
+| `fit_iras07546_jax_toggle.py` | how many broad components the spectrum needs (spike-and-slab on every wing amplitude, 37 parameters) |
+| `iras07546_model.py` | the model all three fit |
+| `_build_notebook.py` | regenerates `fit_iras07546_jax.ipynb` from the script, so the two cannot drift apart |
 
 ## Requirements
 

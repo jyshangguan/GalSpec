@@ -108,7 +108,7 @@ fitters do that, or a tie silently lands in the wrong place.
 The published recipe
 --------------------
 
-``set_priors`` in ``example/fit_iras07546_jax.py``, condensed:
+``set_priors`` in ``example/iras07546_model.py``, condensed:
 
 .. list-table::
    :header-rows: 1
@@ -123,13 +123,15 @@ The published recipe
    * - wind / core ratio
      - 0-1, uniform
      - no wind is brighter than its own core
-   * - narrow shift and width
-     - +-1000 and 30-800 km/s, uniform
-     - shared by every narrow line, measured from [O III]: unresolved up to the widest
-       known narrow-line region
-   * - [O III] wing width
-     - 300-4000 km/s
-     - a wing on the narrow core, not the broad-line wind
+   * - narrow shift
+     - +-1000 km/s, uniform
+     - one shift shared by every narrow line, measured from [O III].  There is no
+       narrow *width* to give a prior to: it is in the measured template, which is
+       what makes the narrow lines one number each instead of three.
+   * - [S II] 6716/6731 ratio
+     - both peaks log-uniform, free
+     - it is a density diagnostic, not an atomic constant -- unlike [O III], [N II]
+       and [O I], whose ratios are tied
    * - broad shifts
      - core +-2 500, wind +-6 000 km/s, uniform
      - a core within a few widths of rest, a wind free to be offset by more
@@ -167,8 +169,8 @@ H-alpha's value, and not farther than this":
                    priors.Normal(mean="b_halpha.dv_c", sigma=0.05,
                                  scale_from="b_halpha.sigma_c", nsigma=5))
 
-That is the whole construction, and ``example/fit_iras07546_jax_tied.py`` is the published
-fit with it applied: 38 free parameters instead of 30, with ``WIDTH_FRACTION = 0.20``,
+That is the whole construction, and ``example/fit_iras07546_jax_tied.py`` is the worked
+fit with it applied: 35 free parameters instead of 27, with ``WIDTH_FRACTION = 0.20``,
 ``SHIFT_FRACTION = 0.05``, ``MAX_SIGMA = 5.0`` and ``CAP_TOLERANCE`` (when a pull counts
 as sitting on the limit) as named constants at the top of the file.
 
@@ -186,29 +188,25 @@ released parameter costs
 
    \Delta \ln Z \;\approx\; \ln \frac{\sigma_{\rm tie}\sqrt{2\pi}}{\sigma_{\rm post}} ,
 
-which for the eight parameters is about 29 nats *if the tie is right* (the script
-computes it from each parameter's own posterior width). A drop of that size is the
-expected cost of a freedom the data did not need; a rise means the likelihood gained
-more than the prior volume cost, i.e. the tie was wrong.
-
-That arithmetic is the whole argument for measuring instead of tying, so it needs a
-control: nested sampling's evidence has its own error, and two runs can differ for
-reasons that have nothing to do with the model. The control is to rerun one of them
-with more live points and see whether the number moves.
+which for the eight parameters is +21.2 *if the tie is right* (the script computes it
+from each parameter's own posterior width). A drop of that size is the expected cost of
+a freedom the data did not need; a rise means the likelihood gained more than the prior
+volume cost, i.e. the tie was wrong.
 
 .. figure:: _static/example_figures/iras07546_jax_tied_ties.png
    :width: 80%
 
    Each released parameter against H-alpha, in tie widths. The shaded band is where the
-   prior allows the difference; the red points sit against the hard limit.
+   prior allows the difference, the red lines its hard limit at five tie widths, and
+   every point lies inside both.
 
-On IRAS 07546+3928 the answer is split, and that is the point of doing it. The eight
-released parameters (H-beta and H-gamma, core and wind, width and shift) separate into
-two groups:
+On IRAS 07546+3928 the answer is measured, and it is not the answer the previous
+generation of this page gave -- which is the useful part. The eight released
+parameters (H-beta and H-gamma, core and wind, width and shift) split three ways:
 
 .. list-table::
    :header-rows: 1
-   :widths: 26 14 14 14 16 16
+   :widths: 26 14 14 14 14 14
 
    * - parameter
      - H-alpha
@@ -217,109 +215,137 @@ two groups:
      - fractional
      - pull
    * - ``b_hbeta.sigma_c``
-     - 1 256.6
-     - 1 156.7
-     - -100.1
-     - -8.0%
-     - -0.40
+     - 1 207.8
+     - 1 034.2
+     - -173.5
+     - -14.4%
+     - -0.72
    * - ``b_hbeta.dv_c``
-     - 215.6
-     - 56.0
-     - -159.7
-     - -74.0%
-     - -2.54
+     - 246.8
+     - 110.3
+     - -136.5
+     - -55.3%
+     - -2.26
    * - ``b_hbeta.sigma_w0``
-     - 4 016.9
-     - 7 991.8
-     - +3 971.7
-     - +98.9%
-     - **+4.94**
+     - 4 173.0
+     - 3 938.5
+     - -233.1
+     - -5.6%
+     - -0.28
    * - ``b_hbeta.dv_w0``
-     - -397.7
-     - -724.7
-     - -325.6
-     - -81.9%
-     - -1.62
+     - -397.5
+     - -869.6
+     - -471.8
+     - -118.7%
+     - -2.26
    * - ``b_hgamma.sigma_c``
-     - 1 256.6
-     - 1 093.7
-     - -162.6
-     - -12.9%
-     - -0.65
+     - 1 207.8
+     - 1 109.9
+     - -98.4
+     - -8.1%
+     - -0.41
    * - ``b_hgamma.dv_c``
-     - 215.6
-     - 204.5
-     - -11.7
-     - -5.4%
-     - -0.19
+     - 246.8
+     - 222.1
+     - -24.8
+     - -10.0%
+     - -0.41
    * - ``b_hgamma.sigma_w0``
-     - 4 016.9
-     - 7 966.7
-     - +3 944.9
-     - +98.2%
-     - **+4.91**
+     - 4 173.0
+     - 6 824.6
+     - +2 653.4
+     - +63.6%
+     - **+3.18**
    * - ``b_hgamma.dv_w0``
-     - -397.7
-     - -1 321.4
-     - -923.7
-     - -232.2%
-     - **-4.60**
+     - -397.5
+     - -920.3
+     - -523.1
+     - -131.6%
+     - -2.51
 
-The four **core** parameters agree with H-alpha's -- pulls inside 2.5 tie widths, so
-for the narrow cores the hard tie was right and could have stayed. The four **wing**
-parameters do not, and none of them can be quoted as a number:
+The four **core** parameters agree with H-alpha's -- pulls inside 1.0 for the widths
+and 2.3 for the shifts -- so for the narrow cores the hard tie was right and could
+have stayed. The four **wind** parameters are where the two lines differ: H-beta's
+wind is H-alpha's within a third of a tie width in width and 2.3 in shift, but
+H-gamma's is 64% broader and 520 km/s bluer, at +3.18 of its five-width window.
 
-* both wing widths sit against the 8 000 km/s ceiling of the width prior -- every
-  sample of ``b_hbeta.sigma_w0`` is above 7 895, 92% of ``b_hgamma.sigma_w0`` above
-  7 900 -- so what those two rows say is "at least 8 000 km/s";
-* H-gamma's wind shift is at -4.60 of its five-width window, with 5% of its posterior
-  against the limit.
+The evidence moves too, and its sign has to be read carefully. For a Gaussian of width
+:math:`\sigma_{\rm tie}` against a posterior of width :math:`\sigma_{\rm post}`, each
+released parameter costs
 
-What survives is directional: the wind in H-beta and H-gamma is far from H-alpha's,
-broader than the width prior allows for, and in H-gamma shifted as well.
+.. math::
 
-The ceiling is not the tie, and it is worth being exact about which one binds. At
-H-alpha's 4 017 km/s the five-width tolerance reaches 10 300 km/s, but the width prior
-ends at 8 000, so the box stops the two wings before the tie window does: raising
-``MAX_SIGMA`` alone would change nothing, and freeing them means widening the width
-prior in ``set_priors`` first. Which is the honest form of the answer -- the adopted
-300-8000 km/s range, chosen for the core, is what the wind runs into.
+   \Delta \ln Z \;\approx\; \ln \frac{\sigma_{\rm tie}\sqrt{2\pi}}{\sigma_{\rm post}} ,
 
-The fit itself: 38 free parameters, ``log Z = 132 153.01 +- 0.45`` in 36.6 min,
-``chi2/dof = 0.261`` against the hard tie's 0.307, so nothing is worse. The evidence
-is **+1263 nats** above the hard tie's 130 889.60, where the eight parameters' own
-prior volume is worth only +29. The difference is the better fit and not the
-arithmetic: dropping chi2/dof from 0.307 to 0.261 over 56 956 degrees of freedom is
-``0.5 x 2 620 = +1 310`` nats of likelihood, and 1 310 - 29 = +1 281 against the
-measured +1 263. The two agree to the accuracy of a chi2/dof printed to three digits
-(0.001 of it is 57 nats), which is enough to say where the evidence went: into the
-likelihood, not into prior volume.
+which for these eight parameters is +21.2 *if the tie is right* (the script computes
+it from each parameter's own posterior width). A drop of that size is the expected
+cost of a freedom the data did not need; a rise means the likelihood gained more than
+the prior volume cost, i.e. the tie was wrong. The soft fit comes out **+882.26 +-
+0.71** above the hard tie: the eight parameters bought 914 nats of likelihood
+(``chi2/dof`` 0.316 -> 0.284 over 56 921 degrees of freedom, worth
+``0.5 x 1 828 = +914``) and cost 21 in prior volume. 914 - 21 = 893 against the
+measured 883, which agrees to the accuracy of a chi2/dof printed to three digits
+(0.001 of it is 57 nats). The evidence went into the likelihood, not into book-keeping.
+
+Two things about that number are worth stating plainly, because it is larger than the
+pulls suggest and it is the kind of result that gets over-read:
+
+* **A 3.2-sigma pull plus a 883-nat evidence gain is not a contradiction.** The pulls
+  are per parameter and are measured relative to H-alpha's *value*; the evidence is
+  the joint likelihood gain from re-shaping three line profiles at once, and a change
+  of a few per cent in a broad wing that spans 1 500 A moves a lot of pixels. The
+  eight parameters are also correlated -- H-beta's shifted wind and H-alpha's width
+  trade against each other -- so no single pull carries the gain.
+* **Nothing here sits against a hard limit.** In the earlier version of this page the
+  two wind widths piled up on the 8 000 km/s ceiling of the width prior, which is a
+  prior artefact and not a measurement; with the narrow lines described by the
+  measured [O III] template (see :doc:`fitting_walkthrough`) the released widths come
+  out at 3 939 +- 87 and 6 825 +- 387 km/s, both inside the box, with 0% of their
+  posterior against either wall. The released parameters are therefore measurements,
+  which they were not before.
+
+H-alpha's own numbers move a little when the ties are released, and the size of that
+move is the honest error bar on the tie assumption:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 22 22 18
+
+   * - parameter
+     - hard tie
+     - soft tie
+     - difference
+   * - ``b_halpha.sigma_c``
+     - 1 182 +- 6
+     - 1 208 +- 8
+     - 26 (3 sigma)
+   * - ``b_halpha.sigma_w0``
+     - 4 290 +- 40
+     - 4 173 +- 56
+     - 117 (2 sigma)
+
+Two per cent, and the shifts move by less (246.8 against 219.1). So the answer is not
+sensitive to whether the tie holds -- what is sensitive is the evidence, and that is
+the quantity the tie was deciding.
 
 A gain that size is worth checking against the sampler before it is quoted, and the
-control is cheap: the published fit rerun at 1000 live points instead of 400 returns
-130 887.64 +- 0.39 against 130 889.60 +- 0.62, a shift of 2 nats, with the same
-posteriors. Repeating it at 400 points moves it by up to 5 nats (three runs gave
-130 894.66, 130 893.37 and 130 889.60), so the honest error on a single evidence is
-about 5 nats and not the 0.6 the run reports -- still small next to this difference.
-The hard tie is rejected at 1263 +- 6 nats: a likelihood gain from a model that was
-genuinely misfitting, not a difference in prior volume.
+control is cheap. JNesty seeds its live points from a fixed key, so a rerun visits the
+same live points -- but bitwise identity is not what comes back. This fit has been run
+twice on the same GPU and gave 131 538.93 and 131 538.48: 0.45 nats apart, inside the
+error bar, from the last bits of a GPU sum feeding the sampler's ordering. (The 27
+parameter fit repeats more tightly: 0.12 nats.) What also
+matters is the live-point count: rerunning the hard-tie fit at 1 000 points instead of
+400 moved it by 2 nats with the same posteriors. So the honest error on a single
+evidence is a few nats rather than the 0.6 the run reports -- and this difference is
+larger by two orders of magnitude. The soft fit runs at 1 000 live points, which is why
+its error bar (0.40) is *smaller* than the hard fit's (0.58) despite having eight more
+parameters.
 
-One number in that list is a warning about all of them. Releasing the two wing widths
-moves H-alpha's *own* wind width from 5 143 +- 70 to 4 017 +- 14 km/s: 1 126 km/s,
-sixteen times the plain fit's error bar and eighty times the tied one's. It is not the
-sampler -- the plain fit's wind width is stable in ``nlive`` (5 143 +- 70 at 400
-points, 5 145 +- 70 at 1000), and the tied fit's posterior is not multimodal. It is
-the model. So those error bars are *conditional*: they measure the width of a narrow
-ridge, not the uncertainty of a quantity. The wind's shape is set jointly with the
-balance between core, continuum and wings, and changing how the wings are described
-slides the ridge. That is the honest limit of every number in this section, and it is
-the reason the tie is worth writing down rather than leaving implicit.
-
-Two caveats belong with it:
+Two caveats belong with the numbers above:
 
 * **The tie width is a physical statement, and it is the choice that decides the
   answer.** 20% of the width says the two profiles move like the same gas to within a
-  fifth; a galaxy whose H-beta region really is twice as broad as its H-alpha region
+  fifth; a galaxy whose H-beta region really were twice as broad as its H-alpha region
   would show pulls of ~5 and would be reported as such, not smoothed away.
 * **Component *i* is tied to component *i*.** With one wind per line the pairing is
   unambiguous; with more it is a choice, and the example pairs them in order.
@@ -364,7 +390,9 @@ prior.
 The recipe, as ``example/fit_iras07546_jax_toggle.py`` applies it:
 
 * only the three Balmer lines get four components; He I and He II keep one broad
-  Gaussian, and the Fe II kernel follows broad H-alpha. 40 free parameters;
+  Gaussian, and the Fe II kernel follows broad H-alpha. 37 free parameters -- six
+  fewer than the Gaussian narrow-line version of this fit, because the narrow lines are
+  one measured profile with one shift (``example/iras07546_model.py``);
 * one width prior for everything, 300-8000 km/s, the same box as the published fit --
   a wing is not required to be broader than the core;
 * a ladder ``p_off = 0.2, 0.5, 0.7``. The likelihood cannot tell two wings apart
@@ -382,13 +410,15 @@ The recipe, as ``example/fit_iras07546_jax_toggle.py`` applies it:
    :width: 95%
 
    Where the count comes from: left, the posterior on how many components the profile
-   needs (0.84 for four); right, the probability that each of the three wings is on.
+   needs (1.000 for four); right, the probability that each of the three wings is on.
 
 The answer on IRAS 07546+3928: the run asked for at most four broad components and
-returned **four** -- a core plus three wings. In 97% of the 236 466 equally weighted
-samples all three wings are on, and in 84% all three stay above the 3% floor, so the
-posterior on the *wing* count is ``P(3 wings) = 0.84``. Two of the three Bayes factors
-are unbounded above and the third is 76, so the count is not a marginal call. Sorted by
+returned **four** -- a core plus three wings. All 215 659 equally weighted samples have
+all three wings on *and* all three above the 3% floor, so ``P(3 wings) = 1.000`` and
+every Bayes factor is unbounded above: with the narrow lines described by the measured
+template rather than a Gaussian each, the count is not a marginal call at all. (The
+same model with Gaussian narrow lines returned 0.84 here, so the pixels that voted
+against the widest wing were being used to pay for the narrow-line mismatch.) Sorted by
 width, broad H-alpha comes out as:
 
 .. list-table::
@@ -401,32 +431,33 @@ width, broad H-alpha comes out as:
      - share of the broad flux
    * - core
      - 1.000
-     - 2 066
-     - +294
-     - 46%
+     - 2 059
+     - +309
+     - 47.0%
    * - wing 1
-     - 0.085
-     - 2 484
-     - -919
-     - 4.7%
+     - 0.083
+     - 2 511
+     - -890
+     - 4.8%
    * - wing 2
-     - 0.283
-     - 5 050
-     - +4
-     - 31.9%
+     - 0.266
+     - 5 337
+     - +17
+     - 32.3%
    * - wing 3
-     - 0.041
-     - 18 830
-     - -2 617
-     - 17.3%
+     - 0.037
+     - 18 826
+     - -3 731
+     - 16.0%
 
 Two caveats come with that answer. The pedestal (wing 3) sits on the width ceiling --
-its sigma reaches 7 996 km/s against the 8 000 km/s bound, so how wide it is, and
-possibly how many components describe the base of the line, is limited by the adopted
-range rather than by the data. And the count is floor-sensitive in the expected way: the
-pedestal peaks at 4.1% of the core, just above the 3% floor, so at a 5% floor the count is
-two and at 10% it is one -- not because the pedestal is noise (its Bayes factor is
-unbounded) but because a coarser floor is a different definition of "a component".
+18 826 km/s of FWHM is 7 994 km/s of sigma against the 8 000 km/s bound -- so how wide
+it is, and possibly how many components describe the base of the line, is limited by the
+adopted range rather than by the data. And the count is floor-sensitive in the expected
+way: the pedestal peaks at 3.7% of the core, just above the 3% floor, so at a 5% floor
+the count is three and at 10% it is two -- not because the pedestal is noise (its Bayes
+factor is unbounded) but because a coarser floor is a different definition of "a
+component".
 
 Calibration on mocks with known answers (``develop/dev_jax/broad_line_components.py``,
 four mocks of 1, 2, 3 and 4 components at 1% noise) says three things. The count is the

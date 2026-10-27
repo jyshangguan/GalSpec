@@ -60,6 +60,8 @@ def test_leaf_models_roundtrip():
         "PowerLaw1D": jxm.PowerLaw1D(amplitude=1.2, x_0=5500.0, alpha=1.5,
                                      fixed={"x_0": True}, name="Continuum"),
         "Polynomial1D": jxm.Polynomial1D(degree=3, name="poly"),
+        "Polynomial1D_domain_window": jxm.Polynomial1D(
+            degree=3, domain=(4930.0, 5060.0), window=(-1.0, 1.0), name="poly_dw"),
         "BrokenPowerLaw1D": jxm.BrokenPowerLaw1D(amplitude=1.0, x_break=5000.0,
                                                  alpha_1=1.0, alpha_2=2.0, name="broken"),
         "Line_Gaussian": jxm.Line_Gaussian(amplitude=1.0, dv=50.0, sigma=300.0,
@@ -74,6 +76,10 @@ def test_leaf_models_roundtrip():
                                                    h4=0.02, name="gh"),
         "Line_template": jxm.Line_template(template_velc=PROFILE_V, template_flux=PROFILE_F,
                                            amplitude=1.0, dv=0.0, name="templ"),
+        "Line_template_doublet": jxm.Line_template_doublet(
+            template_velc=PROFILE_V, template_flux=PROFILE_F,
+            amp_c0=1.0, amp_c1=1.0 / 2.98, dv_c=0.0,
+            wavec0=5007.0, wavec1=4959.0, name="templ_o3"),
         "IronTemplate": jxm.IronTemplate(amplitude=0.2, stddev=2500.0, z=0.0,
                                          template_name="park2022", sigma_max=4000.0,
                                          name="FeII"),
@@ -127,6 +133,57 @@ def test_compound_with_ties_and_convolution_roundtrip():
                                            restored.flux(WAVE, theta))
     assert difference < 1e-12, f"compound does not round trip ({difference:.2e})"
     print(f"  tied + convolved compound: rel diff {difference:.1e}")
+
+
+def test_template_compound_with_ties_roundtrip():
+    """A template-based narrow-line model rebuilds from a file, kernel and all.
+
+    This is the model the IRAS 07546 examples fit: the narrow lines carry a
+    profile array, not just numbers, so the test is that the array travels with
+    the tree, that the doublet's atomic ratio tie and the shared ``dv_c`` survive,
+    and that the flux is bit-identical afterwards.
+    """
+    continuum = jxm.Polynomial1D(degree=2, domain=(4900.0, 5100.0),
+                                window=(-1.0, 1.0), name="Cont")
+    o3 = jxm.Line_template_doublet(
+        template_velc=PROFILE_V, template_flux=PROFILE_F,
+        amp_c0=1.8, amp_c1=1.8 / 2.98, dv_c=45.0,
+        wavec0=5007.0, wavec1=4959.0, name="OIII")
+    o3.amp_c1.tied = jxm.tie.tie_MultiGauss_doublet_ratio("OIII", 2.98)
+    nha = jxm.Line_template(template_velc=PROFILE_V, template_flux=PROFILE_F,
+                            amplitude=1.2, dv=45.0, wavec=6563.0, name="n_halpha")
+    nha.dv.tied = jxm.tie.tie_MultiGauss_dv_c("OIII")
+    nii = jxm.Line_template_doublet(
+        template_velc=PROFILE_V, template_flux=PROFILE_F,
+        amp_c0=0.9, amp_c1=0.9 / 2.96, dv_c=45.0,
+        wavec0=6583.0, wavec1=6548.0, name="NII")
+    nii.amp_c1.tied = jxm.tie.tie_MultiGauss_doublet_ratio("NII", 2.96)
+    nii.dv_c.tied = jxm.tie.tie_MultiGauss_dv_c("OIII")
+
+    model = continuum + o3 + nha + nii
+    tree, arrays = serialize_jax_model_tree(model)
+    restored = deserialize_jax_model_tree(tree, arrays, wave=WAVE)
+
+    assert restored.free_param_names == model.free_param_names
+    # the kernels were written and read back
+    for name, kind in (("OIII", "Line_template_doublet"), ("n_halpha", "Line_template")):
+        assert type(restored[name]).__name__ == kind
+        assert np.asarray(restored[name]._template_flux).shape == PROFILE_F.shape
+        assert np.allclose(np.asarray(restored[name]._template_flux), PROFILE_F)
+        assert restored[name]._uniform is True
+    # the mapping that makes the coefficients well conditioned survived
+    assert tuple(restored["Cont"].domain) == (4900.0, 5100.0)
+    assert tuple(restored["Cont"].window) == (-1.0, 1.0)
+    # and the ties still point at the right parameters
+    assert restored["n_halpha"].dv.tied is not None
+    assert restored["NII"].dv_c.tied is not None
+    assert restored["OIII"].amp_c1.tied is not None
+
+    theta = np.asarray(model.get_free_params(), dtype=float)
+    difference = _flux_relative_difference(model.flux(WAVE, theta),
+                                           restored.flux(WAVE, theta))
+    assert difference < 1e-12, f"template compound does not round trip ({difference:.2e})"
+    print(f"  templated narrow lines: rel diff {difference:.1e}")
 
 
 def test_variable_convolution_roundtrip():

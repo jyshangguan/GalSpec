@@ -17,6 +17,7 @@ parameters" — a 30-parameter global fit takes minutes instead of hours.
 4. [The batch_size / queue_size trap](#4-the-batchsize--queuesize-trap)
 5. [Benchmarking before a long run](#5-benchmarking-before-a-long-run)
 6. [Ties and priors](#6-ties-and-priors)
+6b. [Gating the component count](#6b-gate-the-component-count-instead-of-fitting-a-fixed-one)
 7. [Reading the posterior](#7-reading-the-posterior)
 8. [Checkpointing and reloading](#8-checkpointing-and-reloading)
 9. [Making a figure from a JAX fit](#9-making-a-figure-from-a-jax-fit)
@@ -216,6 +217,76 @@ Ties behave as on the astropy side (`galspec.tie_*`), with two practical notes:
   [0, 1] and multiplied by the core amplitude *inside the model call*.  Without
   that ordering the core and the wind can trade flux and the posterior is
   bimodal.
+
+## 6b. Gate the component count instead of fitting a fixed one
+
+`priors.SpikeAndSlab` turns "how many components?" into a posterior instead of a
+sequence of fits.  One run, one evidence, and the *count* falls out of it:
+
+```python
+P_OFF = (0.2, 0.5, 0.8, 0.95)          # prior P(wing i absent); higher order, less likely
+MIN_FRACTION = 0.03                     # "on" = above 3 % of its own core peak
+
+model = ...Line_MultiGauss(n_components=1 + len(P_OFF), ...)
+for i in range(len(P_OFF)):
+    model.set_prior(f"b_halpha.amp_w{i}",
+                    priors.SpikeAndSlab(p_off=P_OFF[i], lower=0.0, upper=1.0))
+```
+
+Reading it back.  The amplitude of wing *i* is either exactly 0 or on its slab,
+so:
+
+```
+P(on) = mean(amp_w_i > MIN_FRACTION)
+BF    = (P(on) / P(off)) / toggle_prior_odds(p_off_i)      # prior odds divided out
+count = number of wings with P(on) > 0.5                   # components = count + 1
+```
+
+and `P(N)` is the histogram of `sum(amp_w_i > MIN_FRACTION)` over the samples,
+which is label-invariant: it counts components without claiming that "wing 2" is
+a particular structure.
+
+Three things that bite:
+
+* **The floor is part of the answer, not a hidden prior.** Say what counts as
+  "on" and report it next to the probability.  A component at 2 % of the core can
+  be bought from the noise by an unneeded Gaussian.
+* **Return a bound when `P(on)` saturates.** With `n` equal-weight samples,
+  `P(on)=1` means `p_off < 1/n`, so the Bayes factor is `> (n-1)/odds` — an
+  honest lower bound — not infinity.
+* **The log Z of a gated fit is not comparable with a plain-prior fit.** A
+  spike-and-slab is a mixture of sub-models; its normalisation is not the same
+  integral.  Use the gate run for the *count*, then refit the plain model at that
+  count for an evidence you can put beside other runs.
+
+Budget: 12 gates on a 66-parameter model with `nlive=1200` took 56 min on a 4090
+at 2.6 ms per likelihood.  Raise `max_ellipsoids` (to ~60, from the default 20):
+a dozen point masses make the posterior strongly multimodal.
+
+Independent gates on several lines at once do *not* give a common decomposition —
+see `typical_bugs.md` bug #10 before writing centred priors across them.
+
+The same gate works on a *single* extra component, where the question is
+"whether" rather than "how many".  Add a second Gaussian to a forbidden line and
+gate its amplitude against even prior odds:
+
+```python
+model["OIIIwing"].amp_w0.prior = priors.SpikeAndSlab(0.5, lower=0.0, upper=1.0)
+P(on) = mean(amp_w0 > 0.03)      # 3 % of the first component's peak
+BF    = (P(on) / (1 - P(on))) / 1.0
+```
+
+Read the result off the *shape* of the amplitude posterior as well as its mass: a
+sharp peak at 0.14 with no samples at zero (P(on) = 1.000) is a detection; a broad
+pile near the floor is not.  And keep the older component's boxes untouched so the
+richer model contains the poorer one — see `typical_bugs.md` bug #11.
+
+Before building any of this, bin the residual of the simpler model in velocity
+and check that the feature is where the physics says it is.  For a doublet, scale
+one line by the ratio and overlay: a real profile feature appears in both lines in
+that ratio, while noise, a continuum error and unmodelled blends do not.  That
+test costs a minute and decides whether the extra component is worth an hour of
+sampling.
 
 ## 7. Reading the posterior
 

@@ -352,6 +352,20 @@ class JaxModel:
         default is a no-op.
         """
 
+    def refresh_from_owner(self) -> None:
+        """Re-read tied parameters from the compound model that owns this leaf.
+
+        A leaf stores its own values and resolves ties only while the *compound*
+        evaluates, so after ``set_free_params`` a tied ``amp_c1`` still holds its
+        construction default until ``sync_tied_values`` runs.  Host-side helpers
+        that read ``_values`` directly -- ``Line_MultiGauss.gen_template`` is the
+        one that matters -- call this first, so a template is built from the fitted
+        parameters and not from the defaults.  A no-op for a standalone model.
+        """
+        owner = self._belongs_to
+        if owner is not None:
+            owner.sync_tied_values()
+
     # -- qualified names -----------------------------------------------------------
     def _compound_index(self) -> Optional[int]:
         parent = self._belongs_to

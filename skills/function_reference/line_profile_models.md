@@ -10,8 +10,9 @@ All line profile models for emission and absorption lines in GalSpec.
 4. [Line_MultiGauss_doublet](#line_multigauss_doublet)
 5. [Line_GaussHermite_doublet](#line_gausshermite_doublet)
 6. [Line_template](#line_template)
-7. [Line_Absorption](#line_absorption)
-8. [Line_Absorption_doublet](#line_absorption_doublet)
+7. [Line_template_doublet](#line_template_doublet)
+8. [Line_Absorption](#line_absorption)
+9. [Line_Absorption_doublet](#line_absorption_doublet)
 
 ---
 
@@ -249,12 +250,23 @@ galspec.Line_template(
 
 **Usage**: Narrow lines using high-S/N template spectra.
 
+The template is normalised to unit *peak*, so `amplitude` is the line's peak flux
+density and its integrated flux is `amplitude` times the profile's own area -- not
+`sigma sqrt(2 pi)`. `dv` is the shift applied to the whole profile, and it is the
+parameter to tie across lines (one velocity for the narrow-line region).
+
+A **uniform** velocity grid is turned into an affine gather, which costs about 6%
+more than a Gaussian; a non-uniform grid falls back to `jnp.interp` and costs ~3x.
+`gen_template(v, normalized=True)` returns the profile shape at current parameter
+values, which is how a measured line becomes the template for the others
+(see `skills/fitting_strategies/narrow_line_template.md`).
+
 **Example**:
 ```python
-# Load template from [S II] region
-velc_temp, flux_temp = np.loadtxt('narrow_template.txt').T
+# Load a profile measured on the [O III] doublet
+velc_temp, flux_temp = np.loadtxt('narrow_template.txt', comments='#').T
 
-# Use for narrow Hα
+# Use it for narrow Hα
 nha = galspec.Line_template(
     template_velc=velc_temp,
     template_flux=flux_temp,
@@ -262,6 +274,77 @@ nha = galspec.Line_template(
     dv=10,
     wavec=line_wave_dict['Halpha'],
     name='nHalpha'
+)
+
+# Tie every other narrow line to it: one velocity, one shape
+n2 = galspec.Line_template_doublet(
+    template_velc=velc_temp, template_flux=flux_temp,
+    amp_c0=20.0, amp_c1=20.0 / 2.96, dv_c=0,
+    wavec0=line_wave_dict['NII_6583'], wavec1=line_wave_dict['NII_6548'],
+    name='NII'
+)
+n2.dv_c.tied = galspec.tie_template_dv('nHalpha')
+```
+
+---
+
+## Line_template_doublet
+
+A doublet of templated lines: the same profile stamped at two wavelengths, with
+one amplitude tied to the other by the atomic ratio.
+
+```python
+galspec.Line_template_doublet(
+    template_velc=velc_array,    # Velocity array (km/s)
+    template_flux=flux_array,    # Flux array (normalized)
+    amp_c0=1.0,                  # Peak of the line at wavec0
+    amp_c1=1.0,                  # Peak of the line at wavec1
+    dv_c=0,                      # One velocity shift for both (km/s)
+    wavec0=5007,                 # Wavelength of line 0 (fixed)
+    wavec1=4959,                 # Wavelength of line 1 (fixed)
+    name='doublet'
+)
+```
+
+This is `Line_MultiGauss` -> `Line_MultiGauss_doublet` applied to `Line_template`,
+and the correspondence is exact:
+
+| `Line_MultiGauss_doublet` | `Line_template_doublet` |
+| --- | --- |
+| `amp_c0`, `amp_c1` | `amp_c0`, `amp_c1` |
+| `dv_c` (one shift, both lines) | `dv_c` (one shift, both lines) |
+| `sigma_c` (one width, both lines) | not a parameter: the width is in the template |
+| doublet ratio via `amp_c1.tied` | same, via `tie_MultiGauss_doublet_ratio` |
+
+So it is two `Line_template` models added together with `dv` tied, written once, and
+it removes the temptation to tie the two peaks' shifts with two separate calls.
+
+**Parameters**:
+- `amp_c0`, `amp_c1`: peaks (bounds: (0, None)). Tie `amp_c1` to `amp_c0` with
+  `galspec.tie_MultiGauss_doublet_ratio(name, ratio)` unless the ratio is a physical
+  diagnostic worth measuring -- [S II] 6716/6731 is one, and both peaks stay free.
+- `dv_c`: one velocity shift for both lines (bounds: (-2000, 2000))
+- `wavec0`, `wavec1`: fixed wavelengths
+
+**Usage**: Forbidden-line doublets on a measured narrow-line profile.
+
+**Example**:
+```python
+o3 = galspec.Line_template_doublet(
+    template_velc=velc_temp, template_flux=flux_temp,
+    amp_c0=1.8, amp_c1=1.8 / 2.98, dv_c=0,
+    wavec0=line_wave_dict['OIII_5007'], wavec1=line_wave_dict['OIII_4959'],
+    name='OIII'
+)
+o3.amp_c1.tied = galspec.tie_MultiGauss_doublet_ratio('OIII', 2.98)
+o3.dv_c.tied = galspec.tie_template_dv('nHalpha')
+
+# [S II]: the ratio is a density diagnostic, so both peaks are fitted
+s2 = galspec.Line_template_doublet(
+    template_velc=velc_temp, template_flux=flux_temp,
+    amp_c0=0.1, amp_c1=0.1, dv_c=0,
+    wavec0=line_wave_dict['SII_6716'], wavec1=line_wave_dict['SII_6731'],
+    name='SII'
 )
 ```
 

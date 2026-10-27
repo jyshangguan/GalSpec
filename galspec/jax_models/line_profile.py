@@ -12,7 +12,7 @@ to the core amplitude.
 
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Tuple
 
 import jax.numpy as jnp
 import numpy as np
@@ -30,8 +30,56 @@ __all__ = [
     "Line_Absorption",
     "Line_Absorption_doublet",
     "Line_template",
+    "Line_template_doublet",
     "Line_Exponential",
 ]
+
+
+# --------------------------------------------------------------------------------------
+# Velocity-template interpolation, shared by Line_template and Line_template_doublet
+# --------------------------------------------------------------------------------------
+def _grid_is_uniform(velc: np.ndarray, rtol: float = 1e-9) -> Tuple[bool, float]:
+    """``(uniform, dv)`` for a sorted template velocity grid.
+
+    A uniform grid is the normal case (``np.linspace``, ``np.arange``) and it is
+    what makes the fast path of :func:`_template_interp` usable.
+    """
+    if velc.size < 2:
+        raise ValueError("a line template needs at least two velocity points, "
+                         f"got {velc.size}")
+    dv = float(velc[1] - velc[0])
+    if dv <= 0.0:
+        raise ValueError(f"template velocities must increase, got dv={dv:g}")
+    uniform = bool(np.allclose(np.diff(velc), dv, rtol=rtol, atol=0.0))
+    return uniform, dv
+
+
+def _template_interp(v, velc, flux, vmin: float, vmax: float,
+                     uniform: bool, dv: float):
+    """Evaluate a tabulated profile at velocity ``v`` [km/s], zero outside the table.
+
+    On a **uniform** grid the table index is affine in ``v``
+    (``i = floor((v - vmin) / dv)``), so the lookup is a gather.  On a
+    non-uniform grid it falls back to :func:`jax.numpy.interp`, which has to
+    binary-search every query.
+
+    The distinction is not cosmetic: at 57 000 pixels ``jnp.interp``'s
+    ``searchsorted`` costs 5.3 ms per line on a CPU and 0.6 ms on a GPU, against
+    0.16 ms for the gather -- a full-spectrum model with ten templated narrow
+    lines is about four times slower without it.  Both paths agree to float64
+    rounding (``tests/test_jax_parity.py``).
+    """
+    inside = (v >= vmin) & (v <= vmax)
+    if uniform:
+        t = (v - vmin) / dv
+        # clip to the last full interval so that ``flux[i + 1]`` always exists;
+        # at v == vmax this gives i = n - 2, frac = 1, i.e. exactly flux[-1]
+        i = jnp.clip(jnp.floor(t).astype(jnp.int32), 0, flux.size - 2)
+        frac = t - i
+        y = flux[i] * (1.0 - frac) + flux[i + 1] * frac
+    else:
+        y = jnp.interp(v, velc, flux)
+    return jnp.where(inside, y, 0.0)
 
 
 class Line_Gaussian(JaxModel):
@@ -169,6 +217,55 @@ class Line_MultiGauss(JaxModel):
                 -0.5 * ((v - p["dv_c"] - p[f"dv_w{i}"]) / p[f"sigma_w{i}"]) ** 2)
         return flux
 
+    def gen_template(self, v, normalized: bool = True):
+        """The line profile as a kernel on a velocity grid [km/s].
+
+        The core sits at zero velocity and the winds at their own ``dv_w{i}``: the
+        profile is *centred*, and only its shape is used.  The absolute ``dv_c`` of
+        the line belongs to the line, not to the kernel, which is why a template
+        extracted from one doublet can be reused by every other narrow line.
+
+        This is host-side numpy, reading the *current* parameter values, so it is
+        not meant to be called under ``jit``.  Call it after a fit has put the best
+        parameters back on the model (``fit.get_best_fit()`` does; tied values are
+        then refreshed as well).  For a line inside a compound model the tied
+        parameters are re-read from its owner first, so a tied ``amp_w0`` is not
+        read at its construction default.
+
+        Parameters
+        ----------
+        v : array_like
+            Velocity grid [km/s].
+        normalized : bool
+            Divide by the peak, so the kernel has unit peak (default ``True``).
+
+        Returns
+        -------
+        numpy.ndarray
+            The profile at ``v``, same length as ``v``.
+
+        Notes
+        -----
+        ``IronTemplate_tied`` reads a line model's component parameters -- not this
+        array -- because it has to subtract the iron template's own width from each
+        component in quadrature.  This method is for building a
+        :class:`Line_template` / :class:`Line_template_doublet` kernel, and for
+        plotting one.
+        """
+        self.refresh_from_owner()
+        v = np.asarray(v, dtype=float)
+        amp_c = self._values["amp_c"]
+        flux = amp_c * np.exp(-0.5 * (v / self._values["sigma_c"]) ** 2)
+        for i in range(self.n_components - 1):
+            flux += (self._values[f"amp_w{i}"] * amp_c
+                     * np.exp(-0.5 * ((v - self._values[f"dv_w{i}"])
+                                      / self._values[f"sigma_w{i}"]) ** 2))
+        if normalized:
+            peak = np.max(flux)
+            if peak > 0.0:
+                flux = flux / peak
+        return flux
+
 
 class Line_MultiGauss_doublet(JaxModel):
     """Doublet with core + wind Gaussian components -- ``galspec.Line_MultiGauss_doublet``."""
@@ -233,6 +330,36 @@ class Line_MultiGauss_doublet(JaxModel):
                            + p["amp_c1"] * amp * jnp.exp(-0.5 * ((v1 - dv_w) / sigma_w) ** 2))
         return flux
 
+    def gen_template(self, v, normalized: bool = True):
+        """The **single-line** profile of the doublet, on a velocity grid [km/s].
+
+        Both peaks share one shape, so the doublet is described by one profile and
+        a ratio; this returns that profile -- the core at zero velocity, wind *i*
+        at ``dv_w{i}`` -- scaled by ``amp_c0`` only.  It is therefore the kernel to
+        hand to :class:`Line_template` for the *other* narrow lines, and to
+        :class:`Line_template_doublet` for the doublets.
+
+        Do **not** evaluate the doublet model itself to make a template: that
+        returns both peaks and puts a second line into every narrow line you then
+        fit with it.
+
+        Host-side numpy over the current parameter values, like
+        ``Line_MultiGauss.gen_template``; call it after the fit has been read back.
+        """
+        self.refresh_from_owner()
+        v = np.asarray(v, dtype=float)
+        amp_c0 = self._values["amp_c0"]
+        flux = amp_c0 * np.exp(-0.5 * (v / self._values["sigma_c"]) ** 2)
+        for i in range(self.n_components - 1):
+            flux += (self._values[f"amp_w{i}"] * amp_c0
+                     * np.exp(-0.5 * ((v - self._values[f"dv_w{i}"])
+                                      / self._values[f"sigma_w{i}"]) ** 2))
+        if normalized:
+            peak = np.max(flux)
+            if peak > 0.0:
+                flux = flux / peak
+        return flux
+
 
 class Line_Absorption(JaxModel):
     """Absorption line with covering fraction -- ``galspec.Line_Absorption``."""
@@ -276,15 +403,55 @@ class Line_Absorption_doublet(JaxModel):
                 * (1.0 - p["Cf"] + p["Cf"] * jnp.exp(-tau1)))
 
 
+def _template_arrays(model, template_velc: Sequence[float],
+                     template_flux: Sequence[float]) -> None:
+    """Validate a template and store it on ``model`` in the form ``evaluate`` needs.
+
+    Kept as a function rather than duplicated in the two template classes, and
+    deliberately storing the arrays under the ``_template_velc`` / ``_template_flux``
+    names: :func:`galspec.jax_models.serialization._ctor_arguments` looks for exactly
+    those, and ``galspec.mcmc_fit_io`` for the CPU class, so both IO paths pick a
+    template back up without a special case.
+    """
+    velc = np.asarray(template_velc, dtype=float)
+    flux = np.asarray(template_flux, dtype=float)
+    if velc.shape != flux.shape or velc.ndim != 1:
+        raise ValueError("template_velc and template_flux must be 1-D of equal length")
+    order = np.argsort(velc)
+    velc, flux = velc[order], flux[order]
+    uniform, dv = _grid_is_uniform(velc)
+    model._template_velc = jnp.asarray(velc)
+    model._template_flux = jnp.asarray(flux)
+    model._vmin = float(velc[0])
+    model._vmax = float(velc[-1])
+    model._uniform = uniform
+    model._dv = dv
+
+
 class Line_template(JaxModel):
     """Line profile from a tabulated velocity template -- ``galspec.Line_template``.
+
+    The template is a profile shape in velocity space -- typically the single-line
+    profile of an [O III] or [S II] doublet, extracted with
+    ``Line_MultiGauss_doublet.gen_template`` -- reused by every narrow line of a
+    spectrum.  Because the shape is fixed, the only freedom per line is its
+    amplitude and (shared) velocity shift: a spectrum with ten narrow lines costs
+    ten parameters instead of thirty.
 
     Parameters
     ----------
     template_velc : array_like
-        Template velocity grid [km/s].
+        Template velocity grid [km/s]; must increase after sorting.
     template_flux : array_like
-        Template flux at ``template_velc`` (arbitrary units).
+        Template flux at ``template_velc`` (arbitrary units; it is multiplied by
+        ``amplitude``, so a unit-peak template makes ``amplitude`` the peak flux).
+
+    Notes
+    -----
+    A uniform ``template_velc`` uses an affine table lookup instead of
+    :func:`jax.numpy.interp` (see :func:`_template_interp`); the two agree to
+    float64 rounding.  The profile is zero outside ``[min(template_velc),
+    max(template_velc)]``, so the grid has to span the whole line, wings included.
     """
 
     model_kind = "Line_template"
@@ -297,22 +464,75 @@ class Line_template(JaxModel):
     def __init__(self, template_velc: Sequence[float], template_flux: Sequence[float],
                  name: Optional[str] = None, fixed: Optional[dict] = None,
                  bounds: Optional[dict] = None, **kwargs):
-        velc = np.asarray(template_velc, dtype=float)
-        flux = np.asarray(template_flux, dtype=float)
-        if velc.shape != flux.shape or velc.ndim != 1:
-            raise ValueError("template_velc and template_flux must be 1-D of equal length")
-        order = np.argsort(velc)
-        self._template_velc = jnp.asarray(velc[order])
-        self._template_flux = jnp.asarray(flux[order])
-        self._vmin = float(velc[order][0])
-        self._vmax = float(velc[order][-1])
+        _template_arrays(self, template_velc, template_flux)
         super().__init__(name=name, fixed=fixed, bounds=bounds, **kwargs)
 
     def evaluate(self, x, p):
         v = velocity(x, p["wavec"]) - p["dv"]
-        inside = (v >= self._vmin) & (v <= self._vmax)
-        flux = p["amplitude"] * jnp.interp(v, self._template_velc, self._template_flux)
-        return jnp.where(inside, flux, 0.0)
+        return p["amplitude"] * _template_interp(
+            v, self._template_velc, self._template_flux,
+            self._vmin, self._vmax, self._uniform, self._dv)
+
+
+class Line_template_doublet(JaxModel):
+    """Doublet from one tabulated velocity template -- ``galspec.Line_template_doublet``.
+
+    The doublet counterpart of :class:`Line_template`, and the doublet counterpart
+    of :class:`Line_MultiGauss` -> :class:`Line_MultiGauss_doublet`: ``amplitude``
+    splits into ``amp_c0`` / ``amp_c1``, ``wavec`` into ``wavec0`` / ``wavec1``,
+    and the velocity shift is the ``dv_c`` shared by both peaks.  There is no
+    width parameter at all -- the shape *is* the template.
+
+    Why it exists: a doublet fitted with two :class:`Line_template` instances
+    needs two bounds-identical `dv` parameters that must then be tied together, and
+    a reader of the model has to know that the tie is what makes it a doublet.
+    Here the shared shift is structural, which is the same reason
+    ``Line_MultiGauss_doublet`` exists next to ``Line_MultiGauss``.
+
+    Parameters
+    ----------
+    template_velc, template_flux : array_like
+        The **single-line** profile, as returned by
+        ``Line_MultiGauss_doublet.gen_template`` for the doublet it came from.
+
+    Examples
+    --------
+    An [O III] doublet whose 4959 strength follows the atomic 1:2.98 ratio, with
+    both lines moving together::
+
+        o3 = Line_template_doublet(template_velc=velc, template_flux=flux,
+                                   amp_c0=1.9, amp_c1=1.9 / 2.98,
+                                   wavec0=5006.84, wavec1=4958.91, name="OIII")
+        o3.amp_c1.tied = tie.tie_MultiGauss_doublet_ratio("OIII", 2.98)
+
+    ``tie_MultiGauss_doublet_ratio`` and ``tie_MultiGauss_dv_c`` need no special
+    case for this class: they read ``model[ref].amp_c0`` and ``model[ref].dv_c``,
+    which are exactly the parameter names used here.
+    """
+
+    model_kind = "Line_template_doublet"
+    PARAMS = (
+        ParamSpec("amp_c0", 1.0, bounds=(0.0, None)),
+        ParamSpec("amp_c1", 1.0, bounds=(0.0, None)),
+        ParamSpec("dv_c", 0.0, bounds=(-2000.0, 2000.0)),
+        ParamSpec("wavec0", 5000.0, fixed=True),
+        ParamSpec("wavec1", 5000.0, fixed=True),
+    )
+
+    def __init__(self, template_velc: Sequence[float], template_flux: Sequence[float],
+                 name: Optional[str] = None, fixed: Optional[dict] = None,
+                 bounds: Optional[dict] = None, **kwargs):
+        _template_arrays(self, template_velc, template_flux)
+        super().__init__(name=name, fixed=fixed, bounds=bounds, **kwargs)
+
+    def evaluate(self, x, p):
+        common = (self._vmin, self._vmax, self._uniform, self._dv)
+        v0 = velocity(x, p["wavec0"]) - p["dv_c"]
+        v1 = velocity(x, p["wavec1"]) - p["dv_c"]
+        return (p["amp_c0"] * _template_interp(v0, self._template_velc,
+                                               self._template_flux, *common)
+                + p["amp_c1"] * _template_interp(v1, self._template_velc,
+                                                 self._template_flux, *common))
 
 
 class Line_Exponential(JaxModel):

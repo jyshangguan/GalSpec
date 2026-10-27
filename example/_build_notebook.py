@@ -21,6 +21,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "fit_iras07546_jax.py"
+#: The model the three examples share.  The notebook shows its code rather than
+#: duplicating it, and a cell named ``"model:<block>"`` is cut from here.
+MODEL = HERE / "iras07546_model.py"
 OUT = HERE / "fit_iras07546_jax.ipynb"
 
 
@@ -154,14 +157,47 @@ wind = (samples[:, column["b_halpha.amp_w0"]]
 
 print(f"  {'component':22s} {'FWHM':>17s}   {'flux':>18s}")
 print(f"  {'':22s} {'[km/s]':>17s}   {'[1e-17 erg/s/cm2]':>18s}")
+def narrow_flux(amplitude_name, wavelength):
+    """Integrated flux of a templated line, in 1e-17 erg/s/cm2, per sample.
+
+    The template is normalised to unit peak on a velocity grid, so its integral is
+    fixed and only the peak varies: the line flux is ``amp x area x wavelength / c``,
+    with the area read once off the profile.
+    """
+    profile = model[amplitude_name.split(".")[0]]
+    area = np.trapezoid(np.asarray(profile._template_flux),
+                        np.asarray(profile._template_velc))     # km/s per unit peak
+    peak = samples[:, column[amplitude_name]]
+    return peak * area * wavelength / C_KM_S * 1e3
+
+
+# The narrow widths are not parameters: they are the measured template, so they are
+# printed once from the model instead of being read off a posterior column.
+narrow_velc = np.asarray(model["OIII"]._template_velc)
+narrow_shape = np.asarray(model["OIII"]._template_flux)
+peak_i = int(np.argmax(narrow_shape))
+right = np.interp(0.5, narrow_shape[peak_i:][::-1], narrow_velc[peak_i:][::-1])
+left = np.interp(0.5, narrow_shape[:peak_i + 1], narrow_velc[:peak_i + 1])
+NARROW_FWHM = right - left
+
+print(f"  {'component':22s} {'FWHM':>17s}   {'flux':>18s}")
+print(f"  {'':22s} {'[km/s]':>17s}   {'[1e-17 erg/s/cm2]':>18s}")
 print("  " + "-" * 63)
-summarise("[O III] 5007 core", "OIII.sigma_c",
-          flux_of("OIII.amp_c0", "OIII.sigma_c", LINE_WAVE["OIII_5007"]))
-summarise("narrow H-beta", "OIII.sigma_c",
-          flux_of("n_hbeta.amplitude", "OIII.sigma_c", LINE_WAVE["Hbeta"]))
+print(f"  {'narrow template':22s} {NARROW_FWHM:8.0f} {'(fixed)':>8s}"
+      f"   {'-':>18s}")
 summarise("broad H-alpha core", "b_halpha.sigma_c", core)
 summarise("broad H-alpha wind", "b_halpha.sigma_w0", wind)
 print("\\n  (the narrow widths are the observed ones: no LSF was removed)")
+
+# integrated fluxes of the narrow lines, from the template
+for label, name, centre in (("[O III] 5007", "OIII.amp_c0", LINE_WAVE["OIII_5007"]),
+                            ("narrow H-beta", "n_hbeta.amplitude", LINE_WAVE["Hbeta"]),
+                            ("narrow H-alpha", "n_halpha.amplitude", LINE_WAVE["Halpha"]),
+                            ("[N II] 6584", "NII.amp_c0", LINE_WAVE["NII_6583"])):
+    flux = narrow_flux(name, centre)
+    median, lo, hi = np.median(flux), *np.percentile(flux, [16, 84])
+    print(f"  {label:22s} {'':17s}   {median:9.1f} +{hi - median:6.1f} "
+          f"-{median - lo:6.1f}")
 '''
 
 RELOAD = '''\
@@ -208,19 +244,22 @@ script is what to use in a batch pipeline; the notebook is for looking at what h
 56 956 pixels, from H-gamma to the [S II] doublet. All of it is fitted at once, so the
 continuum and the lines are constrained by the same posterior:
 
-| wavelength | what | model |
-| --- | --- | --- |
-| 4340 A | H-gamma | a narrow Gaussian + a broad MultiGauss (core + wind) |
-| 4861 A | H-beta | a narrow Gaussian + a broad MultiGauss (core + wind) |
-| 6563 A | H-alpha | a narrow Gaussian + a broad MultiGauss (core + wind) |
-| 5876 A | He I | a narrow Gaussian + one broad Gaussian |
-| 4959 / 5007 A | [O III] | narrow core + one broad wing |
-| 6548 / 6584 A | [N II] | narrow, doublet ratio 2.96 (atomic physics) |
-| 6716 / 6731 A | [S II] | narrow, **both peaks free** (the ratio is a density diagnostic) |
-| 6300 / 6364 A | [O I] | narrow, doublet ratio 3.00 |
-| 4686 A | He II | a narrow Gaussian + one broad Gaussian |
-| 4363 A | [O III] | single narrow Gaussian |
-| all | continuum | power law + Fe II template |
+| wavelength | what | narrow | broad |
+| --- | --- | --- | --- |
+| 4340 A | H-gamma | the template | MultiGauss: core + wind |
+| 4861 A | H-beta | the template | MultiGauss: core + wind |
+| 6563 A | H-alpha | the template | MultiGauss: core + wind |
+| 5876 A | He I | the template | one Gaussian |
+| 4686 A | He II | the template | one Gaussian |
+| 4959 / 5007 A | [O III] | the template, **doublet** | -- |
+| 6548 / 6584 A | [N II] | the template, doublet 2.96 (atomic) | -- |
+| 6716 / 6731 A | [S II] | the template, **both peaks free** | -- |
+| 6300 / 6364 A | [O I] | the template, doublet 3.00 | -- |
+| 4363 A | [O III] | the template | -- |
+| all | continuum | power law + Fe II template | |
+
+"The template" is one measured profile -- a single object, 8 001 numbers long, shared by
+all ten narrow lines -- not a Gaussian per line. It is the subject of section 3.
 
 Nothing outside that window is fitted: no H-delta or higher Balmer lines, no [Ne III]
 3869 or [O II] 3727, no [Ar III] 7136 or [O II] 7325. Stopping at H-gamma on the blue
@@ -235,16 +274,17 @@ inside it and is modelled instead.
   priors cannot inherit a preliminary answer. JNesty walks the prior directly.
 * **No instrumental smoothing.** At 0.046 A per pixel the spectrum grossly oversamples
   the spectrograph: R = 2000 means ~150 km/s of instrument, while the narrow lines here
-  are ~700 km/s. So the model is *not* convolved, exactly as in
-  `wrk_sagan_iras07546.ipynb`; the fitted narrow width is the observed one.
+  are ~590 km/s. So the model is *not* convolved, exactly as in
+  `wrk_sagan_iras07546.ipynb`; the profile the template carries is the observed one.
 * **Wide priors, taken from the data.** Line peaks from invisible to 3x the brightest
   pixel (log-uniform); one width box for the broad core and for the wind, 300-8000
   km/s; the wind's amplitude anywhere between 0 and 1 of the core. Section 5 shows the
   prior spread against the data.
-* **Physical ties.** Every narrow line shares one velocity shift and one width
-  (measured from [O III]); the broad core and the wind are each shared across the three
+* **Physical ties.** Every narrow line shares one velocity shift *and one shape*
+  (measured from [O III], frozen, and only the shift is free); the broad core and the
+  wind are each shared across the three
   Balmer lines and He I; and the Fe II template is broadened by broad H-alpha itself.
-  30 free numbers therefore describe seventeen models.
+  27 free numbers therefore describe seventeen models.
 
 Runtime: 10-20 minutes on one GPU with `NLIVE = 400, DLOGZ = 0.01`. For a quick look set
 `QUICK = True` in the settings cell -- 120 live points and a looser stopping criterion --
@@ -281,7 +321,7 @@ beyond 6800 A.
 
 Units: fluxes in `1e-14 erg/s/cm2/A`, velocities in km/s."""),
 
-    ("code", "load"),
+    ("code", "model:load"),
     ("code", "step-1-data"),
     ("extra", PLOT_DATA),
 
@@ -304,24 +344,47 @@ Seventeen models, added together:
    the more physical choice: the iron and the Balmer lines are emitted by the same gas, so
    they cannot have different kinematics;
 3. **H-alpha, H-beta, H-gamma**, each described **twice**, as in
-   `wrk_sagan_iras07546.ipynb`: `n_halpha` is a `Line_Gaussian` for the narrow component,
+   `wrk_sagan_iras07546.ipynb`: `n_halpha` is a `Line_template` for the narrow component,
    and `b_halpha` is a `Line_MultiGauss` for the **broad component only** -- its component
    0 (`amp_c`, `dv_c`, `sigma_c`) is the broad core, not a narrow line, and
    `amp_w0`/`dv_w0`/`sigma_w0` add the broader wind. The wind amplitude is a *ratio to the
    core amplitude*, which is how the GalSpec models are written. The two models are simply
    added; neither knows about the other;
-4. **He I 5876**, a narrow Gaussian (`n_hei`) plus **one** broad component (`b_hei`). It is
-   what used to be inside the Na D mask, and it has to be modelled now that the mask is gone;
-5. **He II 4686**, the same pattern: a narrow Gaussian (`HeII`) plus **one** broad Gaussian
-   (`b_heii`). Broad He II is a standard feature of a narrow-line Seyfert 1 and it sits on
-   the blue side of H-beta, where the iron and the Balmer wing overlap;
-6. **[O III] 4959/5007** as a doublet with a narrow core and one broad wing;
-7. **[N II], [S II], [O I]** doublets, plus a single narrow Gaussian for **[O III] 4363**.
+4. **He I 5876**, a narrow `Line_template` (`n_hei`) plus **one** broad component
+   (`b_hei`). It is what used to be inside the Na D mask, and it has to be modelled now
+   that the mask is gone;
+5. **He II 4686**, the same pattern: a narrow `Line_template` (`HeII`) plus **one** broad
+   Gaussian (`b_heii`). Broad He II is a standard feature of a narrow-line Seyfert 1 and
+   it sits on the blue side of H-beta, where the iron and the Balmer wing overlap;
+6. **[O III] 4959/5007** as a `Line_template_doublet`: the profile above, stamped at both
+   wavelengths with one amplitude scaled by the atomic ratio 2.98;
+7. **[N II], [S II], [O I]** the same doublet model, plus a single `Line_template` line for
+   **[O III] 4363**.
+
+### Where the profile comes from
+
+Nothing in those ten narrow lines is fitted except the peak. The shape is
+`example/data/iras07546_narrow_template.txt`: 8 001 numbers on a 1 km/s velocity grid,
+measured by `develop/dev_template/stage1_o3_template.py`. That script fits the
+[O III] 4959/5007 doublet *alone*, in a 160 A window, with a polynomial continuum, an
+explicit Fe II component (5007 A sits where the iron pseudo-continuum is still strong,
+and without it the fit puts that flux into a fake broad wing on [O III] itself), and two
+or three kinematic components, with the evidence choosing between them. The winner was
+three, at `delta ln Z = 29.5`, and the profile it produced has an FWHM of 592 km/s: a core
+of 182 km/s and two broad components that carry the wings. The extraction was then
+checked against the continuum order (578-596 km/s over degrees 1-4) and against the
+window cut (589-594 km/s over four cuts), because a profile that moves with either of
+those is the polynomial eating the line, not a measurement.
+
+`Line_template` turns a uniform velocity grid into an affine gather, so a templated line
+costs about 6% more than the Gaussian it replaces, not the 3x that `jnp.interp` costs --
+`develop/dev_template/template_model_test.py` measures it.
 
 The ties are what make this affordable:
 
-* one `dv` and one `sigma` for **all** narrow lines, taken from the [O III] core (forbidden
-  lines come from the same low-density gas);
+* one `dv` for **all** narrow lines, taken from [O III] (forbidden lines come from the
+  same low-density gas) -- and one *shape*, which is the template: there is no narrow
+  `sigma` left to tie, because none is free;
 * `dv_c`/`sigma_c` (the broad core) and `dv_w0`/`sigma_w0` (the wind) shared by the three
   broad Balmers, by He I and by He II: the two broad components are separate physical
   structures, so they get separate kinematics, but each is common to the lines. The Fe II
@@ -336,8 +399,8 @@ because it uses a least-squares fitter with no error model, whereas here the 5% 
 already absorbs flux-calibration error, and a high-order polynomial on top of a power law
 plus an Fe II template would be strongly degenerate with both."""),
 
-    ("code", "helpers"),
-    ("code", "model"),
+    ("code", "model:helpers"),
+    ("code", "model:model"),
 
     ("md", """### Why the iron is broadened by the line profile
 
@@ -362,8 +425,7 @@ spectrum itself, never from a previous fit:
 | --- | --- | --- |
 | line peaks | 1e-3 to 3x the brightest pixel, **log-uniform** | four decades: from invisible to implausibly strong |
 | wind/core ratio | 0-1, **uniform** | no wind is brighter than its own core -- and this is what breaks the core-wind degeneracy |
-| narrow widths | 30-800 km/s | unresolved up to the widest known narrow-line region |
-| [O III] wing width | 300-4000 km/s | a wing on the narrow core, not the broad-line wind |
+| narrow shift | -1000 to 1000 km/s | every narrow line moves together; the width is in the template, so no width is fitted |
 | broad core and wind | 300-8000 km/s | FWHM up to ~19000 km/s; a wing is not assumed broader than its core |
 | continuum level | 0.2-4x the line-free windows | cannot be negative, cannot swamp the lines |
 | iron amplitude | 1e-3 to 3x the continuum level | the only free iron parameter |
@@ -385,7 +447,7 @@ prior, while the *widths* keep their full data-driven range. The fit below lands
 with no posterior samples on the mirror branch;
 `develop/dev_jax/io_test/iron_tied_io_test.html` measures the same thing on a mock."""),
 
-    ("code", "priors"),
+    ("code", "model:priors"),
     ("code", "step-2-model"),
 
     ("md", """## 5. Run the sampler
@@ -399,10 +461,14 @@ worst one with a point of higher likelihood: the volume shrinks, the likelihood 
 integral of both is the evidence. The surviving points are a weighted sample of the posterior,
 which is what we quote below.
 
-JNesty draws its live points from the OS entropy, so a rerun is a fresh draw from the
-same posterior rather than a bit-for-bit repeat: `log Z` moves by a few nats at 100 live
-points and by a fraction of its error bar at 400, which is why the published number is
-quoted with an uncertainty."""),
+JNesty seeds its live points from a fixed key (`PRNGKey(42)`), so a rerun of the same
+model visits the same live points. That is not the same as bitwise identity: on this GPU
+two runs of the tied fit came out 0.45 nats apart, from the last bits of a float sum
+ordering the sampler's replace-the-worst step. It does mean the quoted uncertainty is the
+*sampler's* error bar, and that run-to-run scatter sits well inside it. Pass `key=` through `fit(..., key=...)` to draw a different set of live points and
+see the scatter: at 400 points that scatter is a fraction of the quoted error bar, so one
+run is enough; near 100 it is a few nats, which is why `dlogz` and `nlive` are both
+printed with every number in this repository."""),
 
     ("code", "step-3-fitter"),
 
@@ -425,7 +491,12 @@ interval, the Bayesian counterpart of "1 sigma").
 Read it with the ties in mind -- `OIII.dv_c` is the shift of *every* narrow line, and
 `b_halpha.sigma_w0` is the width of the wind in *all three* Balmer lines, in He I and in the
 Fe II kernel. The unit column is read off the parameter's suffix, so nothing has to be
-remembered: `amp*` is a flux density, `dv*`/`sigma*` is km/s, `amp_w*` is a ratio to the core."""),
+remembered: `amp*` is a flux density, `dv*`/`sigma*` is km/s, `amp_w*` is a ratio to the core.
+
+Note what is **not** in the table: any narrow-line width. The ten narrow lines contribute six
+singlet peaks, four doublet peaks and one shift -- 11 numbers in total, where a Gaussian model
+would have spent 14 (a shift, a width and eight peaks) and a core-plus-wing [O III] would
+have spent more. That is where the three fewer parameters come from."""),
 
     ("code", "step-5-results"),
 
@@ -437,9 +508,12 @@ bars inherit the correlations in the fit.
 
 `FWHM = 2.3548 sigma`. The integrated flux of a Gaussian of peak `A` and width `sigma` at
 wavelength `lambda` is `A sigma sqrt(2 pi) lambda / c`, converted here to the customary
-`1e-17 erg/s/cm2`.
+`1e-17 erg/s/cm2`. For a templated line the integral is not `sigma sqrt(2 pi)` but the
+profile's own area -- 767 km/s for this one, against 592 km/s of FWHM -- so the cell below
+integrates the template instead of assuming a shape.
 
-`FWHM` for the narrow components is the *observed* width (no LSF was removed)."""),
+The narrow `FWHM` is quoted once, from the template, and is the *observed* width (no LSF
+was removed)."""),
 
     ("extra", DERIVED),
 
@@ -469,8 +543,8 @@ other instruments."""),
 
 `galspec.plot.plot_fit` takes the fitted JAX model directly and draws the data, the total
 model, **every component**, the dashed sub-components of each multi-Gaussian line (so the
-narrow Gaussian and the broad core and wind of each Balmer line can be told apart) and the
-residual panel.
+broad core and wind of each Balmer line can be told apart) and the residual panel. The narrow
+lines appear as they are in the model: one profile each, no hidden sub-structure.
 
 Two details of the figure are deliberate. The residual panel is drawn in **units of sigma**
 (`residual_in_sigma=True`), so a residual of 3 means three error bars and the stated rms can be
@@ -519,10 +593,17 @@ written in the corner, so nothing is hidden by the zoom."""),
   and a broader part" and treat their individual fluxes as indicative. Because the iron kernel
   is tied to them, that caveat propagates to the iron profile too. They are also *exchangeable*
   (see the priors section), which is why the wind amplitude carries the bounded ratio prior.
-* Without the LSF folded in, the narrow widths include the instrument (~150 km/s FWHM, small
-  next to ~700 km/s but not zero). Subtract it in quadrature if you need the gas kinematics alone.
-* The narrow lines share one width by construction -- the standard assumption for forbidden-line
-  regions, but it means a genuinely different narrow kinematics per line could not be detected.
+* Without the LSF folded in, the narrow profile includes the instrument (~150 km/s FWHM, small
+  next to ~592 km/s but not zero). Subtract it in quadrature if you need the gas kinematics alone.
+* The narrow lines share one *shape* by construction, and that assumption is measurably wrong
+  here: the same local treatment applied to H-alpha (its own Gaussian, [N II] tied to it) gives
+  `sigma = 298 km/s`, while the [O III] profile has an equivalent `sigma` of 250 km/s. The
+  Balmer narrow lines are about 16% broader than [O III]. So this model *under-fits* H-alpha,
+  H-beta and [N II], and its evidence comes out **lower** than the Gaussian model's despite
+  having three fewer parameters -- 130 656 against 130 890, chi2/dof 0.316 against 0.307.
+  That is a statement about this
+  object, not about the method: measure the profile on the line you trust and check, as
+  `stage1_o3_template.py` does, that the other lines agree with it before freezing it.
 * The [S II] ratio is measured, not assumed, because it is a density diagnostic: I(6716)/I(6731)
   near 1.3 means low-density gas, near 0.5 high-density. Turning it into an electron density
   needs a temperature and the atomic data, which is beyond a line-profile fit.
@@ -614,20 +695,23 @@ def build(cells_in=None, out: Path = OUT) -> int:
     """Write the notebook; return its cell count."""
     cells_in = cells if cells_in is None else cells_in
     from_script = script_cells()
+    from_model = {f"model:{name}": body for name, body in script_cells(MODEL).items()}
+    available = {**from_script, **from_model}
     used = {name for kind, name in cells_in if kind == "code"}
-    missing = sorted(used - set(from_script))
+    missing = sorted(used - set(available))
     if missing:
-        raise SystemExit(f"no such '# %%' block in {SCRIPT.name}: {missing}")
-    empty = sorted(name for name in used if not from_script[name].strip())
+        raise SystemExit(f"no such '# %%' block in {SCRIPT.name} or {MODEL.name}: "
+                         f"{missing}")
+    empty = sorted(name for name in used if not available[name].strip())
     if empty:
-        raise SystemExit(f"empty '# %%' block in {SCRIPT.name}: {empty}")
+        raise SystemExit(f"empty '# %%' block: {empty}")
 
     out_cells = []
     for index, (kind, payload) in enumerate(cells_in):
         if kind == "md":
             text, cell_type = payload, "markdown"
         else:
-            text, cell_type = (from_script[payload] if kind == "code" else payload), "code"
+            text, cell_type = (available[payload] if kind == "code" else payload), "code"
         text = text if text.endswith("\n") else text + "\n"
         cell = {"cell_type": cell_type, "id": f"cell-{index:02d}", "metadata": {},
                 "source": text.splitlines(keepends=True)}

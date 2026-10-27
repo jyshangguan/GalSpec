@@ -162,42 +162,9 @@ cython_debug/
 # MACOS files
 .DS_Store
 */.DS_Store
-develop/*
-!develop/dev_nautilus/
-develop/dev_nautilus/*
-!develop/dev_nautilus/README.md
-!develop/dev_nautilus/*.py
-!develop/dev_jax/
-develop/dev_jax/*
-!develop/dev_jax/README.md
-!develop/dev_jax/*.py
-!develop/dev_jax/io_test/
-develop/dev_jax/io_test/*
-!develop/dev_jax/io_test/*.html
-!develop/dev_jax/io_test/*.json
-!develop/dev_jax/io_test/*.png
-!develop/dev_jax/results/
-develop/dev_jax/results/*
-!develop/dev_jax/results/bench_*.json
-!develop/dev_jax/results/bench_*.png
-!develop/dev_jax/results/demo_*.png
-!develop/dev_jax/results/sdss_*.json
-!develop/dev_jax/results/report/
-develop/dev_jax/results/report/*
-!develop/dev_jax/results/report/*.html
-!develop/dev_jax/results/report/*.css
-!develop/dev_jax/results/report/img/
-develop/dev_jax/results/report/img/*
-!develop/dev_jax/results/report/img/*.png
-!develop/dev_template/
-develop/dev_template/*
-!develop/dev_template/README.md
-!develop/dev_template/*.py
-!develop/dev_template/output/
-develop/dev_template/output/*
-!develop/dev_template/output/*.png
-!develop/dev_template/output/narrow_template.txt
-!develop/dev_template/output/stage*_results.json
+# The development scripts are a standalone repository of their own (develop/.git),
+# kept locally and deliberately not published: see develop/README.md.
+/develop/
 .vscode/*
 
 # Large data files - downloaded automatically
@@ -209,5 +176,3 @@ example/output/
 # the last executed copy of the example notebook, kept by _build_notebook.py
 example/*.executed.ipynb
 
-# re-renderable fit output (see develop/dev_jax/broad_line_components.py --rebuild)
-develop/dev_jax/io_test/*.pkl

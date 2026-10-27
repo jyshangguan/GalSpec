@@ -169,8 +169,9 @@ Benchmarks
 ----------
 
 Everything below was measured on one machine (RTX 4090, 19 GB; 192-core host)
-with the scripts in ``develop/dev_jax``. Raw numbers are stored in
-``develop/dev_jax/results/``.
+with the scripts in ``develop/dev_jax``.  (``develop/`` is a separate, local-only
+repository -- it is not part of this one, so the paths name scripts rather than files
+you can fetch.)  Raw numbers are stored in ``develop/dev_jax/results/``.
 
 Cost of one likelihood evaluation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

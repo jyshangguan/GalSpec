@@ -449,7 +449,8 @@ factor is unbounded) but because a coarser floor is a different definition of "a
 component".
 
 Calibration on mocks with known answers (``develop/dev_jax/broad_line_components.py``,
-four mocks of 1, 2, 3 and 4 components at 1% noise) says three things. The count is the
+four mocks of 1, 2, 3 and 4 components at 1% noise; ``develop/`` is a separate, local-only
+repository, so the name is a pointer and not a link) says three things. The count is the
 *minimum the data need*, not the number that generated them: it is exact for the 1-, 2-
 and 3-component mocks, and 3 for the 4-component one, because three overlapping wings that
 differ only in width are not separately required by 1%-noise data. The linear slab is the

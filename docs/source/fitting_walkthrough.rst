@@ -14,8 +14,8 @@ with 27 free parameters. Full settings on one GPU: 400 live points, ``dlogz = 0.
 Twelve of those 27 are narrow-line parameters -- eleven peaks and one shared shift; the
 narrow *profile* is not fitted at all. It is one measured object, ``example/data/iras07546_narrow_template.txt``,
 extracted from the [O III] doublet by ``develop/dev_template/stage1_o3_template.py``
-and shared by every narrow line, which is what makes the parameter count 27 instead
-of 30. Step 2 below reads it from that file and says why.
+(a script in a separate, local-only repository -- it is not part of this one) and shared
+by every narrow line, which is what makes the parameter count 27 instead of 30. Step 2 below reads it from that file and says why.
 
 .. contents:: On this page
    :local:

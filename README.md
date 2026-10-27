@@ -40,6 +40,16 @@ cd GalSpec
 pip install -e .
 ```
 
+### What is in the repository
+
+`galspec/` (the package), `example/` (the worked example, its notebook and data),
+`tests/`, `docs/` and `skills/`. The `develop/` tree is **not** part of this
+repository: it holds the benchmarks, the mock calibrations, the [O III]
+template-extraction scripts and the fits and figures they produce, and it is kept as
+a standalone local git repository so that its history stays private. Paths such as
+`develop/dev_jax/bench_jnesty.py`, quoted below and in the documentation, name scripts
+on the author's machine rather than files you can fetch here.
+
 ## Claude Code Integration (Optional)
 
 GalSpec includes a Claude Code skill that allows you to use GalSpec directly within Claude Code for interactive spectral fitting assistance.

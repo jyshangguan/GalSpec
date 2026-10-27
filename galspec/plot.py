@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.ticker import LogLocator, MaxNLocator
 from .line_profile import Line_MultiGauss, Line_MultiGauss_doublet, Line_Gaussian
 from .continuum import WindowedPowerLaw1D, BlackBody
 
@@ -12,7 +13,7 @@ mpl.rc("xtick.minor", width=1., size=5)
 mpl.rc("ytick.minor", width=1., size=5)
 
 __all__ = ['plot_fit', 'plot_fit_jax', 'plot_fit_new', 'plot_posterior_hist',
-           'reorder_legend',
+           'plot_corner', 'reorder_legend',
            'plot_narrow_line_diagnostic', 'plot_narrow_line_template_validation']
 
 #: Colours cycled through for the individual model components by :func:`plot_fit`.
@@ -438,22 +439,7 @@ def plot_posterior_hist(fit_or_samples, params=None, labels=None, quantiles=(0.1
     """
     samples, names, latex, bounds, notes = _posterior_inputs(fit_or_samples)
 
-    if params is None:
-        index = list(range(samples.shape[1]))
-    else:
-        index = []
-        for item in params:
-            if isinstance(item, (int, np.integer)):
-                index.append(int(item))
-            elif item in names:
-                index.append(names.index(item))
-            else:
-                matches = [i for i, n in enumerate(names)
-                           if n.endswith('.' + item) or n.rsplit('.', 1)[-1] == item]
-                if len(matches) != 1:
-                    raise ValueError(f"parameter {item!r} is not in the fit "
-                                     f"(candidates: {[n for n in names][:5]} ...)")
-                index.append(matches[0])
+    index = _resolve_params(params, names, samples.shape[1])
     if labels is None:
         labels = [latex[i] if latex is not None else names[i] for i in index]
     elif len(labels) != len(index):
@@ -508,6 +494,14 @@ def plot_posterior_hist(fit_or_samples, params=None, labels=None, quantiles=(0.1
                 v_lo = 0.0
             ax.set_xlim(v_lo, v_hi)
 
+        # eight formatted ticks do not fit the width of one panel, and a parameter
+        # spanning 0.0125 has long ones: cap the count instead of letting the labels
+        # run into each other
+        if on_log:
+            ax.xaxis.set_major_locator(LogLocator(numticks=4))
+        else:
+            ax.xaxis.set_major_locator(MaxNLocator(nbins=5, prune='both'))
+
         outside = []
         if show_bounds and bounds is not None:
             for limit in bounds[column]:
@@ -548,6 +542,33 @@ def plot_posterior_hist(fit_or_samples, params=None, labels=None, quantiles=(0.1
     if filename:
         fig.savefig(filename, dpi=140, bbox_inches='tight')
     return fig, axes
+
+
+def _resolve_params(params, names, ndim):
+    """Column indices for a ``params`` list of names or integers.
+
+    ``names`` are the names the fitter reports -- the qualified ones when it has
+    them -- and a bare last component resolves too as long as it is unambiguous.
+    Both spellings turn up in user scripts, and both turn up in a TOML file, so
+    accepting either is the point rather than a convenience.
+    """
+    if params is None:
+        return list(range(ndim))
+    index = []
+    for item in params:
+        if isinstance(item, (int, np.integer)):
+            index.append(int(item))
+        elif item in names:
+            index.append(names.index(item))
+        else:
+            matches = [i for i, name in enumerate(names)
+                       if name.endswith('.' + item)
+                       or name.rsplit('.', 1)[-1] == item]
+            if len(matches) != 1:
+                raise ValueError(f"parameter {item!r} is not in the fit "
+                                 f"(candidates: {list(names)[:5]} ...)")
+            index.append(matches[0])
+    return index
 
 
 def _prior_bounds_for_columns(fit, flat_names):
@@ -641,6 +662,70 @@ def _centred_prior_notes(fit, flat_names):
             cap = f", $\\pm${nsigma:g}$\\sigma$"
         notes.append(f"$N$({centre}, {width}{cap})")
     return notes
+
+
+def plot_corner(fit_or_samples, params=None, labels=None, truths=True,
+                filename=None, dpi=110, **kwargs):
+    r"""Corner plot of a fitted posterior, optionally of a subset of parameters.
+
+    A two-dimensional histogram for every *pair* is what makes a corner plot
+    unreadable past a dozen parameters, so ``params`` selects the columns -- the
+    same qualified names, bare names or indices :func:`plot_posterior_hist` takes.
+
+    Parameters
+    ----------
+    fit_or_samples : object or array like
+        A fitted sampler or an ``(nsamples, ndim)`` array of equally weighted
+        samples.
+    params : sequence, optional
+        Which parameters to draw.  Default: every free parameter.
+    labels : sequence of str, optional
+        Axis labels; defaults to the fitter's LaTeX labels.
+    truths : bool or array like, optional
+        ``True`` (default) marks the best fit, ``False`` draws none, and an array
+        gives the values explicitly.
+    filename : str, optional
+        Save the figure here.
+    dpi : int
+        Resolution of ``filename``.
+    **kwargs
+        Passed on to :func:`corner.corner`, e.g. ``bins``, ``quantiles``,
+        ``show_titles``.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    """
+    try:
+        import corner
+    except ImportError as exc:                   # pragma: no cover - optional dependency
+        raise ImportError("plot_corner needs the 'corner' package; "
+                          "install it with `pip install corner`") from exc
+
+    samples, names, latex, _, _ = _posterior_inputs(fit_or_samples)
+    index = _resolve_params(params, names, samples.shape[1])
+    if labels is None:
+        labels = [latex[i] if latex is not None else names[i] for i in index]
+    elif len(labels) != len(index):
+        raise ValueError("labels and params must have the same length")
+
+    if truths is True:
+        values = getattr(fit_or_samples, 'theta_best', None)
+        if values is None and hasattr(fit_or_samples, 'get_best_fit'):
+            values = fit_or_samples.get_best_fit()[2]
+        truths = None if values is None else np.asarray(values, dtype=float)[index]
+    elif truths is False or truths is None:
+        truths = None
+    else:
+        truths = np.asarray(truths, dtype=float)[index]
+
+    kwargs.setdefault('bins', 40)
+    kwargs.setdefault('label_kwargs', {'fontsize': 9})
+    figure = corner.corner(np.asarray(samples, dtype=float)[:, index],
+                           labels=list(labels), truths=truths, **kwargs)
+    if filename:
+        figure.savefig(filename, dpi=dpi, bbox_inches='tight')
+    return figure
 
 
 def reorder_legend(ax, order):

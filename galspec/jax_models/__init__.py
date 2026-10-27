@@ -110,6 +110,53 @@ MODELS = {
     )
 }
 
+#: Spelling variants accepted wherever a model kind is named.  ``IronTemplate_new``
+#: is the pre-rename alias of :class:`IronTemplate` -- the very same class, so the
+#: dictionary comprehension above cannot produce this key.
+MODEL_KIND_ALIASES = {"IronTemplate_new": IronTemplate}
+MODELS.update(MODEL_KIND_ALIASES)
+
+
+def resolve_model_kind(name: str):
+    """Return the model class for ``name``: kind, alias, or (any case) class name.
+
+    The lookup exists so configuration files can name a model the way people
+    write it -- ``"PowerLaw1D"``, ``"iron_template_new"``, ``"Line_MultiGauss"``
+    -- without a private mapping of their own.  The comparison is
+    case-insensitive on both the registered ``model_kind`` and the class name.
+
+    Parameters
+    ----------
+    name : str
+        A model kind (``MODELS`` key), an alias (``MODEL_KIND_ALIASES``) or a
+        class name.
+
+    Returns
+    -------
+    type
+        The :class:`JaxModel` subclass.
+
+    Raises
+    ------
+    KeyError
+        When nothing matches; the message lists the known kinds.
+    """
+    if not isinstance(name, str) or not name.strip():
+        raise KeyError(f"a model kind must be a non-empty string, got {name!r}")
+    key = name.strip()
+    for table in (MODELS, MODEL_KIND_ALIASES):
+        if key in table:
+            return table[key]
+    lowered = key.lower()
+    for alias, candidate in MODEL_KIND_ALIASES.items():
+        if alias.lower() == lowered:
+            return candidate
+    for kind, candidate in MODELS.items():
+        if kind.lower() == lowered or candidate.__name__.lower() == lowered:
+            return candidate
+    raise KeyError(f"unknown model kind {name!r}; known kinds are {sorted(MODELS)}")
+
+
 __all__ = [
     # core
     "JaxModel", "JaxCompoundModel", "JaxParameter", "ParamSpec",
@@ -131,5 +178,5 @@ __all__ = [
     # ties (CPU implementations, reused)
     "tie", "tie_StarSpectrum_deltaz", "tie_StarSpectrum_sigma",
     # misc
-    "MODELS",
+    "MODELS", "MODEL_KIND_ALIASES", "resolve_model_kind",
 ]

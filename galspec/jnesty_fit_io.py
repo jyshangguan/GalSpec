@@ -68,7 +68,8 @@ def _results_mapping(results) -> Dict[str, Any]:
     return out
 
 
-def save_jnesty_fit_to_fits(jnesty_fit, filename, thin: int = 1) -> str:
+def save_jnesty_fit_to_fits(jnesty_fit, filename, thin: int = 1,
+                            extra_header=None) -> str:
     """Write a :class:`~galspec.jnesty_fit.JNesty_Fit` into a FITS file.
 
     Parameters
@@ -80,6 +81,14 @@ def save_jnesty_fit_to_fits(jnesty_fit, filename, thin: int = 1) -> str:
     thin : int
         Save every ``thin``-th posterior sample.  ``thin > 1`` shrinks the file
         for very long runs; the factor is recorded in the ``THIN`` keyword.
+    extra_header : mapping, optional
+        Extra keywords for the primary header, e.g. the provenance a batch run
+        wants to travel with the fit (source identifier, redshift, units,
+        config hash).  Each entry is either ``KEY: value`` or
+        ``KEY: (value, comment)``.  The keywords this function writes itself
+        (``LOGZ``, ``NDIM``, ...) cannot be overridden: passing one raises
+        ``ValueError`` rather than silently changing its meaning.  The default,
+        ``None``, writes exactly the file this function has always written.
 
     Returns
     -------
@@ -121,6 +130,21 @@ def save_jnesty_fit_to_fits(jnesty_fit, filename, thin: int = 1) -> str:
         hdr["JNESTYV"] = str(getattr(jnesty, "__version__", "unknown"))
     except Exception:                               # pragma: no cover
         pass
+
+    if extra_header:
+        for key, entry in dict(extra_header).items():
+            keyword = str(key).strip()
+            if not keyword:
+                raise ValueError("extra_header contains an empty keyword")
+            if keyword in hdr:
+                raise ValueError(
+                    f"extra_header may not override the fit's own keyword {keyword!r}; "
+                    "choose a different name")
+            if isinstance(entry, tuple) and len(entry) == 2:
+                value, comment = entry
+            else:
+                value, comment = entry, None
+            hdr[keyword] = (value, comment) if comment is not None else value
     hdul.append(fits.PrimaryHDU(header=hdr))
 
     # -- the data the fit was made against -------------------------------------
@@ -432,6 +456,9 @@ def load_jnesty_fit_from_fits(filename, wave: Optional[np.ndarray] = None):
                     zip(fit.param_names,
                         np.asarray(model.get_free_params(), dtype=float))}
     fit.sampler = None
+    #: A loaded fit holds no sampler and never compiles again: whatever the run
+    #: that wrote the file did, this object reports the default path.
+    fit.share_compilation = False
     fit.param_map = {full: (index, name) for index, (full, name)
                      in enumerate(zip(fit.full_param_names, fit.param_names))}
     from .param_labels import qualified_parameter_labels

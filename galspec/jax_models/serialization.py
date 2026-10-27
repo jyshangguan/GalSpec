@@ -29,7 +29,10 @@ one parameter of the compound model (which is what every ``tie_*`` helper in
 GalSpec does), only the *target* is written (``"OIII.dv_c"``); otherwise the
 callable is written as module + qualified name + instance state, which round
 trips for GalSpec's ``tie_*`` classes but not for a function defined in
-``__main__``.
+``__main__``.  A :class:`ParamRefTie` is always written as the data form, and a
+scaled reference (``value * scale + offset``) records its two coefficients
+alongside the target, so a fitted file never depends on this module being
+importable to be read back.
 """
 
 from __future__ import annotations
@@ -55,22 +58,50 @@ _CTOR_SKIP = frozenset({"self", "name", "fixed", "bounds", "kwargs"})
 
 
 class ParamRefTie:
-    """Tie that copies one parameter of another submodel.
+    """Tie that copies (or scales) one parameter of another submodel.
 
-    The portable form of a tie: ``tie(root)`` returns ``root["OIII"].dv_c``.
-    Used when the original tie callable was written inline (a lambda or a local
-    class), which cannot be re-imported in a fresh process.
+    The portable form of a tie: ``tie(root)`` returns ``root["OIII"].dv_c``,
+    or ``root["OIII"].amp_c0 * scale + offset``.  Used when the original tie
+    callable was written inline (a lambda or a local class), which cannot be
+    re-imported in a fresh process.
+
+    Parameters
+    ----------
+    submodel : str
+        Name of the submodel that owns the reference parameter.
+    parameter : str
+        Parameter name on that submodel.
+    scale, offset : float, optional
+        ``tied = reference * scale + offset``.  The default ``(1.0, 0.0)`` is a
+        plain copy, which is what every pre-existing tie did; the extended form
+        lets a config or a caller express e.g. ``amp_w0 = 0.5 * amp_w1``
+        without inventing a new tie class.  Non-default values are stored in the
+        ``param_ref`` record, so the saved fit stays pure data.
     """
 
-    def __init__(self, submodel: str, parameter: str):
+    def __init__(self, submodel: str, parameter: str, scale: float = 1.0,
+                 offset: float = 0.0):
         self.submodel = submodel
         self.parameter = parameter
+        self.scale = float(scale)
+        self.offset = float(offset)
+
+    @property
+    def is_copy(self) -> bool:
+        """True when this tie is a plain copy (the pre-existing behaviour)."""
+        return self.scale == 1.0 and self.offset == 0.0
 
     def __call__(self, model):
-        return getattr(model[self.submodel], self.parameter)
+        value = getattr(model[self.submodel], self.parameter)
+        if self.is_copy:
+            return value
+        return value * self.scale + self.offset
 
     def __repr__(self) -> str:
-        return f"ParamRefTie({self.submodel!r}, {self.parameter!r})"
+        if self.is_copy:
+            return f"ParamRefTie({self.submodel!r}, {self.parameter!r})"
+        return (f"ParamRefTie({self.submodel!r}, {self.parameter!r}, "
+                f"scale={self.scale:g}, offset={self.offset:g})")
 
 
 # --------------------------------------------------------------------------------------
@@ -122,6 +153,18 @@ def _serialize_tie(tied, root) -> Optional[Dict[str, Any]]:
     """Describe one tie: a parameter reference if possible, else the callable."""
     if tied is None:
         return None
+    if isinstance(tied, ParamRefTie):
+        # Written directly, so a scaled reference stays pure data too: probing it
+        # through ``tied(root)`` would return ``JaxParameter * scale``, which the
+        # host-side handle cannot represent, and the tie would degrade to a
+        # ``callable_object`` record that has to re-import this module.
+        record: Dict[str, Any] = {"kind": "param_ref", "submodel": tied.submodel,
+                                  "parameter": tied.parameter}
+        if tied.scale != 1.0:
+            record["scale"] = float(tied.scale)
+        if tied.offset != 0.0:
+            record["offset"] = float(tied.offset)
+        return record
     try:
         target = tied(root)
     except Exception:                                     # pragma: no cover - defensive
@@ -252,7 +295,9 @@ def _deserialize_tie(info):
     if not info:
         return None
     if info.get("kind") == "param_ref":
-        return ParamRefTie(info["submodel"], info["parameter"])
+        return ParamRefTie(info["submodel"], info["parameter"],
+                           scale=info.get("scale", 1.0),
+                           offset=info.get("offset", 0.0))
     return _deserialize_tied_callable(info)
 
 

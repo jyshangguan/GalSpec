@@ -1,4 +1,5 @@
 import numpy as np
+from functools import lru_cache
 from astropy.table import Table
 from scipy.ndimage import gaussian_filter1d
 from astropy.modeling.core import Fittable1DModel
@@ -89,7 +90,22 @@ def load_iron_template(template_name='park2022', pad_velocity=100000.0):
     wave, flux : ndarray
         Wavelength [A], on a grid even in ``ln(wave)``, and flux normalised to
         unit maximum.  ``flux`` is zero outside the tabulated range.
+
+    Notes
+    -----
+    The read-resample-pad work is cached per ``(template_name, pad_velocity)``
+    and the cached arrays are returned as copies, so building one model per
+    spectrum in a large sample does not re-read the table each time and no
+    caller can corrupt the cached template.  The published arrays
+    (``wave_park2022``, ...) are unaffected.
     """
+    wave, flux = _load_iron_template_cached(template_name, float(pad_velocity))
+    return wave.copy(), flux.copy()
+
+
+@lru_cache(maxsize=8)
+def _load_iron_template_cached(template_name, pad_velocity):
+    """:func:`load_iron_template` behind the cache: returns the shared arrays."""
     try:
         name, fmt, wave_col, flux_col = _TEMPLATE_FILES[template_name]
     except KeyError:

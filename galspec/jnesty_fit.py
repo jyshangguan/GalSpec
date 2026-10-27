@@ -31,9 +31,10 @@ Example
 
 from __future__ import annotations
 
+import hashlib
 import time
 import warnings
-from typing import Dict, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -58,7 +59,173 @@ from .dynesty_fit import Dynesty_Fit, _resolve_named_priors
 from .priors import as_prior, resolve_prior_dependencies
 from .param_labels import parameter_labels, qualified_parameter_labels
 
-__all__ = ["JNesty_Fit", "jax_devices_summary", "select_device"]
+__all__ = ["JNesty_Fit", "jax_devices_summary", "select_device",
+           "clear_shared_compilation_cache", "shared_compilation_cache_size",
+           "enable_persistent_compilation_cache"]
+
+
+# --------------------------------------------------------------------------------------
+# Shared compilation
+# --------------------------------------------------------------------------------------
+#: Compiled likelihoods/prior transforms, keyed by the *traced program* they compile.
+#: A plain closure over the data puts that data in the trace as constants, so every
+#: spectrum produces a different program and pays a full XLA compile (~0.6 s for a
+#: 37-parameter model on 20 000 pixels).  Passing the data as arguments instead makes
+#: one program serve every spectrum of the same structure; this dictionary then lets
+#: later fits reuse the executable XLA built for the first one.  JAX alone does not
+#: help here: a second ``jax.jit`` object over an identical program recompiles it.
+_SHARED_COMPILATION: Dict[str, Any] = {}
+
+
+def _trace_key(fn, *example_args) -> str:
+    """SHA-256 of the program ``fn`` traces to, for the given argument shapes."""
+    program = jax.make_jaxpr(fn)(*example_args)
+    return hashlib.sha256(str(program).encode("utf-8")).hexdigest()
+
+
+def _shared_compiled(kind: str, fn, *example_args):
+    """Return a compiled ``fn``, reusing the one already built for this program."""
+    key = f"{kind}:{_trace_key(fn, *example_args)}"
+    compiled = _SHARED_COMPILATION.get(key)
+    if compiled is None:
+        compiled = jax.jit(fn)
+        _SHARED_COMPILATION[key] = compiled
+    return compiled
+
+
+def clear_shared_compilation_cache() -> int:
+    """Forget every shared executable; returns how many were dropped.
+
+    Only affects fits created with ``share_compilation=True``.  Useful in a long
+    service process that switches between model structures, since each cached
+    entry keeps its first model alive (its template arrays, mostly).
+    """
+    count = len(_SHARED_COMPILATION)
+    _SHARED_COMPILATION.clear()
+    return count
+
+
+def shared_compilation_cache_size() -> int:
+    """Number of compiled programs currently shared (diagnostic)."""
+    return len(_SHARED_COMPILATION)
+
+
+def enable_persistent_compilation_cache(directory) -> str:
+    """Point JAX's on-disk compilation cache at ``directory``.
+
+    With the data passed as arguments (:class:`JNesty_Fit` with
+    ``share_compilation=True``), one program serves a whole sample, so XLA's
+    cache serialises the compiled kernel once and later processes -- worker
+    processes of a batch run, a resumed run, a second night -- load it instead
+    of compiling.  Call this before the first fit in the process.
+
+    Parameters
+    ----------
+    directory : str or pathlib.Path
+        Cache directory; created if missing.
+
+    Returns
+    -------
+    str
+        The absolute path of the cache directory.
+    """
+    import pathlib
+
+    path = pathlib.Path(directory).expanduser().resolve()
+    path.mkdir(parents=True, exist_ok=True)
+    jax.config.update("jax_enable_compilation_cache", True)
+    jax.config.update("jax_compilation_cache_dir", str(path))
+    # Cache small kernels too: a single likelihood or prior transform compiles in
+    # well under the 1 s default, and those are exactly the ones a batch repeats.
+    for option, value in (("jax_persistent_cache_min_compile_time_secs", 0.0),
+                          ("jax_persistent_cache_min_entry_size_bytes", 0)):
+        try:
+            jax.config.update(option, value)
+        except Exception:                        # pragma: no cover - newer/older jax
+            pass
+    return str(path)
+
+
+#: Cached answer of :func:`_jnesty_context_supported`.
+_CONTEXT_SUPPORT: Optional[bool] = None
+
+
+def _jnesty_context_supported() -> bool:
+    """Whether this jnesty's ``NestedSampler`` accepts a ``context`` argument.
+
+    An older jnesty ignores the notion entirely: the fit then hands it the
+    per-fit compiled callables instead, which produces the same numbers and
+    recompiles inside the sampler as it always did.
+    """
+    global _CONTEXT_SUPPORT
+    if _CONTEXT_SUPPORT is None:
+        try:
+            import inspect
+            _CONTEXT_SUPPORT = "context" in inspect.signature(
+                jnesty.NestedSampler.__init__).parameters
+        except (TypeError, ValueError):          # pragma: no cover - exotic jnesty
+            _CONTEXT_SUPPORT = False
+    return _CONTEXT_SUPPORT
+
+
+def _loglikelihood_fn(model):
+    """The Gaussian likelihood with the data as explicit arguments (no literals).
+
+    This is :meth:`JNesty_Fit._log_likelihood_jnp` with ``(x, flux, err,
+    log_norm)`` lifted into the signature.  Same operations, same numbers; the
+    difference is that the traced program no longer contains this spectrum.
+    """
+    def loglikelihood(theta, x, flux, err, log_norm):
+        model_flux = model.flux(x, theta)
+        residual = (flux - model_flux) / err
+        value = -0.5 * jnp.sum(residual ** 2 + log_norm)
+        return jnp.where(jnp.all(jnp.isfinite(model_flux)), value, -jnp.inf)
+
+    return loglikelihood
+
+
+def _prior_transform_fn(spec):
+    """The unit-cube transform with its boxes as explicit arguments (no literals).
+
+    Rebuilds :meth:`_PriorSpec.transform` with ``lower``/``upper`` lifted into the
+    signature.  The *shape* of the prior (which parameters are centred on which,
+    log-scaled, or come from a custom prior) stays a trace-time decision; only
+    the numbers that change from spectrum to spectrum become arguments.
+
+    ``center_lower``/``center_upper`` are the physical bounds a centred or custom
+    prior is truncated to.  They equal ``lower``/``upper`` except for log-scaled
+    parameters, whose box is kept in log10 units for the plain branch.
+    """
+    def transform(u, lower, upper, center_lower, center_upper):
+        span = upper - lower
+        values = {}
+        for i in spec.order:
+            ui = u[i]
+            centered = spec.centered.get(i)
+            if centered is not None:
+                prior, center, scale_from = centered
+                if not isinstance(center, float):
+                    center = values[center]
+                scale_value = None
+                if scale_from is not None:
+                    scale_value = (scale_from if isinstance(scale_from, float)
+                                   else values[scale_from])
+                # with_bounds() stores Python floats (repr/logpdf need them); here
+                # the box is a traced argument, so bind it without conversion.
+                local = prior.bind_bounds(center_lower[i], center_upper[i])
+                values[i] = local.transform(ui, center, scale_value)
+            elif spec.custom[i] is not None:
+                prior = spec.custom[i]
+                if prior.binds_bounds:
+                    prior = prior.bind_bounds(center_lower[i], center_upper[i])
+                values[i] = jnp.asarray(prior(ui))
+            elif spec.log_scale[i]:
+                values[i] = 10.0 ** (lower[i] + span[i] * ui)
+            else:
+                values[i] = lower[i] + span[i] * ui
+        return jnp.stack([values[i] for i in range(len(spec.names))])
+
+    return transform
 
 
 def jax_devices_summary() -> str:
@@ -95,7 +262,21 @@ def select_device(device: str = "auto") -> str:
 
 
 class JNesty_Fit:
-    """Fit a JAX spectral model with JNesty nested sampling (GPU accelerated)."""
+    """Fit a JAX spectral model with JNesty nested sampling (GPU accelerated).
+
+    Parameters
+    ----------
+    share_compilation : bool
+        Pass the spectrum to the compiled likelihood as an *argument* instead of
+        closing over it, and reuse the compiled program across fits built from
+        the same model structure (see :func:`clear_shared_compilation_cache`).
+        Off by default, which keeps the pre-existing behaviour exactly.  Turning
+        it on is what makes fitting a large sample affordable: the first fit
+        compiles as before, every later fit of the same structure reuses the
+        compiled kernel instead of paying ~0.5-1 s of XLA per spectrum.  Results
+        agree with the default path to floating-point rounding (~1e-15 relative,
+        far below the sampler's own run-to-run scatter).
+    """
 
     #: identical prior rules as the CPU fitter
     DEFAULT_BOUNDS = Dynesty_Fit.DEFAULT_BOUNDS
@@ -107,7 +288,7 @@ class JNesty_Fit:
                  rwalk_step_scale: Optional[float] = None, max_ellipsoids: int = 20,
                  memory_frac: float = 0.9, min_eff: float = 10.0,
                  min_ncall: Optional[int] = None, custom_priors: Optional[Mapping] = None,
-                 verbose: bool = False):
+                 verbose: bool = False, share_compilation: bool = False):
         if jax is None or jnp is None:
             raise ImportError("JNesty_Fit requires jax; install it with `pip install jax`")
         if jnesty is None:
@@ -193,8 +374,25 @@ class JNesty_Fit:
         self._log_norm = jnp.log(2.0 * jnp.pi * self._err ** 2)
 
         self._build_prior_spec()
-        self._loglike_jax = jax.jit(self._log_likelihood_jnp)
+        #: ``share_compilation=True`` compiles the likelihood and the prior
+        #: transform once *per model structure* and reuses them for every fit
+        #: built from the same structure -- the difference between ~0.05 s and
+        #: ~0.75 s of compilation per spectrum in a large sample.  The flag is
+        #: off by default so existing code keeps its exact behaviour; the numbers
+        #: agree to ~1e-15 relative (see the docstring of the class).
+        self.share_compilation = bool(share_compilation)
+        self._loglike_jax = None
+        self._prior_jax = None
         self._batch_jax = None
+        self._prior_shared = False
+        if self.share_compilation:
+            self._shared_loglike_fn = _loglikelihood_fn(self.model)
+            self._shared_prior_fn = _prior_transform_fn(self._prior)
+            self._loglike_args = (self._x, self._flux, self._err, self._log_norm)
+            self._prior_args = tuple(jnp.asarray(a) for a in self._prior.transform_arrays())
+        else:
+            self._loglike_jax = jax.jit(self._log_likelihood_jnp)
+            self._prior_jax = jax.jit(self._prior.transform)
 
         self.results = None
         self.samples_equal_weight = None
@@ -236,7 +434,6 @@ class JNesty_Fit:
                                  self.custom_priors)
         self.prior_order = self._prior.order
         self.centered_priors = self._prior.centered
-        self._prior_jax = jax.jit(self._prior.transform)
 
     def _base_name(self, param_name: str) -> str:
         """``amp_c0_1`` -> ``amp_c0`` (strip the astropy submodel suffix)."""
@@ -316,14 +513,60 @@ class JNesty_Fit:
             bounds.append(default)
         return bounds
 
+    # -- compilation ---------------------------------------------------------------
+    def _shared_loglike(self):
+        """The likelihood program, compiled once per model structure."""
+        if self._loglike_jax is None:
+            example = jnp.asarray(self.model.get_free_params(), dtype=self._x.dtype)
+            self._loglike_jax = _shared_compiled(
+                "loglike", self._shared_loglike_fn, example, *self._loglike_args)
+        return self._loglike_jax
+
+    def _shared_prior(self):
+        """The prior-transform program, compiled once per prior structure.
+
+        Falls back to a per-fit compile, with a warning, when a prior map cannot
+        consume the box as a traced argument (a log-space centred prior converts
+        its bounds to floats inside :meth:`~galspec.priors.Prior.transform`).
+        """
+        if self._prior_jax is None:
+            example = jnp.full((self.ndim,), 0.5, dtype=self._prior_args[0].dtype)
+            try:
+                self._prior_jax = _shared_compiled(
+                    "prior", self._shared_prior_fn, example, *self._prior_args)
+                self._prior_shared = True
+            except Exception as exc:      # pragma: no cover - prior-shape dependent
+                warnings.warn(
+                    "the prior transform of this model cannot be shared between "
+                    f"fits ({type(exc).__name__}: {exc}); compiling it per fit",
+                    RuntimeWarning)
+                self._prior_jax = jax.jit(self._prior.transform)
+                self._prior_shared = False
+        return self._prior_jax
+
+    def _loglike_value(self, theta):
+        """(Compiled) log-likelihood at one parameter vector."""
+        if self.share_compilation:
+            return self._shared_loglike()(theta, *self._loglike_args)
+        return self._loglike_jax(theta)
+
+    def _prior_value(self, u):
+        """(Compiled) prior transform at one unit-cube point."""
+        if not self.share_compilation:
+            return self._prior_jax(u)
+        function = self._shared_prior()
+        if self._prior_shared:
+            return function(u, *self._prior_args)
+        return function(u)                          # pragma: no cover - fallback branch
+
     # -- transforms ----------------------------------------------------------------
     def prior_transform(self, u):
         """Map the unit cube to physical parameters (numpy in/out)."""
-        return np.asarray(self._prior_jax(jnp.asarray(np.asarray(u, dtype=float))))
+        return np.asarray(self._prior_value(jnp.asarray(np.asarray(u, dtype=float))))
 
     def log_likelihood(self, theta) -> float:
         """Gaussian log-likelihood for one parameter vector (numpy in/out)."""
-        return float(self._loglike_jax(jnp.asarray(np.asarray(theta, dtype=float))))
+        return float(self._loglike_value(jnp.asarray(np.asarray(theta, dtype=float))))
 
     def _log_likelihood_jnp(self, theta):
         model_flux = self.model.flux(self._x, theta)
@@ -337,16 +580,45 @@ class JNesty_Fit:
         The ``vmap``-ed function is compiled once and reused, so this is the
         entry point to use when feeding many points to the GPU.
         """
+        batch = jnp.asarray(np.atleast_2d(thetas))
+        if self.share_compilation:
+            if self._batch_jax is None:
+                # the data stay whole: only the leading (parameter-vector) axis moves
+                self._batch_jax = _shared_compiled(
+                    "loglike_batch",
+                    jax.vmap(self._shared_loglike_fn,
+                             in_axes=(0, None, None, None, None)),
+                    batch, *self._loglike_args)
+            return np.asarray(self._batch_jax(batch, *self._loglike_args))
         if self._batch_jax is None:
             self._batch_jax = jax.jit(jax.vmap(self._log_likelihood_jnp))
-        return np.asarray(self._batch_jax(jnp.asarray(np.atleast_2d(thetas))))
+        return np.asarray(self._batch_jax(batch))
 
     def _raw_log_likelihood(self, theta):
         """jnp callable handed to JNesty (already jit-compiled)."""
-        return self._loglike_jax(theta)
+        return self._loglike_value(theta)
 
     def _raw_prior_transform(self, u):
-        return self._prior_jax(u)
+        return self._prior_value(u)
+
+    def _context_log_likelihood(self, theta, context):
+        """jnp callable for a JNesty that can carry a ``context``.
+
+        The context is a broadcast argument of every traced function inside the
+        sampler, so the program it compiles no longer contains this spectrum and
+        serves the whole sample.
+        """
+        x, flux, err, log_norm = context[:4]
+        return self._shared_loglike_fn(theta, x, flux, err, log_norm)
+
+    def _context_prior_transform(self, u, context):
+        lower, upper, center_lower, center_upper = context[4:]
+        return self._shared_prior_fn(u, lower, upper, center_lower, center_upper)
+
+    @property
+    def _context(self):
+        """The arrays a context-aware JNesty passes through as arguments."""
+        return tuple(self._loglike_args) + tuple(self._prior_args)
 
     def warmup(self):
         """Compile the likelihood and prior transform up front.
@@ -357,8 +629,8 @@ class JNesty_Fit:
         it separately.  Safe to call repeatedly.
         """
         theta = jnp.asarray(self.model.get_free_params())
-        self._loglike_jax(theta).block_until_ready()
-        self._prior_jax(jnp.full((self.ndim,), 0.5)).block_until_ready()
+        self._loglike_value(theta).block_until_ready()
+        self._prior_value(jnp.full((self.ndim,), 0.5)).block_until_ready()
         return self
 
     # -- sampling ------------------------------------------------------------------
@@ -378,9 +650,7 @@ class JNesty_Fit:
             Forwarded to :meth:`jnesty.NestedSampler.run_nested`.
         """
         started = time.perf_counter()
-        self.sampler = jnesty.NestedSampler(
-            loglikelihood=self._raw_log_likelihood,
-            prior_transform=self._raw_prior_transform,
+        sampler_arguments = dict(
             ndim=self.ndim,
             nlive=self.nlive,
             rwalk_K=self.rwalk_K,
@@ -395,6 +665,22 @@ class JNesty_Fit:
             min_eff=self.min_eff,
             min_ncall=self.min_ncall,
         )
+        # Prefer handing JNesty a context: every function it traces then receives
+        # the spectrum as an argument instead of a literal, so the program -- and
+        # the XLA compilation -- is the same for the whole sample.
+        contextual = False
+        if self.share_compilation:
+            self._shared_loglike()
+            self._shared_prior()
+            contextual = self._prior_shared and _jnesty_context_supported()
+        if contextual:
+            sampler_arguments["loglikelihood"] = self._context_log_likelihood
+            sampler_arguments["prior_transform"] = self._context_prior_transform
+            sampler_arguments["context"] = self._context
+        else:
+            sampler_arguments["loglikelihood"] = self._raw_log_likelihood
+            sampler_arguments["prior_transform"] = self._raw_prior_transform
+        self.sampler = jnesty.NestedSampler(**sampler_arguments)
         self.sampler.run_nested(max_iterations=int(max_iterations),
                                 delta_logZ_threshold=float(dlogz),
                                 print_progress=progress, **run_kwargs)
@@ -489,14 +775,21 @@ class JNesty_Fit:
             raise RuntimeError("fit() must be run first")
         return self.log_evidence, self.log_evidence_err
 
-    def plot_corner(self, **kwargs):
+    def plot_corner(self, params=None, **kwargs):
+        """A corner plot, drawn by :func:`galspec.plot.plot_corner`.
+
+        ``params`` selects a subset of the parameters -- a 27-parameter corner is
+        not a figure anybody reads -- and takes the names that
+        :func:`galspec.plot.plot_posterior_hist` takes.
+        """
         if self.samples_equal_weight is None:
             raise RuntimeError("fit() must be run first")
         if self.theta_best is None:
             self.get_best_fit()
         if corner is not None:
-            return corner.corner(self.samples_equal_weight, labels=self.param_names,
-                                 truths=self.theta_best, **kwargs)
+            from .plot import plot_corner as _plot_corner
+
+            return _plot_corner(self, params=params, **kwargs)
         return jnesty.plotting.cornerplot(self.results, **kwargs)
 
     def summary(self) -> dict:
@@ -514,6 +807,7 @@ class JNesty_Fit:
             "device": self.device,
             "nlive": self.nlive,
             "bound": self.bound,
+            "share_compilation": bool(self.share_compilation),
         }
 
 
@@ -567,6 +861,24 @@ class _PriorSpec:
             else:
                 values[i] = self.lower[i] + self.span[i] * ui
         return jnp.stack([values[i] for i in range(len(self.names))])
+
+    def transform_arrays(self):
+        """The four per-parameter arrays :func:`_prior_transform_fn` takes.
+
+        ``lower``/``upper`` are the boxes in the frame the plain branches use
+        (log10 for a log-scaled amplitude); ``center_lower``/``center_upper`` are
+        the same boxes in physical units, which is what a centred or custom prior
+        is truncated to.
+        """
+        log_scale = np.asarray(self.log_scale, dtype=bool)
+        center_lower = np.array(self.lower, dtype=float)
+        center_upper = np.array(self.upper, dtype=float)
+        if log_scale.any():
+            # only the log-scaled entries are stored as log10; leave the rest alone
+            # (10 ** 4500 for a line centre would only produce an overflow warning)
+            center_lower[log_scale] = 10.0 ** self.lower[log_scale]
+            center_upper[log_scale] = 10.0 ** self.upper[log_scale]
+        return self.lower, self.upper, center_lower, center_upper
 
 
 def _validate_bound(name, bound):

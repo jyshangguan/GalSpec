@@ -249,6 +249,14 @@ def _log(x):
     return np.log(x)
 
 
+def _log10(x):
+    ''' Base-10 logarithm in the namespace of ``x`` (used by `LogUniform.bind_bounds`). '''
+    if type(x).__module__.startswith('jax'):
+        import jax.numpy as jnp
+        return jnp.log10(x)
+    return np.log10(x)
+
+
 # --------------------------------------------------------------------------------------
 # The prior objects
 # --------------------------------------------------------------------------------------
@@ -289,6 +297,26 @@ class Prior:
     def with_bounds(self, lower, upper):
         ''' A copy restricted to ``[lower, upper]``, when that makes a difference. '''
         return self
+
+    #: Whether a copy made by `bind_bounds` follows the new box when it is
+    #: evaluated.  True only for priors whose map reads ``self.lower`` and
+    #: ``self.upper`` directly; a prior that pre-computes or wraps its map keeps
+    #: the numbers it was built with, and rebinding it would silently disagree.
+    binds_bounds = False
+
+    def bind_bounds(self, lower, upper):
+        ''' A copy carrying ``lower``/``upper`` *without* converting them to floats.
+
+        `with_bounds` validates the box and stores Python floats, which is what
+        ``logpdf`` and ``repr`` need.  Inside a ``jit``-traced prior transform the
+        box can instead be a traced array that changes from one spectrum to the
+        next, and ``float()`` on a tracer fails -- so the shared compilation path
+        binds the box with this method and passes it as an argument.
+        '''
+        twin = type(self).__new__(type(self))
+        twin.__dict__.update(self.__dict__)
+        twin.lower, twin.upper = lower, upper
+        return twin
 
     def _args(self):
         raise TypeError(f'{type(self).__name__} cannot be written to a FITS file')
@@ -338,6 +366,8 @@ class Uniform(Prior):
             raise ValueError(f'Uniform needs finite lower < upper, got {lower} and {upper}')
         self.lower, self.upper = lower, upper
 
+    binds_bounds = True
+
     @property
     def support(self):
         return (self.lower, self.upper)
@@ -382,6 +412,15 @@ class LogUniform(Prior):
             raise ValueError(f'LogUniform needs 0 < lower < upper, got {lower} and {upper}')
         self.lower, self.upper = lower, upper
         self._log_lo, self._log_hi = np.log10(lower), np.log10(upper)
+
+    binds_bounds = True
+
+    def bind_bounds(self, lower, upper):
+        ''' Rebind, keeping the pre-computed log10 thresholds in step. '''
+        twin = super().bind_bounds(lower, upper)
+        twin._log_lo = _log10(lower)
+        twin._log_hi = _log10(upper)
+        return twin
 
     @property
     def support(self):

@@ -120,6 +120,39 @@ zero prior probability. A model with no priors at all behaves exactly as before
 with log-uniform amplitudes), so old code keeps its old prior -- and therefore a
 comparable evidence.
 
+Fitting a sample
+----------------
+
+The methods above fit one spectrum. When the *same* model is fitted to many
+spectra, two things dominate the wall time of a script that loops: compiling the
+likelihood and prior for every source, and copying the model code into each
+iteration. ``JNesty_Fit(..., share_compilation=True)`` handles the first: the
+spectrum is passed to the compiled likelihood as an argument, so the program --
+and the compilation -- is shared by every fit whose *model structure* is the
+same. The second is what ``python -m galspec.pipeline`` does, driving a whole
+sample from a TOML file; see :ref:`config_fit`.
+
+.. code-block:: python
+
+   from galspec.jnesty_fit import clear_shared_compilation_cache
+
+   for wave, flux, error in spectra:                  # one model, many spectra
+       fit = JNesty_Fit(model.copy(), wave, flux, error,
+                        nlive=500, share_compilation=True)
+       fit.fit(dlogz=0.5)                              # only the first compiles
+
+   clear_shared_compilation_cache()                    # free the compiled kernels
+
+The saving is the compilation, not the sampling: with the full IRAS model (39 free
+parameters) the first source compiles in 0.5 s and the next ones in 0.04 s
+(``develop/dev_jax/bench_shared_compilation.py``), while the per-iteration cost
+is unchanged within run-to-run noise. The numbers themselves do not change
+either: the same arithmetic is traced, and ``tests/test_shared_compilation.py``
+compares the likelihood, the prior transform and a short run against the
+per-source path. An on-disk cache
+(``enable_persistent_compilation_cache(directory)``) helps across processes,
+which is what the pipeline's ``workers`` option needs.
+
 Precision
 ---------
 

@@ -39,6 +39,7 @@ dependencies = [
     "PyAstronomy>=0.18",
     "spectres>=2.0",
     "multiprocess>=0.70",
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
@@ -60,7 +61,7 @@ Documentation = "https://github.com/jyshangguan/GalSpec"
 Repository = "https://github.com/jyshangguan/GalSpec"
 
 [tool.setuptools]
-packages = ["galspec", "galspec.jax_models"]
+packages = ["galspec", "galspec.jax_models", "galspec.pipeline"]
 
 [tool.setuptools.package-data]
 galspec = ["data/*"]

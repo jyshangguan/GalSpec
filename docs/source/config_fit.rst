@@ -1,0 +1,844 @@
+.. _config_fit:
+
+Fitting From a Configuration File
+=================================
+
+``galspec.pipeline`` fits one spectrum, or a whole sample with one model, from a
+TOML file instead of a Python script::
+
+    ./example/fit_iras07546_config.sh            # the published IRAS 07546 fit
+    ./example/fit_iras07546_config.sh --dry-run  # what would be fitted, no sampling
+
+The pipeline is a *consumer* of the models: it builds the same
+:class:`~galspec.jax_models.JaxCompoundModel` a script would assemble, and runs
+the same :class:`~galspec.jnesty_fit.JNesty_Fit`. It adds no model code and
+changes none, so a fit produced from a file and a fit produced by hand of the
+same model and data are the same fit. ``galspec/__init__.py`` does not import
+it; nothing changes for code that does not use it.
+
+The running example in this chapter is
+``example/fit_iras07546_config.toml``: the seventeen-component, 27-parameter
+model of ``example/fit_iras07546_jax.py``, written as a file and checked against
+the script parameter by parameter
+(``develop/dev_config/test_iras07546_config.py``). Read it next to this page.
+
+Starting from a template
+------------------------
+
+The file format has a lot of optional keys, so the command will write you a
+commented starter::
+
+    $ python -m galspec.pipeline --template config.toml
+    wrote config.toml
+      edit [data] file, then
+        python -m galspec.pipeline config.toml --dry-run    # what would be fitted
+        python -m galspec.pipeline config.toml              # the fit
+
+``--template`` alone writes ``config.toml`` in the current directory; give it a
+path to write elsewhere, ``-`` to print to standard output, and ``--force`` to
+overwrite a file that is already there (without it an existing file is an error,
+so the command cannot eat a configuration you have written). It exits without
+touching any data.
+
+The starter is a *working* configuration rather than a sheet of placeholders: in a
+checkout it points at the two-line mock spectrum in ``example/data``, so the first
+``--dry-run`` reports one source and eight free parameters before you edit
+anything, and the fit it describes takes about forty seconds on a CPU. From there
+the edits are: ``[data] file`` (or ``glob``/``catalog`` for a sample), the
+components in ``[model]``, and the priors. Every section it writes is explained
+below.
+
+Why a file
+----------
+
+A sample is fitted with *the same* model, the same priors and the same sampler
+settings for every source, and only the data and a few flux scales differ.
+Writing that down once -- instead of copy-pasting a script per object -- is what
+makes a sample fit reproducible: the file is hashed into the output, and the
+:ref:`run report <pipeline-output>` records every setting that produced each
+result.
+
+Requirements on the data
+------------------------
+
+#. **One FITS file per source.** The pipeline reads one file at a time; a
+   "sample" is a list of files, not a list of rows inside one file.
+
+#. **Three arrays: wavelength, flux and error.** All three are mandatory. A
+   missing error array is an error, not a guess: an uncertainty invented from
+   ``std(flux)`` is not a measurement, so the pipeline refuses to make one.
+
+   The arrays are found either as columns of a binary table or as image HDUs
+   whose ``EXTNAME`` matches the key::
+
+       [data]
+       wave_key = "WAVELENGTH"     # default; matched case-insensitively
+       flux_key = "FLUX"
+       error_key = "ERROR"
+
+   A column name is matched first; an image HDU is looked up by extension name.
+   Use ``wave_hdu``/``flux_hdu``/``error_hdu`` when a file has more than one
+   candidate (they take an HDU index or an extension name).
+
+#. **Wavelength is converted to Angstrom, flux is not converted.** The unit is
+   taken from ``TUNITn`` (a table column) or ``BUNIT``/``CUNIT1`` (an image), or
+   from ``[data] wave_unit``/``flux_unit``. A wavelength in ``nm`` or ``um`` is
+   converted; an axis that is not a length (velocity, frequency, pixels) is
+   rejected, because the models are evaluated on a wavelength grid. The flux
+   unit is *recorded* in the output header and the report and otherwise left
+   alone: no ``f_lambda``/``f_nu`` conversion is attempted.
+
+#. **The header supplies the two corrections.** A spectrum is fitted in the rest
+   frame, with the Galaxy's reddening removed, and both numbers can be read from
+   the file rather than written into the configuration:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 18 24 58
+
+      * - quantity
+        - keys tried in order
+        - what the pipeline does
+      * - redshift
+        - ``z_keys``, default ``["Z", "REDSHIFT", "ZBEST"]``
+        - divides the wavelength by ``1 + z``; the model's line centres are rest
+          wavelengths (``"@Halpha"`` or ``6562.819``)
+      * - colour excess
+        - ``e_bv_keys``, default
+          ``["E(B-V)", "EBV", "EBV_GAL", "A_V", "AV"]``
+        - de-reddens the flux *and* the error with ``extinction.ccm89`` at
+          ``extinction_rv`` (default 3.1), on the observed grid before the
+          wavelength is shifted. An ``A_V`` is divided by ``R_V`` first.
+
+   The precedence is: the catalog's ``z`` column, the header, ``z_default``.
+   A value that is *not* in the file is assumed to be zero **and the run warns**:
+   the report records ``z_source`` and ``e_bv_source`` per source, so a
+   correction that was assumed is visible next to one that was applied. Writing
+   the key in the configuration (``z_default = 0.0``, or ``extinction = false``
+   for a synthetic spectrum) counts as stating it, and the run is then silent.
+
+   .. note::
+      The pipeline does not mask sky lines and does not synthesize errors: if
+      your spectra need that, prepare a FITS file with the three arrays -- that
+      file *is* the input, and it keeps the processing visible and repeatable.
+      See `Preparing a file`_ for the IRAS spectrum, which needs both.
+
+Preparing a file
+----------------
+
+Two files in ``example/data/`` show why the three arrays are a requirement rather
+than a convenience, and what "prepare it" means in practice.
+
+``spec-0651-52141-0434.fits`` is a BOSS coadd: it has ``flux``, ``loglam`` and
+``ivar``, so there is a wavelength grid and a noise estimate, but no error array
+and no length unit. One short script turns it into pipeline input -- a table with
+``WAVELENGTH = 10**loglam``, ``FLUX = flux`` and ``ERROR = 1/sqrt(ivar)``, with
+the masked pixels dropped -- and the choices it makes (which pixels to keep, what
+to do with zero ``ivar``) stay in the file instead of being buried in a fitting
+script.
+
+``ir07546sed.fits`` is a single image with no error and an observed-frame
+logarithmic axis; the published fit (:mod:`example.iras07546_model`) dereddens it
+with ``extinction.ccm89``, divides by ``1 + z`` and derives the error from a
+running median. Only the *corrections* can move into the pipeline, because the
+header can carry them; the error cannot, because it is not a number in the file.
+``develop/dev_config/convert_iras07546.py`` writes the input therefore::
+
+    python develop/dev_config/convert_iras07546.py     # -> example/data/iras07546_pipeline.fits
+
+It stores the observed-frame ``WAVELENGTH``, ``FLUX`` and ``ERROR`` columns, puts
+``REDSHIFT`` and ``EBV`` (and ``EBVRV``) in the header, and then *checks itself*:
+it applies the pipeline's own de-reddening and de-shifting to what it wrote and
+asserts that the result is ``iras07546_model.load_spectrum()`` to ``1e-12``
+relative. Wavelengths round trip exactly (0.0), flux and error at ``1e-16``. That
+check is what makes the configuration a reproduction of the script rather than an
+approximation of it.  ``python develop/dev_config/convert_iras07546.py
+--check-only`` runs the check without writing.
+
+A configuration is then a file of declarations, and the section-by-section
+walkthrough below reads ``example/fit_iras07546_config.toml`` in order.
+
+The run section
+---------------
+
+.. code-block:: toml
+
+    [run]
+    output_dir = "out/iras07546"
+    workers = 1
+
+``[run]`` says where the outputs go and how many processes do the work:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 14 66
+
+   * - key
+     - default
+     - meaning
+   * - ``output_dir``
+     - ``"out"``
+     - resolved relative to the configuration file, not the working directory.
+   * - ``workers``
+     - ``1``
+     - ``1`` fits in this process; ``>1`` spawns that many processes, each
+       fitting its own sources.
+   * - ``force``
+     - ``false``
+     - refit even when a source's outputs exist.
+   * - ``progress``
+     - unset
+     - the sampler's progress bar: unset means "on a terminal, with
+       ``workers = 1``"; ``true`` forces it, ``false`` never draws it.
+
+The data section
+----------------
+
+.. code-block:: toml
+
+    [data]
+    file = "data/iras07546_pipeline.fits"
+
+    z_keys = ["REDSHIFT", "Z", "ZBEST"]
+    e_bv_keys = ["E(B-V)", "EBV", "A_V", "AV"]
+    extinction = true
+    extinction_rv = 3.1
+
+    wave_min = 4200.0
+    wave_max = 6800.0
+    continuum_percentile = 15.0
+    min_pixels = 50000
+
+.. _pipeline-data:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 12 66
+
+   * - key
+     - default
+     - meaning
+   * - ``file``, ``files``, ``glob``, ``catalog``
+     - --
+     - exactly one of them: one spectrum, a list of spectra, a shell pattern
+       (relative to the config file, or ``**`` for recursion), or a CSV/TSV with
+       one row per source.
+   * - ``catalog_id_column``
+     - ``id``
+     - catalog column with the source identifier (falls back to the file stem).
+   * - ``catalog_file_column``
+     - ``file``
+     - catalog column with the spectrum path, relative to the catalog.
+   * - ``catalog_z_column``
+     - --
+     - catalog column with the redshift, if it has one.
+   * - ``wave_key``, ``flux_key``, ``error_key``
+     - ``WAVELENGTH``, ``FLUX``, ``ERROR``
+     - array names, matched case-insensitively.
+   * - ``wave_hdu``, ``flux_hdu``, ``error_hdu``
+     - --
+     - restrict a lookup to one HDU (index or extension name).
+   * - ``wave_unit``, ``flux_unit``
+     - from the header
+     - override the header's unit.
+   * - ``z_keys``
+     - ``["Z", "REDSHIFT", "ZBEST"]``
+     - header keys tried in order.
+   * - ``z_default``
+     - ``0.0``
+     - redshift when neither the catalog nor the header says.  Declaring it
+       explicitly is what silences the "assumed" warning.
+   * - ``e_bv_keys``
+     - ``["E(B-V)", "EBV", "EBV_GAL", "A_V", "AV"]``
+     - header keys tried in order for the colour excess.
+   * - ``extinction``
+     - ``true``
+     - de-redden with the colour excess from the header; ``false`` declares that
+       this spectrum needs no correction (and suppresses the warning).
+   * - ``extinction_rv``
+     - ``3.1``
+     - ``R_V`` of the reddening law.
+   * - ``wave_min``, ``wave_max``
+     - --
+     - rest-frame range to fit.
+   * - ``mask``
+     - --
+     - list of ``[low, high]`` rest-frame windows to drop, e.g. residuals of a
+       telluric band.
+   * - ``min_pixels``
+     - ``50``
+     - refuse a source with fewer pixels than this after the cuts.  The IRAS
+       window keeps 56956; the value in the file fails loudly if a wrong window
+       is used by accident.
+   * - ``continuum_percentile``
+     - ``50``
+     - percentile behind the ``continuum_level`` expression token.  The example
+       script uses ``np.percentile(flux, 15.0)``, so the file says ``15``.
+
+A catalog looks like::
+
+    id,file,z
+    J0925,spectra/J0925.fits,0.0312
+    J0931,spectra/J0931.fits,0.0455
+
+The fit section
+---------------
+
+.. code-block:: toml
+
+    [fit]
+    nlive = 400
+    dlogz = 0.01
+    max_iterations = 200000
+    share_compilation = true
+    device = "auto"
+
+``[fit]`` passes sampler settings to :class:`~galspec.jnesty_fit.JNesty_Fit`; the
+values above are the ones ``example/fit_iras07546_jax.py`` uses
+(``NLIVE = 400``, ``DLOGZ = 0.01``).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 14 66
+
+   * - key
+     - default
+     - meaning
+   * - ``nlive``
+     - ``500``
+     - live points. The main cost knob; 500 to 1000 is usual for a dozen
+       parameters, 400 is what the IRAS model was published with.
+   * - ``dlogz``
+     - ``0.01``
+     - stop when the remaining evidence is below this (nats).
+   * - ``max_iterations``
+     - ``200000``
+     - safety cap.
+   * - ``bound``
+     - ``"multi"``
+     - ``none``/``single``/``multi`` bounding.
+   * - ``device``
+     - ``"auto"``
+     - ``auto``/``cpu``/``gpu``.
+   * - ``queue_size``, ``batch_size``, ``rwalk_K``, ``rwalk_step_scale``
+     - automatic
+     - forwarded to JNesty; leave unset unless you are tuning.
+   * - ``max_ellipsoids``, ``memory_frac``, ``min_eff``, ``min_ncall``
+     - ``20``, ``0.9``, ``10``, --
+     - forwarded to JNesty.
+   * - ``share_compilation``
+     - ``true``
+     - compile the likelihood once for the whole sample (see
+       `Compiling once for a sample`_).
+   * - ``compilation_cache_dir``
+     - --
+     - a directory for JAX's on-disk compilation cache.
+
+The output section
+------------------
+
+.. code-block:: toml
+
+    [output]
+    fit_plot = true
+    corner = true
+    corner_params = [
+        "Continuum.amplitude", "Continuum.alpha", "FeII.amplitude",
+        "b_halpha.amp_c", "b_halpha.amp_w0", "b_halpha.dv_c", "b_halpha.sigma_c",
+        # ... five more
+    ]
+
+    histogram = true
+    hist_params = ["Continuum.alpha", "FeII.amplitude", "b_halpha.amp_c", # ...]
+
+``[output]`` controls the files: ``thin`` (default ``1``) saves every n-th
+posterior sample; ``fit_plot`` (default ``true``); ``corner`` and ``histogram``
+(default ``false``).
+
+``corner_params`` and ``hist_params`` select the parameters to draw, and both
+spellings are accepted: the qualified name (``b_halpha.amp_c``), which does not
+depend on the summation order, or the flat one (``amp_c_3``), which is what the
+posterior file stores. A name that is not a free parameter of the model is an
+error listing the free ones. A 27-parameter corner plot is a 27x27 square nobody
+reads, which is why the IRAS file names thirteen.
+
+The figures are the library's, not the pipeline's own drawings: the fit plot is
+:func:`galspec.plot.plot_fit_jax` -- data, total model, every component and the
+residuals in units of the error, the same figure ``example/fit_iras07546_jax.py``
+writes -- the histograms are :func:`galspec.plot.plot_posterior_hist`, and the
+corner is :func:`galspec.plot.plot_corner`. So a pipeline figure and the figure a
+hand-written script makes of the same fit agree, and the qualified LaTeX labels and
+prior annotations are the ones the rest of GalSpec uses. One consequence worth
+knowing: a corner plot needs a posterior that moved, so a run stopped before the
+sampler explored skips that one figure with a warning instead of failing the fit.
+
+The model section
+-----------------
+
+``[model]`` holds ``require_priors`` (default ``false``) and one
+``[[model.component]]`` per additive term, **in the order they are summed**:
+
+.. code-block:: toml
+
+    [model]
+    require_priors = true
+
+    [[model.component]]
+    type = "PowerLaw1D"            # any kind galspec.jax_models knows
+    name = "Continuum"             # used by ties, priors and plots
+    amplitude = 0.55
+    x_0 = 5500.0
+    alpha = 1.0
+    fixed = { x_0 = true }
+
+    [model.component.priors.amplitude]
+    kind = "loguniform"
+    lower = "0.2*continuum_level"
+    upper = "4*continuum_level"
+
+    [model.component.priors.alpha]
+    kind = "uniform"
+    lower = -5.0
+    upper = 5.0
+
+The order matters twice: it is the order of the sum, and the flat parameter names
+carry the index (``amp_c_3`` is the fourth component's ``amp_c``). Reordering the
+file therefore renames parameters; the qualified spelling is the stable one, which
+is why ties, priors and plots use it.
+
+Keys of a component are one of:
+
+* ``type`` and ``name``;
+* a **parameter value** -- anything the model names as a parameter
+  (``amplitude``, ``dv``, ``sigma``, ``amp_c0``, ...), which may be a number or
+  an expression;
+* a **constructor argument** (``n_components``, ``par_w``, ``degree``,
+  ``template_name``, ``Star_types``, ``R``, ``template_file``) -- these are
+  passed to the model's constructor and must not collide with a parameter name.
+  A key ending in ``_file`` is a path: it is resolved **relative to the
+  configuration file** (an absolute path is used as written) and never parsed as
+  an expression;
+* the tables ``fixed``, ``bounds``, ``params``, ``ties`` and ``priors``.
+
+Anything else is rejected with its TOML path, so a typo cannot become an unused
+keyword argument that silently does nothing.
+
+Expressions
+~~~~~~~~~~~
+
+Any *number* in ``[model]`` and ``[data]`` may be an expression over the
+statistics of the source being fitted, which is what lets one file serve a sample
+whose flux scale differs from spectrum to spectrum:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 78
+
+   * - token
+     - value for the current source
+   * - ``peak_flux``
+     - ``max(|flux|)``
+   * - ``max_flux``, ``min_flux``
+     - ``max(flux)``, ``min(flux)``
+   * - ``median_flux``, ``continuum_level``
+     - the median, and the ``continuum_percentile`` percentile
+   * - ``rms``
+     - standard deviation of the flux
+   * - ``n_pixels``
+     - pixels being fitted
+   * - ``z``
+     - the redshift used
+
+The language is numbers, those names, ``+ - * / **`` and parentheses.
+Everything else -- a call, an attribute, a subscript -- is rejected when the
+file is read, before any spectrum is touched. ``"3*max_flux"`` sets a starting
+value; ``[model.component.bounds] amplitude = ["0.01*peak_flux",
+"10*peak_flux"]`` sets the box in the same units, which is what makes a
+magnitude-limited sample fit with one file.
+
+The IRAS file uses ``max_flux`` rather than ``peak_flux`` on purpose: the script's
+``set_priors()`` uses ``np.max(flux)``, which is not ``max(|flux|)`` when the
+noise dips below zero, and a reproduction should not depend on that difference.
+
+Arithmetic between constants is allowed and is used for the atomic ratios, so a
+starting value is the ratio itself rather than a rounded copy::
+
+    amp_c0 = 1.8
+    amp_c1 = "1.8/2.98"            # the [O III] 5007/4959 ratio
+
+Line names such as ``"@Halpha"`` resolve to the rest wavelength from
+:data:`galspec.utils.line_wave_dict` (``Halpha``, ``Hbeta``, ``OIII_5007``,
+``NII_6583``, ``SII_6716``, ``HeI_5876``, ...); other values are written in
+Angstrom.
+
+Fixed, bounds, params
+~~~~~~~~~~~~~~~~~~~~~
+
+To hold a parameter at its value::
+
+    [model.component]
+    type = "Line_Gaussian"
+    name = "Halpha"
+    fixed = { wavec = true }       # Line_Gaussian already fixes it by default
+
+To change a box::
+
+    [model.component.bounds]
+    amplitude = ["0.01*peak_flux", "5*peak_flux"]
+    sigma = [50.0, 1200.0]
+
+Each parameter can also be written as its own table, which is convenient when
+it needs several settings::
+
+    [model.component.params.sigma]
+    value = 300.0
+    bounds = [50.0, 1200.0]
+    prior = { kind = "uniform", lower = 50.0, upper = 1200.0 }
+
+Ties
+~~~~
+
+A tie makes one parameter follow another. The plain form is a reference::
+
+    [model.component.ties]
+    dv = "Halpha.dv"                 # this line moves with Halpha
+    sigma = { ref = "Halpha.sigma", scale = 1.5 }   # 1.5 * Halpha.sigma
+
+The named kinds are the GalSpec conventions, written as
+``reference * scale + offset`` so that they survive serialisation as pure data:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 20 56
+
+   * - ``kind``
+     - reference parameter
+     - value
+   * - ``ref``, ``follow``, ``copy``
+     - ``param`` (required)
+     - ``reference``
+   * - ``doublet_ratio``
+     - ``amp_c0``
+     - ``amp_c0 / ratio`` (e.g. 2.98 for [O III])
+   * - ``multigauss_amp_c``
+     - ``amp_c``
+     - ``amp_c / ratio``
+   * - ``template_amplitude``
+     - ``amplitude``
+     - ``amplitude / ratio``
+   * - ``logtau0_ratio``
+     - ``logtau0``
+     - ``logtau0 - log10(ratio)``
+   * - ``template_dv``, ``absorption_dv``, ``absorption_sigma``,
+       ``absorption_cf``, ``starspectrum_sigma``, ``starspectrum_deltaz``
+     - that parameter
+     - ``reference``
+
+The IRAS model is held together by 29 such ties, and they are the whole physical
+content of the model beyond the starting values: one narrow-line velocity, one
+broad-line kinematics, and three atomic ratios. Written as they appear in the
+file, for the four kinds of reader:
+
+.. code-block:: toml
+
+    # long-wavelength narrow lines share the [O III] velocity
+    [[model.component]]
+    type = "Line_template_doublet"
+    name = "NII"
+    template_file = "data/iras07546_narrow_template.txt"
+    amp_c0 = 1.0
+    amp_c1 = "1.0/2.96"
+    dv_c = 0.0
+    wavec0 = "@NII_6583"
+    wavec1 = "@NII_6548"
+
+    [model.component.ties]
+    amp_c1 = { kind = "doublet_ratio", ref = "NII", ratio = 2.96 }
+    dv_c = "OIII.dv_c"                       # ... and [O III] owns the velocity
+
+    # broad H-beta keeps its own peak and its own wind amplitude, and copies the
+    # shape of broad H-alpha, which is the only line whose kinematics are free
+    [[model.component]]
+    type = "Line_MultiGauss"
+    name = "b_hbeta"
+    n_components = 2
+    amp_c = 0.22
+    dv_c = 0.0
+    sigma_c = 1500.0
+    wavec = "@Hbeta"
+    amp_w0 = 0.20
+    dv_w0 = 0.0
+    sigma_w0 = 6000.0
+
+    [model.component.ties]
+    dv_c = "b_halpha.dv_c"
+    sigma_c = "b_halpha.sigma_c"
+    dv_w0 = "b_halpha.dv_w0"
+    sigma_w0 = "b_halpha.sigma_w0"
+
+The iron pseudo-continuum is tied the same way (five kernel parameters follow
+broad H-alpha), so the iron costs the sampler exactly one number, its amplitude.
+
+Ties are validated when the model is built: a reference to a component or
+parameter that does not exist is an error naming the alternatives. Tying a
+parameter that is fixed is allowed (the tie then simply never matters); putting a
+prior on a tied parameter is rejected, because the prior would never be used.
+
+Priors
+~~~~~~
+
+A parameter with no prior is uniform over its bounds. Every prior takes the
+arguments of its class in :mod:`galspec.priors`, plus expressions where a number
+is expected::
+
+    [model.component.priors.amp_c0]
+    kind = "loguniform"            # uniform, tophat, loguniform, spikeandslab,
+    lower = "0.01*peak_flux"       # normal, clippednormal
+    upper = "5*peak_flux"
+
+    [model.component.priors.dv]
+    kind = "normal"
+    mean = 0.0
+    sigma = 150.0
+
+    [model.component.priors.sigma_w0]
+    kind = "normal"
+    mean = "Halpha.sigma_c"        # centred on another parameter
+    sigma = 0.4
+    relative = true
+    nsigma = 3
+
+``require_priors = true`` demands a prior on every free parameter; it is the
+recommended setting for a sample, because a prior that is right for one source
+(bright) is wrong for another (faint). Two checks run before the sampler starts,
+so a mistake costs a second instead of a night:
+
+* every free parameter needs a finite sampling range -- both bounds, or a prior
+  with finite limits (a centred prior such as ``normal`` additionally needs the
+  bounds, because they truncate it);
+* no free parameter means nothing to fit, which is also an error.
+
+The IRAS file follows ``set_priors()`` line by line: log-uniform amplitudes
+between ``1e-3`` and ``3*max_flux`` (one decade band per line), uniform
+velocities and widths in the ranges the data constrain, and uniform wind
+amplitudes between 0 and 1. The mapping is one line of the script per table of
+the file, which is the property to aim for when writing a new configuration:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 36 64
+
+   * - in ``fit_iras07546_jax.py``
+     - in ``fit_iras07546_config.toml``
+   * - ``build_continuum()``
+     - the ``Continuum`` component
+   * - ``build_iron_template()`` + ``tie_iron_template()``
+     - the ``FeII`` component and its five ties
+   * - ``build_narrow_lines()`` + ``tie_narrow_lines()``
+     - eight ``Line_template``/``Line_template_doublet`` components, their
+       ``dv`` ties and three ratio ties
+   * - ``build_broad_lines()`` + ``tie_broad_lines()``
+     - five ``Line_MultiGauss`` components and their ties
+   * - ``set_priors(model, flux)``
+     - every ``[model.component.priors.*]`` table
+   * - ``JNesty_Fit(..., nlive=NLIVE, dlogz=DLOGZ, ...)``
+     - ``[fit]``
+
+Output
+------
+
+.. _pipeline-output:
+
+For a source ``<id>``::
+
+    <output_dir>/<id>/<id>_fit.fits          # JNesty_Fit, with provenance keywords
+    <output_dir>/<id>/<id>_posterior.npz     # samples, log-likelihood, data
+    <output_dir>/<id>/<id>_fit.png           # data, best model, residuals (optional)
+    <output_dir>/<id>/<id>_corner.png        # optional
+    <output_dir>/<id>/<id>_histogram.png     # optional
+    <output_dir>/run_report.json             # what was fitted, with what, how
+
+``<id>_fit.fits`` is the file
+:func:`galspec.jnesty_fit_io.save_jnesty_fit_to_fits` writes, plus keywords for
+the source identifier, the input file, the redshift and where it came from, the
+number of pixels, the config file name and the first 16 characters of its SHA-256
+(the same keys are in the report), and the extinction that was removed
+(``EBV``, ``EBVRV``) and where it came from (``EXTINCT``).
+
+``<id>_posterior.npz`` is readable with ``numpy.load(..., allow_pickle=False)``:
+``samples_equal_weight``, ``samples``, ``logl``, ``logwt``, ``param_names``
+(flat names, as the model spells them), ``log_evidence``,
+``log_evidence_error``, ``n_iterations``, ``redshift`` and the ``wave``/``flux``/
+``error`` arrays that were fitted.
+
+``run_report.json`` records the settings, library versions, and per source: the
+status, evidence, iterations, timing (compile and sampling separately), a
+``parameters`` table with the median, the 16th and 84th percentile and the
+maximum-likelihood value of every free parameter, which parameters are pressed
+against a prior limit (``prior_dominated``), the flux tokens that were used, the
+redshift and extinction provenance, any warning raised while reading, and the
+outputs. A source that fails is recorded with its error and the run continues; the
+report is written even when every source fails.
+
+Resuming and parallelism
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+A source whose output files all exist is skipped unless ``force = true`` (or
+``--force``), so an interrupted run is continued by running the same command
+again. ``workers > 1`` fits sources in spawned processes; each process writes its
+own sources, and the report is assembled from their results. Failures are
+isolated per source in both modes. Set ``GALSPEC_PIPELINE_TRACE=1`` to keep the
+traceback in the report.
+
+Compiling once for a sample
+---------------------------
+
+Every JAX program has to be compiled before it runs, and compiling the
+likelihood and the prior of a full model takes a fraction of a second to a second
+(0.6 s for the 39-parameter example in ``develop/dev_jax/bench_shared_compilation.py``).
+With ``share_compilation = true`` -- the pipeline's default -- the spectrum
+travels to the compiled likelihood as an *argument*, so the compiled program does
+not contain the data and is reused for the next source. In a four-worker run of
+``develop/dev_config/mock_sample.toml`` the report shows 0.26-0.38 s of compiling
+for the first source each worker fitted and 0.01 s for the second.
+
+JNesty's own loops accept the same context, so its kernels are reused as well,
+provided the model structure (not the data) stays the same. The report records
+``compile_seconds`` and ``sample_seconds`` separately, so the saving -- or its
+absence -- is visible per source rather than argued about.
+
+This is a compilation saving, not a speed-up of the sampling: the compiled
+arithmetic is the same, and per-iteration cost is unchanged within run-to-run
+noise. The numbers do not change either -- the same computation is traced, and
+``tests/test_shared_compilation.py`` checks that the likelihood, the prior
+transform and a short run agree with the per-source path.
+``compilation_cache_dir`` additionally keeps JAX's on-disk cache, which is what
+helps across processes (``workers > 1``) and across runs.
+
+Command line
+------------
+
+::
+
+    python -m galspec.pipeline CONFIG.toml [options]
+
+::
+
+    --template [PATH]  write a starter configuration (PATH defaults to config.toml;
+                       "-" prints it) and exit; --force overwrites
+    --dry-run          read every spectrum and report what would be fitted
+    --list-sources     print the source ids and files the config selects
+    --workers N        fit in N processes
+    --force            refit even when the outputs exist
+    --output DIR       write here instead of [run] output_dir
+    --device CPU|GPU   override [fit] device
+
+    --quiet            only failures and the final summary
+
+A fit prints nothing between the ``fitting`` line and its result, which for a
+27-parameter model on a CPU means hours: nested sampling converges by itself and
+has nothing to report in between. In a terminal the sampler draws a progress bar, so
+silence there means something else; when the output is redirected the bar is
+suppressed (it is written with carriage returns, which is noise in a log) and the run
+says so before it starts. ``[run] progress`` forces either behaviour, and ``--quiet``
+turns both the log and the bar off.
+
+``--dry-run`` is the one to run first on a new sample: it reads every file,
+resolves every expression against that source's flux, builds the model, and
+reports the pixels, the rest-frame range, the redshift and its source, the
+tokens and the number of free parameters -- without sampling. For the IRAS file::
+
+    $ ./example/fit_iras07546_config.sh --dry-run
+    [1/1] iras07546_pipeline: 56956 pixels, 4200.0-6800.0 A rest, z=0.0953 (header:REDSHIFT), peak_flux=4.332, 27 free parameters
+
+``example/fit_iras07546_config.sh`` is a two-line wrapper around the command; it
+passes its arguments through, so ``--device cpu`` or ``--output`` work with it
+too. The same thing from Python:
+
+.. code-block:: python
+
+    from galspec.pipeline import load_config, run_pipeline
+
+    config = load_config("sample.toml")
+    report = run_pipeline(config)            # or workers=8, force=True
+    print(report["counts"], report["sources"][0]["log_evidence"])
+
+The IRAS reproduction
+---------------------
+
+``example/fit_iras07546_config.toml`` is the model of
+``example/fit_iras07546_jax.py`` -- seventeen additive components, 27 free
+parameters, 56956 pixels -- and it reproduces the published run::
+
+    ./example/fit_iras07546_config.sh                # ~12 min on a GPU
+    ./example/fit_iras07546_config.sh --device cpu   # hours
+
+The claim is checkable and is checked by
+``develop/dev_config/test_iras07546_config.py``, which runs in a few minutes:
+
+* the spectrum equals ``iras07546_model.load_spectrum()`` to ``1.3e-16``
+  relative -- the best possible, since both are the same float64 numbers;
+* the model is the same: same 17 components in the same order, same 27 free
+  parameters in the same order, same starting values, bounds, priors (kind and
+  numbers) and the same 29 ties;
+* ``prior_transform`` and the log-likelihood agree point by point, so the
+  sampling problem is identical;
+* a capped fit (50 live points, 300 iterations) drives the sampler end to end and
+  writes every output.
+
+Published numbers to compare against
+(``example/iras07546_model.REFERENCE``)::
+
+    Gaussian narrow lines          30 free   log Z = 130889.60 +/- 0.62   (10.2 min)
+    measured narrow profile        27 free   log Z = 130677.27 +/- 0.58   (11.7 min)   <- this file
+
+Repeat runs of one configuration have given 130656.22, 130656.34 and 130658.06
+-- about two nats of scatter, from the last bits of a GPU reduction reaching the
+sampler's ordering -- and re-extracting the narrow-line profile moved the evidence
+by about twenty. Quote an evidence from this family to a nat or two; the
+differences the model is judged on are two hundred. What the file reproduces
+exactly is the *problem* -- the data, the model, the priors -- not the
+floating-point trajectory of the sampler.
+
+``develop/dev_config/index.html`` (written by
+``develop/dev_config/make_report.py``) is the illustrated version of this
+walkthrough: it draws the spectrum the converter writes, the model at its
+starting values split into continuum, iron, narrow and broad, the prior boxes,
+and the parity figures.
+
+A small example to copy from
+----------------------------
+
+``develop/dev_config/mock_two_line.toml`` fits the two-line mock spectrum that
+ships with GalSpec -- a linear continuum plus two Gaussians, one tied velocity,
+token priors::
+
+    python -m galspec.pipeline develop/dev_config/mock_two_line.toml --dry-run
+    python -m galspec.pipeline develop/dev_config/mock_two_line.toml
+
+The fit recovers the line centres to a fraction of a pixel and the two very
+different widths of the mock (about 1300 and 160 km/s), with residuals consistent
+with the 1% noise. ``develop/dev_config/mock_sample.toml`` is the same model on
+six spectra of different brightness:
+``python develop/dev_config/make_mock_sample.py`` writes them, then
+``--workers 4`` fits them in about 45 s and the report shows both widths
+recovered in every source while the amplitudes follow each source's
+``peak_flux``.
+
+These two live in ``develop/`` because they are tests of the notation, not
+science; ``example/`` holds the two examples a reader should start from
+(``fit_iras07546_jax.py`` in Python and ``fit_iras07546_config.toml`` in TOML).
+
+Limitations
+-----------
+
+* One FITS file per source; no row-slicing of a multispec file.
+* No error synthesis, no sky-line masking and no flux-unit conversion: prepare
+  the file you want fitted. The two corrections the pipeline *does* apply, the
+  redshift and the Galactic extinction, are read from the header and recorded.
+* The model is a sum of components; a product (e.g. a convolution wrapper) is not
+  expressible in the file yet.
+* A prior cannot be nested inside another prior (``spikeandslab`` uses its
+  default slab).
+* ``dynamic.py``'s ``DynamicNestedSampler`` is not covered by the shared
+  compilation path; ``JNesty_Fit`` uses ``NestedSampler``.

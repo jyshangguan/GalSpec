@@ -275,6 +275,67 @@ centre. `priors.Uniform`, `priors.LogUniform`, `priors.Normal` and
 (`develop/dev_jax/io_test/prior_api.html`) -- the new spelling reproduces the old
 unit-cube map bit for bit on all three examples, so no published evidence moves.
 
+## Fitting a Sample From a Configuration File
+
+Once the model is decided, a `.toml` file can describe it together with the data
+and the sampler, and `python -m galspec.pipeline` fits one spectrum or a whole
+sample with it:
+
+```toml
+[data]
+glob = "spectra/*.fits"
+catalog_z_column = "z"
+
+[model]
+require_priors = true
+
+[[model.component]]
+type = "PowerLaw1D"
+name = "Continuum"
+amplitude = "3*peak_flux"
+alpha = -1.0
+
+[[model.component]]
+type = "Line_Gaussian"
+name = "Halpha"
+wavec = "@Halpha"
+amplitude = "0.5*peak_flux"
+fixed = { wavec = false }
+
+[model.component.priors.amplitude]
+kind = "loguniform"
+lower = "0.01*peak_flux"
+upper = "5*peak_flux"
+```
+
+```bash
+python -m galspec.pipeline --template config.toml  # write a commented starter
+python -m galspec.pipeline sample.toml --dry-run   # check every file first
+python -m galspec.pipeline sample.toml --workers 8
+```
+
+Expressions such as `"3*peak_flux"` are resolved from each source's own flux, so
+one file serves a sample whose brightness differs from object to object. The
+pipeline is a consumer of the models -- it builds the model a script would build
+and runs the same `JNesty_Fit` -- and `import galspec` does not touch it. With
+`share_compilation = true` (the default) the spectrum reaches the compiled
+likelihood as an argument, so only the first source of a sample pays for the
+compilation. `docs/source/config_fit.rst` has the full reference.
+
+The worked example is the fit of `example/fit_iras07546_jax.py` written as a file:
+
+```bash
+./example/fit_iras07546_config.sh           # the published 27-parameter IRAS 07546 fit
+./example/fit_iras07546_config.sh --dry-run # what would be fitted, no sampling
+```
+
+`example/fit_iras07546_config.toml` is checked against the script parameter by
+parameter -- same spectrum to `1e-16`, same 17 components, same 27 free
+parameters, same priors and ties, same `prior_transform` -- by
+`develop/dev_config/test_iras07546_config.py`, and
+`develop/dev_config/index.html` walks through it section by section. The
+synthetic two-line and sample configurations live in `develop/dev_config/`.
+
 ## Example notebooks
 
 The `example/` directory contains detailed notebooks demonstrating:

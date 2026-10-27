@@ -28,6 +28,7 @@ Key Features
 * **Template Support**: Iron (Fe II) templates and stellar population models included
 * **Flexible Model Composition**: Easily combine continuum, line, and template components
 * **Professional Fitting**: Parameter constraints, tying, and bounds for complex models
+* **Sample Fitting From a File**: one TOML describing the data, the model and the sampler, then fit one source or a whole sample with ``python -m galspec.pipeline``
 
 Quick Start
 -----------
@@ -74,6 +75,7 @@ Contents
    fitting_walkthrough
    priors
    jax_gpu
+   config_fit
 
 .. toctree::
    :maxdepth: 2

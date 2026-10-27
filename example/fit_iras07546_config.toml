@@ -1,0 +1,466 @@
+# Fit IRAS 07546+3928 the way example/fit_iras07546_jax.py does, from a file.
+#
+#   ./fit_iras07546_config.sh --dry-run      # what would be fitted
+#   ./fit_iras07546_config.sh                # the fit (~12 min on a GPU)
+#   python -m galspec.pipeline fit_iras07546_config.toml
+#
+# The data are data/iras07546_pipeline.fits, written once by
+# develop/dev_config/convert_iras07546.py: the observed-frame spectrum plus the
+# error estimate of iras07546_model.load_spectrum().  Everything the model
+# needs to know about the object that is not a number in this file is in that
+# header -- REDSHIFT and EBV -- and this file says how to use it.
+#
+# The model is the "template" model of the example: seventeen additive components,
+# 27 free parameters, one measured narrow-line profile, broad lines and the iron
+# pseudo-continuum tied to broad H-alpha.  The published evidence for exactly this
+# model, data and prior set is log Z = 130677.27 +/- 0.58 (example/iras07546_model.py,
+# REFERENCE["template"], 400 live points, dlogz 0.01).
+#
+# How the file was developed and tested: develop/dev_config/ (test_iras07546_config.py
+# checks the parity with the script below, and make_report.py writes the walkthrough).
+#
+# Read this file next to the script: every [model.component] below is one call of
+# build_continuum() / build_iron_template() / build_narrow_lines() /
+# build_broad_lines(), the tie tables are tie_narrow_lines() + tie_broad_lines() +
+# tie_iron_template(), and the prior tables are set_priors().  Nothing else is
+# going on, which is the point of having the mode.
+
+[run]
+output_dir = "out/iras07546"
+workers = 1
+
+# ---- the data ----------------------------------------------------------------------
+[data]
+file = "data/iras07546_pipeline.fits"
+
+# the header carries both corrections; the keys are listed so the file says which
+# header keyword it trusts (these are the pipeline's defaults, written out:
+# Z/REDSHIFT/ZBEST for the redshift, and the colour excess or an A_V for extinction)
+z_keys = ["Z", "REDSHIFT", "ZBEST"]
+e_bv_keys = ["E(B-V)", "EBV", "EBV_GAL", "A_V", "AV"]
+extinction = true           # de-redden with ccm89 before shifting to the rest frame
+extinction_rv = 3.1
+
+# the rest-frame window of the example, and the percentile that set_priors() calls
+# ``np.percentile(flux, 15.0)``
+wave_min = 4200.0
+wave_max = 6800.0
+continuum_percentile = 15.0
+min_pixels = 50000
+
+# ---- how hard to work on it ---------------------------------------------------------
+[fit]
+nlive = 400
+dlogz = 0.01
+max_iterations = 200000
+share_compilation = true
+device = "auto"
+
+[output]
+fit_plot = true
+corner = true
+corner_params = [
+    "Continuum.amplitude", "Continuum.alpha", "FeII.amplitude",
+    "b_halpha.amp_c", "b_halpha.amp_w0", "b_halpha.dv_c", "b_halpha.sigma_c",
+    "b_halpha.dv_w0", "b_halpha.sigma_w0",
+    "n_halpha.amplitude", "OIII.dv_c", "b_hei.amp_c", "b_heii.amp_c",
+]
+histogram = true
+hist_params = [
+    "Continuum.alpha", "FeII.amplitude", "b_halpha.amp_c", "b_halpha.amp_w0",
+    "b_halpha.dv_c", "b_halpha.sigma_c", "b_halpha.dv_w0", "b_halpha.sigma_w0",
+    "n_halpha.amplitude", "OIII.dv_c", "SII.amp_c0", "SII.amp_c1",
+]
+
+# ------------------------------------------------------------------------------------
+# The model.  Components are summed in this order; the names are what the ties and
+# the corner plot refer to.
+# ------------------------------------------------------------------------------------
+[model]
+require_priors = true
+
+# ---- 1. the power-law continuum ----------------------------------------------------
+# PowerLaw1D(amplitude=0.55, x_0=5500, alpha=1, fixed={"x_0": True}, name="Continuum")
+[[model.component]]
+type = "PowerLaw1D"
+name = "Continuum"
+amplitude = 0.55
+x_0 = 5500.0
+alpha = 1.0
+fixed = { x_0 = true }
+
+[model.component.priors.amplitude]
+kind = "loguniform"
+lower = "0.2*continuum_level"
+upper = "4*continuum_level"
+
+[model.component.priors.alpha]
+kind = "uniform"
+lower = -5.0
+upper = 5.0
+
+# ---- 2. the iron pseudo-continuum --------------------------------------------------
+# IronTemplate_tied(n_components=2, amplitude=0.2, z=0, dv_c=0, sigma_c=1500,
+#                   amp_w0=0.10, dv_w0=0, sigma_w0=6000, name="FeII") with iron.z fixed
+# and every kernel parameter tied to broad H-alpha below: the iron costs one number.
+
+[[model.component]]
+type = "IronTemplate_tied"
+name = "FeII"
+n_components = 2
+amplitude = 0.2
+z = 0.0
+dv_c = 0.0
+sigma_c = 1500.0
+amp_w0 = 0.10
+dv_w0 = 0.0
+sigma_w0 = 6000.0
+fixed = { z = true }
+
+[model.component.ties]
+dv_c = "b_halpha.dv_c"
+sigma_c = "b_halpha.sigma_c"
+amp_w0 = "b_halpha.amp_w0"
+dv_w0 = "b_halpha.dv_w0"
+sigma_w0 = "b_halpha.sigma_w0"
+
+[model.component.priors.amplitude]
+kind = "loguniform"
+lower = "1e-3"
+upper = "3*continuum_level"
+
+# ---- 3. the ten narrow lines, on the measured profile -------------------------------
+# Line_template(amplitude=2.2, dv=0, wavec=LINE_WAVE["Halpha"], name="n_halpha")
+
+[[model.component]]
+type = "Line_template"
+name = "n_halpha"
+template_file = "data/iras07546_narrow_template.txt"
+amplitude = 2.2
+dv = 0.0
+wavec = "@Halpha"
+
+[model.component.ties]
+dv = "OIII.dv_c"
+
+[model.component.priors.amplitude]
+kind = "loguniform"
+lower = "1e-3"
+upper = "3*max_flux"
+
+[[model.component]]
+type = "Line_MultiGauss"
+name = "b_halpha"
+n_components = 2
+amp_c = 0.65
+dv_c = 0.0
+sigma_c = 1500.0
+wavec = "@Halpha"
+amp_w0 = 0.10
+dv_w0 = 0.0
+sigma_w0 = 6000.0
+
+[model.component.priors.amp_c]
+kind = "loguniform"
+lower = "1e-3"
+upper = "3*max_flux"
+
+[model.component.priors.amp_w0]
+kind = "uniform"
+lower = 0.0
+upper = 1.0
+
+[model.component.priors.dv_c]
+kind = "uniform"
+lower = -2500.0
+upper = 2500.0
+
+[model.component.priors.sigma_c]
+kind = "uniform"
+lower = 300.0
+upper = 8000.0
+
+[model.component.priors.dv_w0]
+kind = "uniform"
+lower = -6000.0
+upper = 6000.0
+
+[model.component.priors.sigma_w0]
+kind = "uniform"
+lower = 300.0
+upper = 8000.0
+
+[[model.component]]
+type = "Line_template"
+name = "n_hbeta"
+template_file = "data/iras07546_narrow_template.txt"
+amplitude = 0.8
+dv = 0.0
+wavec = "@Hbeta"
+
+[model.component.ties]
+dv = "OIII.dv_c"
+
+[model.component.priors.amplitude]
+kind = "loguniform"
+lower = "1e-3"
+upper = "3*max_flux"
+
+[[model.component]]
+type = "Line_MultiGauss"
+name = "b_hbeta"
+n_components = 2
+amp_c = 0.22
+dv_c = 0.0
+sigma_c = 1500.0
+wavec = "@Hbeta"
+amp_w0 = 0.20
+dv_w0 = 0.0
+sigma_w0 = 6000.0
+
+[model.component.ties]
+dv_c = "b_halpha.dv_c"
+sigma_c = "b_halpha.sigma_c"
+dv_w0 = "b_halpha.dv_w0"
+sigma_w0 = "b_halpha.sigma_w0"
+
+[model.component.priors.amp_c]
+kind = "loguniform"
+lower = "1e-3"
+upper = "3*max_flux"
+
+[model.component.priors.amp_w0]
+kind = "uniform"
+lower = 0.0
+upper = 1.0
+
+[[model.component]]
+type = "Line_template"
+name = "n_hgamma"
+template_file = "data/iras07546_narrow_template.txt"
+amplitude = 0.4
+dv = 0.0
+wavec = "@Hgamma"
+
+[model.component.ties]
+dv = "OIII.dv_c"
+
+[model.component.priors.amplitude]
+kind = "loguniform"
+lower = "1e-3"
+upper = "3*max_flux"
+
+[[model.component]]
+type = "Line_MultiGauss"
+name = "b_hgamma"
+n_components = 2
+amp_c = 0.10
+dv_c = 0.0
+sigma_c = 1500.0
+wavec = "@Hgamma"
+amp_w0 = 0.20
+dv_w0 = 0.0
+sigma_w0 = 6000.0
+
+[model.component.ties]
+dv_c = "b_halpha.dv_c"
+sigma_c = "b_halpha.sigma_c"
+dv_w0 = "b_halpha.dv_w0"
+sigma_w0 = "b_halpha.sigma_w0"
+
+[model.component.priors.amp_c]
+kind = "loguniform"
+lower = "1e-3"
+upper = "3*max_flux"
+
+[model.component.priors.amp_w0]
+kind = "uniform"
+lower = 0.0
+upper = 1.0
+
+# He I 5876 and He II 4686 are weak enough to stay one Gaussian each, with the
+# shape of broad H-alpha's core and only their own peak free
+
+[[model.component]]
+type = "Line_template_doublet"
+name = "OIII"
+template_file = "data/iras07546_narrow_template.txt"
+amp_c0 = 1.8
+amp_c1 = "1.8/2.98"        # the atomic ratio, written as arithmetic
+dv_c = 0.0
+wavec0 = "@OIII_5007"
+wavec1 = "@OIII_4959"
+
+[model.component.ties]
+amp_c1 = { kind = "doublet_ratio", ref = "OIII", ratio = 2.98 }
+
+[model.component.priors.amp_c0]
+kind = "loguniform"
+lower = "1e-3"
+upper = "3*max_flux"
+
+[model.component.priors.dv_c]
+kind = "uniform"
+lower = -1000.0
+upper = 1000.0
+
+[[model.component]]
+type = "Line_template_doublet"
+name = "NII"
+template_file = "data/iras07546_narrow_template.txt"
+amp_c0 = 1.0
+amp_c1 = "1.0/2.96"
+dv_c = 0.0
+wavec0 = "@NII_6583"
+wavec1 = "@NII_6548"
+
+[model.component.ties]
+amp_c1 = { kind = "doublet_ratio", ref = "NII", ratio = 2.96 }
+dv_c = "OIII.dv_c"
+
+[model.component.priors.amp_c0]
+kind = "loguniform"
+lower = "1e-3"
+upper = "3*max_flux"
+
+# [S II]: both peaks keep their own amplitude, because 6716/6731 is a density
+# diagnostic and not an atomic constant
+
+[[model.component]]
+type = "Line_template_doublet"
+name = "SII"
+template_file = "data/iras07546_narrow_template.txt"
+amp_c0 = 0.10
+amp_c1 = 0.10
+dv_c = 0.0
+wavec0 = "@SII_6716"
+wavec1 = "@SII_6731"
+
+[model.component.ties]
+dv_c = "OIII.dv_c"
+
+[model.component.priors.amp_c0]
+kind = "loguniform"
+lower = "1e-3"
+upper = "3*max_flux"
+
+[model.component.priors.amp_c1]
+kind = "loguniform"
+lower = "1e-3"
+upper = "3*max_flux"
+
+[[model.component]]
+type = "Line_template_doublet"
+name = "OI"
+template_file = "data/iras07546_narrow_template.txt"
+amp_c0 = 0.05
+amp_c1 = "0.05/3.0"
+dv_c = 0.0
+wavec0 = "@OI_6300"
+wavec1 = "@OI_6364"
+
+[model.component.ties]
+amp_c1 = { kind = "doublet_ratio", ref = "OI", ratio = 3.00 }
+dv_c = "OIII.dv_c"
+
+[model.component.priors.amp_c0]
+kind = "loguniform"
+lower = "1e-3"
+upper = "3*max_flux"
+
+# ---- 5. the broad lines: a core and one wind each ----------------------------------
+# Line_MultiGauss(n_components=2, amp_c=0.65, dv_c=0, sigma_c=1500, wavec=Halpha,
+#                 amp_w0=0.10, dv_w0=0, sigma_w0=6000, name="b_halpha")
+# Broad H-alpha owns the kinematics: every other broad line -- and the iron kernel
+# above -- follows it, component by component, while each line keeps its own peak
+# and its own wind amplitude (the Balmer decrement is a measurement).
+
+[[model.component]]
+type = "Line_template"
+name = "HeII"
+template_file = "data/iras07546_narrow_template.txt"
+amplitude = 0.08
+dv = 0.0
+wavec = "@HeII_4686"
+
+[model.component.ties]
+dv = "OIII.dv_c"
+
+[model.component.priors.amplitude]
+kind = "loguniform"
+lower = "1e-3"
+upper = "3*max_flux"
+
+[[model.component]]
+type = "Line_MultiGauss"
+name = "b_heii"
+n_components = 1
+amp_c = 0.05
+dv_c = 0.0
+sigma_c = 1500.0
+wavec = "@HeII_4686"
+
+[model.component.ties]
+dv_c = "b_halpha.dv_c"
+sigma_c = "b_halpha.sigma_c"
+
+[model.component.priors.amp_c]
+kind = "loguniform"
+lower = "1e-3"
+upper = "3*max_flux"
+
+[[model.component]]
+type = "Line_template"
+name = "OIII4363"
+template_file = "data/iras07546_narrow_template.txt"
+amplitude = 0.05
+dv = 0.0
+wavec = "@OIII_4363"
+
+[model.component.ties]
+dv = "OIII.dv_c"
+
+[model.component.priors.amplitude]
+kind = "loguniform"
+lower = "1e-3"
+upper = "3*max_flux"
+
+# ---- 4. the forbidden doublets -----------------------------------------------------
+# Line_template_doublet(amp_c0=1.8, amp_c1=1.8/2.98, dv_c=0, wavec0=OIII_5007,
+#                       wavec1=OIII_4959, name="OIII"); the 2.98 is atomic physics.
+# [O III] also owns the narrow-line velocity every other narrow line follows.
+
+[[model.component]]
+type = "Line_template"
+name = "n_hei"
+template_file = "data/iras07546_narrow_template.txt"
+amplitude = 0.12
+dv = 0.0
+wavec = "@HeI_5876"
+
+[model.component.ties]
+dv = "OIII.dv_c"
+
+[model.component.priors.amplitude]
+kind = "loguniform"
+lower = "1e-3"
+upper = "3*max_flux"
+
+[[model.component]]
+type = "Line_MultiGauss"
+name = "b_hei"
+n_components = 1
+amp_c = 0.06
+dv_c = 0.0
+sigma_c = 1500.0
+wavec = "@HeI_5876"
+
+[model.component.ties]
+dv_c = "b_halpha.dv_c"
+sigma_c = "b_halpha.sigma_c"
+
+[model.component.priors.amp_c]
+kind = "loguniform"
+lower = "1e-3"
+upper = "3*max_flux"
+

@@ -48,7 +48,8 @@ wavec = "@Halpha"
 ```
 
 `[fit]` is optional (`nlive = 500`, `dlogz = 0.01`, `device = "auto"`,
-`share_compilation = true`). That is a complete, runnable configuration: every free
+`share_compilation = true`), and so is `[output]` (`figures = "pdf"`,
+`fit_plot = true`, `corner = false`, `histogram = false`, `thin = 1`). That is a complete, runnable configuration: every free
 parameter takes the default prior of its kind, and **no starting value is needed** --
 nested sampling draws its live points from the prior, so a value in the file would
 only say where a search would have begun.
@@ -109,13 +110,43 @@ extinction = true       # set false to fit as observed (no dereddening)
 ## Outputs, per source
 
 ```
-<output_dir>/<id>/<id>_fit.fits        # the fitted model + provenance keywords
-<output_dir>/<id>/<id>_posterior.npz   # samples, log-likelihood, data
-<output_dir>/<id>/<id>_fit.png         # data, model, residual
-<output_dir>/run_report.json           # the run: tokens, priors, evidence, timings
+<output_dir>/<id>/<id>_fit.fits    # the model, the data and the whole posterior
+<output_dir>/<id>/<id>_fit.pdf     # a text summary page, then the figures
+<output_dir>/run_report.json       # the run: tokens, priors, evidence, timings
 ```
 
-`run_report.json` is the machine-readable record: per source it carries the evidence
+Two files, and deliberately no others: no `.npz` archive (every array it would hold
+is in the FITS) and, by default, no loose `.png`s. `[output] figures = "png"` writes
+the same pages as PNGs instead -- for slides -- and `"both"` writes both sets; the
+default `"pdf"` is the one to archive, because it is vector and re-readable at any
+zoom.
+
+`<id>_fit.fits` is the result. Read it with astropy -- nothing GalSpec-specific is
+needed:
+
+```python
+from astropy.io import fits
+hdul = fits.open("out/<id>/<id>_fit.fits")
+hdr = hdul[0].header                    # LOGZ, LOGZERR, NITER, NCALL, INFORM, ...
+samples = hdul["SAMPLES"].data          # (niter, ndim), columns in PARAM_NAMES order
+weights = hdul["LOGWT"].data            # ln weight; LOGL and LOGVOL beside it
+equal = hdul["SAMPLES_EQ"].data         # the equal-weight resample already made
+names = hdul["PARAM_NAMES"].data["PARAM_NAME"]
+```
+
+That is everything the dynesty-style diagnostics need (samples, weights, volumes,
+`samples_u`, the `LOGZ`/`DLZ`/`SCALE` trajectories), so a failed-looking run can be
+diagnosed from the file alone. `SAMPLES_EQ` is what the quoted percentiles come from;
+`THETA_BEST` is the maximum-likelihood sample used by the fit page.
+
+`<id>_fit.pdf` is one document: a summary page (evidence, diagnostics, provenance,
+and every free parameter's median with its 16th and 84th percentile, `*` marking a
+default prior and `!` a posterior pressed against a limit), then the pages `[output]`
+asks for (`fit_plot`, `corner`, `histogram`). Vector, so it stays sharp at any zoom.
+A corner plot is skipped with a warning when the run stopped before exploring -- the
+rest of the document is still written.
+
+`run_report.json` is the machine-readable record of the *run*: per source the evidence
 and its error, the resolved tokens, the prior each parameter ended up with (and
 whether it came from the file), and `compile_seconds` / `sample_seconds`. Quote
 evidence from `log_evidence`, and remember that a different prior *family* is a

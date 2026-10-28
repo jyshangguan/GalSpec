@@ -1155,18 +1155,10 @@ def test_run_writes_the_documented_files(finished_run):
     assert entry["model"]["free_parameters"] == 2
     assert entry["spectrum"]["n_pixels"] == 120
     stem = Path(config.run.output_dir) / "spec" / "spec"
-    for suffix in ("_fit.fits", "_posterior.npz", "_corner.png"):
+    # two files: the FITS, which holds the model and the whole posterior, and the
+    # PDF, which holds the figures.  No .npz -- it would be a second copy.
+    for suffix in ("_fit.fits", "_fit.pdf"):
         assert Path(f"{stem}{suffix}").is_file()
-    assert Path(report["report_file"]).is_file()
-    assert json.loads(Path(report["report_file"]).read_text())["counts"]["ok"] == 1
-
-    # the posterior is readable with plain numpy, no pickling
-    with np.load(f"{stem}_posterior.npz", allow_pickle=False) as posterior:
-        assert posterior["samples_equal_weight"].shape == (posterior["samples"].shape[0], 2)
-        # a single-component model keeps the bare names; a compound adds the
-        # astropy ``_index`` suffix (that is the model's own convention)
-        assert list(posterior["param_names"]) == ["slope", "intercept"]
-        assert float(posterior["log_evidence"]) == pytest.approx(entry["log_evidence"])
 
     # the fit file carries the provenance the pipeline added
     with fits.open(f"{stem}_fit.fits") as hdul:
@@ -1175,6 +1167,126 @@ def test_run_writes_the_documented_files(finished_run):
         assert header["CONFIGID"] == config.digest[:16]
         assert header["NDATA"] == 120
         assert "LOGZ" in header and "THETA_BEST" in [hdu.name for hdu in hdul]
+        # the diagnostics a reader needs to judge whether the evidence is finished
+        for keyword in ("INFORM", "ACCRATE", "DLZ", "CONVERGE"):
+            assert keyword in header
+
+        # the posterior, in the file and nowhere else: every sample with its weight
+        # and volume, the equal-weight resample, and the names in column order
+        # NITER counts iterations (dead points); the arrays also carry the live
+        # points the run ended with, so NSAMP -- not NITER -- is the row count
+        samples = hdul["SAMPLES"].data
+        assert samples.shape == (int(header["NSAMP"]), 2)
+        assert int(header["NSAMP"]) == int(header["NITER"]) + int(header["NLIVE"])
+        assert hdul["SAMPLES_EQ"].data.shape[1] == 2
+        for name in ("LOGL", "LOGWT", "LOGVOL", "SAMPLES_U"):
+            assert hdul[name].data.shape[0] == samples.shape[0]
+        assert list(hdul["PARAM_NAMES"].data["PARAM_NAME"]) == ["slope", "intercept"]
+        assert float(header["LOGZ"]) == pytest.approx(entry["log_evidence"])
+
+
+def test_the_figures_are_one_pdf_with_a_summary_page(tmp_path):
+    """The default container is one document: the summary page, then the fit.
+
+    The summary page is the reason the PDF is not just a directory of PNGs stapled
+    together: it says which configuration produced the fit and marks the parameters
+    that are limits rather than measurements.
+    """
+    spectrum = make_spectrum(tmp_path, "spec.fits", n=160, wave=(4000.0, 4300.0))
+    config = load_config(write(tmp_path, f"""
+        [data]
+        file = "{spectrum}"
+        z_default = 0.0
+        extinction = false
+        [fit]
+        nlive = 25
+        dlogz = 10.0
+        max_iterations = 200
+        [model]
+        [[model.component]]
+        type = "Line_MultiGauss"
+        name = "Halpha"
+        n_components = 2
+        wavec = 6562.819
+        [model.component.bounds]
+        amp_c = [0.0, 3.0]
+        amp_w0 = [0.0, 1.0]
+        dv_c = [-1000.0, 1000.0]
+        dv_w0 = [-1000.0, 1000.0]
+        sigma_c = [100.0, 2000.0]
+        sigma_w0 = [100.0, 2000.0]
+    """, "config.toml"))
+    report = run_pipeline(config, log=lambda message: None)
+    assert report["counts"]["ok"] == 1, report["sources"][0].get("error")
+
+    out = Path(config.run.output_dir) / "spec"
+    pdf = out / "spec_fit.pdf"
+    assert pdf.is_file()
+    data = pdf.read_bytes()
+    assert data.startswith(b"%PDF")
+    # the summary page and the fit page (``corner`` is off by default)
+    pages = data.count(b"/Type /Page") - data.count(b"/Type /Pages")
+    assert pages == 2, f"expected 2 pages, found {pages}"
+    assert not list(out.glob("*.png")), "the figures belong in the PDF"
+    assert not list(out.glob("*.npz")), "the posterior belongs in the FITS"
+
+    files = {path.name for path in out.iterdir()}
+    assert files == {"spec_fit.fits", "spec_fit.pdf"}, files
+
+
+def test_the_figure_container_is_a_configuration_choice(tmp_path):
+    """``[output] figures`` picks the container: pdf (default), png, or both.
+
+    Same pages either way -- the summary first -- so a talk can have the PNGs and the
+    record can have the PDF without re-running the sampler.
+    """
+    spectrum = make_spectrum(tmp_path, "spec.fits", n=120)
+    template = f"""
+[data]
+file = "{spectrum}"
+z_default = 0.0
+extinction = false
+
+[fit]
+nlive = 25
+dlogz = 10.0
+max_iterations = 200
+
+[run]
+output_dir = "OUT"
+
+[output]
+corner = false
+histogram = false
+
+[model]
+[[model.component]]
+type = "Linear1D"
+name = "Continuum"
+
+[model.component.bounds]
+slope = [-1e-3, 1e-3]
+intercept = [0.0, 3.0]
+"""
+
+    def run(tag: str, figures: str | None):
+        text = template.replace('output_dir = "OUT"', f'output_dir = "{tag}"')
+        if figures is not None:
+            text = text.replace("corner = false", f'figures = "{figures}"\ncorner = false')
+        config = load_config(write(tmp_path, text, f"{tag}.toml"))
+        report = run_pipeline(config, log=lambda message: None)
+        assert report["counts"]["ok"] == 1, report["sources"][0].get("error")
+        out = Path(config.run.output_dir) / "spec"
+        return sorted(path.name for path in out.iterdir())
+
+    assert run("pdf", None) == ["spec_fit.fits", "spec_fit.pdf"]
+    assert run("png", "png") == ["spec_fit.fits", "spec_fit.png", "spec_summary.png"]
+    assert run("both", "both") == ["spec_fit.fits", "spec_fit.pdf", "spec_fit.png",
+                                   "spec_summary.png"]
+
+    broken = template.replace("corner = false", 'figures = "eps"')
+    with pytest.raises(ConfigError, match="figures.*expected one of"):
+        load_config(write(tmp_path, broken, "bad.toml"))
 
 
 def test_resume_skips_finished_sources_and_force_refits(finished_run):
@@ -1201,9 +1313,9 @@ def test_one_bad_source_does_not_stop_the_batch(tmp_path):
         extinction = false
         min_pixels = 10
         [fit]
-        nlive = 50
-        dlogz = 2.0
-        max_iterations = 2000
+        nlive = 25
+        dlogz = 10.0
+        max_iterations = 200
         [output]
         fit_plot = false
         [model]

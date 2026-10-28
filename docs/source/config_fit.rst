@@ -391,6 +391,7 @@ The output section
 .. code-block:: toml
 
     [output]
+    figures = "pdf"                    # one <id>_fit.pdf; "png" or "both" also work
     fit_plot = true
     corner = true
     corner_params = [
@@ -402,18 +403,24 @@ The output section
     histogram = true
     hist_params = ["Continuum.alpha", "FeII.amplitude", "b_halpha.amp_c", # ...]
 
-``[output]`` controls the files: ``thin`` (default ``1``) saves every n-th
-posterior sample; ``fit_plot`` (default ``true``); ``corner`` and ``histogram``
-(default ``false``).
+``[output]`` controls the two files. ``figures`` (default ``"pdf"``) chooses the
+container of the figures -- one ``<id>_fit.pdf``, one PNG per page (``"png"``, for a
+talk), or both (``"both"``); the pages themselves are the same either way.
+``thin`` (default ``1``) keeps every n-th posterior sample in the FITS -- the FITS is
+the only copy of the posterior, so a value above 1 throws samples away and is meant
+for a run whose *file size*, not whose analysis, is the problem. ``fit_plot``
+(default ``true``) draws the fit page; ``corner`` and ``histogram`` (default
+``false``) add those pages. The summary page is always there.
 
 ``corner_params`` and ``hist_params`` select the parameters to draw, and both
 spellings are accepted: the qualified name (``b_halpha.amp_c``), which does not
 depend on the summation order, or the flat one (``amp_c_3``), which is what the
-posterior file stores. A name that is not a free parameter of the model is an
+FITS column order stores. A name that is not a free parameter of the model is an
 error listing the free ones. A 27-parameter corner plot is a 27x27 square nobody
 reads, which is why the IRAS file names thirteen.
 
-The figures are the library's, not the pipeline's own drawings: the fit plot is
+The figures are pages of one PDF, written in the order ``[output]`` lists them.
+They are the library's, not the pipeline's own drawings: the fit plot is
 :func:`galspec.plot.plot_fit_jax` -- data, total model, every component and the
 residuals in units of the error, the same figure ``example/fit_iras07546_jax.py``
 writes -- the histograms are :func:`galspec.plot.plot_posterior_hist`, and the
@@ -854,25 +861,82 @@ Output
 
 For a source ``<id>``::
 
-    <output_dir>/<id>/<id>_fit.fits          # JNesty_Fit, with provenance keywords
-    <output_dir>/<id>/<id>_posterior.npz     # samples, log-likelihood, data
-    <output_dir>/<id>/<id>_fit.png           # data, best model, residuals (optional)
-    <output_dir>/<id>/<id>_corner.png        # optional
-    <output_dir>/<id>/<id>_histogram.png     # optional
-    <output_dir>/run_report.json             # what was fitted, with what, how
+    <output_dir>/<id>/<id>_fit.fits    # the model, the data and the whole posterior
+    <output_dir>/<id>/<id>_fit.pdf     # a summary page, then the figures
+    <output_dir>/run_report.json       # what was fitted, with what, how
+
+Two files per source, and nothing else.  There is no ``<id>_posterior.npz`` and no
+directory of ``.png`` figures: the FITS already holds every array such an archive
+would hold, and a second copy of a posterior is a second thing to keep in step with
+the first.  (A run made before this changed wrote the archive; its arrays are in the
+FITS under the names below, which is what a script reading ``np.load`` should read
+instead.)
 
 ``<id>_fit.fits`` is the file
-:func:`galspec.jnesty_fit_io.save_jnesty_fit_to_fits` writes, plus keywords for
-the source identifier, the input file, the redshift and where it came from, the
-number of pixels, the config file name and the first 16 characters of its SHA-256
-(the same keys are in the report), and the extinction that was removed
-(``EBV``, ``EBVRV``) and where it came from (``EXTINCT``).
+:func:`galspec.jnesty_fit_io.save_jnesty_fit_to_fits` writes.  The primary header
+carries the provenance -- source identifier, input file, pixels, redshift and where
+it came from, the extinction removed (``EBV``, ``EBVRV``, ``EXTINCT``), the
+configuration's name and the first 16 characters of its SHA-256, the fit date -- and
+the sampler's verdict: ``LOGZ``/``LOGZERR``, ``NITER`` (iterations, i.e. dead
+points), ``NSAMP`` (rows in the sample arrays -- ``NITER + NLIVE`` before thinning),
+``NCALL``, ``NLIVE``, ``NDIM``, ``BOUND``, ``THIN``, ``DEVICE``, ``RUNTIME``, and the
+diagnostics
+``INFORM`` (the Bayesian information ``H``), ``ACCRATE``, ``EFF``, ``CONVERGED``,
+``DLZ``, ``DLZTHR``.
 
-``<id>_posterior.npz`` is readable with ``numpy.load(..., allow_pickle=False)``:
-``samples_equal_weight``, ``samples``, ``logl``, ``logwt``, ``param_names``
-(flat names, as the model spells them), ``log_evidence``,
-``log_evidence_error``, ``n_iterations``, ``redshift`` and the ``wave``/``flux``/
-``error`` arrays that were fitted.
+The extensions hold the run:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 38 62
+
+   * - HDU
+     - what it holds
+   * - ``SAMPLES``, ``SAMPLES_EQ``
+     - every sample (``NSAMP`` rows -- ``NITER`` dead points plus the live
+       points, or fewer under ``thin``; one column per free parameter) and the
+       equal-weight resample the percentiles are computed from
+   * - ``LOGL``, ``LOGWT``, ``LOGVOL``, ``SAMPLES_U``
+     - one entry per sample: log-likelihood, log-weight, log-volume, and the same
+       point in the unit cube
+   * - ``LOGZ``, ``LOGZERR``, ``DLZ_TRAJ``, ``SCALE_TR``
+     - the run's trajectories, which is what the dynesty-style ``runplot`` /
+       ``traceplot`` diagnostics are drawn from
+   * - ``PARAM_NAMES``, ``FULL_PARAM``, ``PARAM_BOUNDS``, ``LOG_SCALE_PARAMS``
+     - the column order of ``SAMPLES``, the qualified names, the prior limits, and
+       which parameters were sampled in log space
+   * - ``THETA_INIT``, ``THETA_BEST``
+     - the point the fit started from and the maximum-likelihood sample
+   * - ``WAVE_USE``, ``FLUX_USE``, ``FERR``
+     - the arrays that were fitted, after the cuts and the two corrections
+   * - ``MODEL_STR``, ``MODEL_ARR``, ``MODEL_PARAM``, ``SUBMODELS``,
+       ``CUSTOM_PRIORS``
+     - the model itself, so the fit can be redrawn without the configuration file
+
+That is enough to re-derive every number in this chapter from the file alone::
+
+    from astropy.io import fits
+    hdul = fits.open("out/<id>/<id>_fit.fits")
+    samples = hdul["SAMPLES"].data             # (niter, ndim), in PARAM_NAMES order
+    weights = hdul["LOGWT"].data               # ln(weight) of each sample
+    equal = hdul["SAMPLES_EQ"].data            # already resampled
+    print(hdul[0].header["LOGZ"], hdul[0].header["INFORM"])
+
+With ``figures = "png"`` the same pages are written beside the FITS as
+``<id>_summary.png``, ``<id>_fit.png``, ``<id>_corner.png``, ``<id>_histogram.png``,
+and ``figures = "both"`` writes both sets; nothing else about the run changes, so one
+can be re-rendered from the other without re-sampling -- except that only the PDF can
+be re-rendered from *anything*, because the FITS carries every number the pages are
+drawn from.
+
+``<id>_fit.pdf`` is one document.  Page one is text -- the evidence and the run's
+diagnostics, the data and the two corrections the pipeline applied, and a table of
+every free parameter with its median, 16th and 84th percentile and
+maximum-likelihood value, marking with ``*`` a parameter on the pipeline's default
+prior and with ``!`` one pressed against a prior limit (a limit, not a measurement).
+Then come the pages ``[output]`` asks for: the fit, the corner plot, the marginal
+posteriors.  The pages are vector drawings, so a 57000-pixel spectrum stays sharp at
+any zoom -- which is also why losing the separate PNGs costs nothing.
 
 ``run_report.json`` records the settings, library versions, and per source: the
 status, evidence, iterations, timing (compile and sampling separately), a

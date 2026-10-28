@@ -72,7 +72,12 @@ max_iterations = 200000
 share_compilation = true
 device = "auto"
 
+# ---- what to write ----------------------------------------------------------------
+# Two files per source: <id>_fit.fits (the model, the samples and their weights) and
+# <id>_fit.pdf (a summary page, then the pages chosen here).  There is no separate
+# posterior archive: everything it would hold is in the FITS.
 [output]
+figures = "pdf"             # "png" writes one file per page instead; "both" writes both
 fit_plot = true
 corner = true
 corner_params = [

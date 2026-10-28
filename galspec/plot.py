@@ -991,6 +991,31 @@ def plot_narrow_line_template_validation(wave, flux, ferr,
 
     return fig, axes
 
+class _SingleComponent:
+    """A lone model wearing the compound model's interface.
+
+    The drawing code below is written for a compound model: it asks for
+    ``submodel_names``, counts the submodels for the legend, and iterates them to
+    draw one curve per component.  A fit of a single component -- a continuum and
+    nothing else, or a lone line -- has none of that, and used to raise ``TypeError``
+    at the legend.  This wrapper supplies exactly the attributes that code touches
+    and nothing else; it is a view, not a model.
+    """
+
+    def __init__(self, model):
+        self.model = model
+        self.name = getattr(model, "name", "model")
+        self.submodel_names = ()
+        self.n_submodels = 1
+        self.param_names = list(getattr(model, "param_names", ()))
+
+    def __iter__(self):
+        return iter((self.model,))
+
+    def __call__(self, x):
+        return self.model(x)
+
+
 def plot_fit_jax(wave, flux, model, weight=None, ax=None, axr=None, xlim=None,
                  ylim0=None, ylim1=None, xlabel=None, ylabel=None,
                  legend_kwargs=None, plot_weight=True, ignore_list=None,
@@ -1070,6 +1095,10 @@ def plot_fit_jax(wave, flux, model, weight=None, ax=None, axr=None, xlim=None,
     # a fit object is a convenience: the figure is drawn from the model it carries
     if not hasattr(model, "submodel_names") and hasattr(model, "get_best_fit"):
         model = model.get_best_fit()[0]
+
+    # one component is a legitimate model; the code below expects several
+    if not hasattr(model, "submodel_names"):
+        model = _SingleComponent(model)
 
     # astropy shares parameters between a compound model and its submodels; here the
     # leaves have their own storage, so the tied ones are written back before drawing

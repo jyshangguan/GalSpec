@@ -17,13 +17,14 @@ import json
 import os
 import platform
 import sys
+import textwrap
 import time
 import traceback
 import warnings
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -37,15 +38,27 @@ __all__ = ["run_pipeline", "run_one_source", "expected_outputs", "describe_run"]
 
 
 def expected_outputs(config: PipelineConfig, source_id: str) -> List[Path]:
-    """The files a completed fit of ``source_id`` leaves behind."""
+    """The files a completed fit of ``source_id`` leaves behind.
+
+    Always ``<id>_fit.fits`` -- the model, the data and the whole posterior -- plus
+    the figures in whichever container ``[output] figures`` asks for: one
+    ``<id>_fit.pdf``, or one PNG per page (``_summary``, ``_fit``, ``_corner``,
+    ``_histogram``).  There is no separate posterior archive, because every array
+    such a file would hold (samples, weights, log-likelihoods, volumes, the LOGZ
+    trajectory) is already in the FITS.
+    """
     stem = Path(config.run.output_dir) / source_id / source_id
-    files = [Path(f"{stem}_fit.fits"), Path(f"{stem}_posterior.npz")]
-    if config.output.fit_plot:
-        files.append(Path(f"{stem}_fit.png"))
-    if config.output.corner:
-        files.append(Path(f"{stem}_corner.png"))
-    if config.output.histogram:
-        files.append(Path(f"{stem}_histogram.png"))
+    files = [Path(f"{stem}_fit.fits")]
+    if config.output.figures in ("pdf", "both"):
+        files.append(Path(f"{stem}_fit.pdf"))
+    if config.output.figures in ("png", "both"):
+        files.append(Path(f"{stem}_summary.png"))
+        if config.output.fit_plot:
+            files.append(Path(f"{stem}_fit.png"))
+        if config.output.corner:
+            files.append(Path(f"{stem}_corner.png"))
+        if config.output.histogram:
+            files.append(Path(f"{stem}_histogram.png"))
     return files
 
 
@@ -168,6 +181,7 @@ def run_one_source(config: PipelineConfig, ref: SourceRef, *,
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = out_dir / spectrum.source_id
 
+    fit_date = _now()
     header = {
         "OBJECT": (spectrum.source_id[:68], "source identifier from the config"),
         "SPECFILE": (os.path.basename(spectrum.path)[:68], "input spectrum"),
@@ -176,7 +190,7 @@ def run_one_source(config: PipelineConfig, ref: SourceRef, *,
         "ZSOURCE": (spectrum.z_source[:68], "where the redshift came from"),
         "CONFIG": (os.path.basename(config.path)[:68], "pipeline config file"),
         "CONFIGID": (config.digest[:16], "sha256 of the config file"),
-        "FITDATE": (_now(), "UTC date of the fit"),
+        "FITDATE": (fit_date, "UTC date of the fit"),
         "COMPILER": ("galspec.pipeline", "how the fit was produced"),
     }
     if spectrum.flux_unit:
@@ -187,25 +201,21 @@ def run_one_source(config: PipelineConfig, ref: SourceRef, *,
         header["EXTINCT"] = (True, "flux and error de-reddened")
     if spectrum.wave_unit:
         header["WAVEUNIT"] = (str(spectrum.wave_unit)[:68], "wavelength unit read")
+    dominated = fit.prior_dominated()
+    summary = _parameter_summary(fit)
     fit_file = save_jnesty_fit_to_fits(fit, f"{stem}_fit.fits",
                                        thin=config.output.thin, extra_header=header)
-
-    posterior_file = _write_posterior(f"{stem}_posterior.npz", fit, spectrum)
-    outputs = [fit_file, posterior_file]
-    if config.output.fit_plot:
-        outputs.append(_write_fit_plot(f"{stem}_fit.png", fit, spectrum, config))
-    if config.output.corner:
-        corner_file = _write_corner_plot(
-            f"{stem}_corner.png", fit, config,
-            _flat_names(built, config.output.corner_params, "corner_params"),
-            title=spectrum.source_id)
-        if corner_file is not None:
-            outputs.append(corner_file)
-    if config.output.histogram:
-        outputs.append(_write_histogram(
-            f"{stem}_histogram.png", fit, config,
-            _flat_names(built, config.output.hist_params, "hist_params"),
-            title=spectrum.source_id))
+    pages = _figures(
+        fit, spectrum, built, namespace, config, summary, dominated,
+        reading_warnings, timing={"compile": compile_seconds,
+                                  "sample": sample_seconds,
+                                  "total": time.perf_counter() - started},
+        fit_date=fit_date)
+    outputs = [fit_file]
+    if config.output.figures in ("pdf", "both"):
+        outputs.append(_write_pdf(f"{stem}_fit.pdf", pages))
+    if config.output.figures in ("png", "both"):
+        outputs.extend(_write_pngs(f"{stem}", pages))
 
     return {
         "status": "ok",
@@ -222,8 +232,8 @@ def run_one_source(config: PipelineConfig, ref: SourceRef, *,
             "parameters": list(fit.param_names),
             "default_priors": list(built.default_priors),
         },
-        "parameters": _parameter_summary(fit),
-        "prior_dominated": fit.prior_dominated(),
+        "parameters": summary,
+        "prior_dominated": dominated,
         "outputs": [str(path) for path in outputs],
         "spectrum": spectrum.summary(),
         "tokens": {key: float(value) for key, value in namespace.items()},
@@ -236,7 +246,7 @@ def _flat_names(built, names, key: str):
 
     Both spellings are accepted because both are useful: the qualified name is what
     a config author writes (it is the one that does not depend on the summation
-    order), and the flat name is what the posterior file stores.
+    order), and the flat name is what the FITS file stores.
     """
     if not names:
         return None
@@ -255,9 +265,9 @@ def _flat_names(built, names, key: str):
 def _parameter_summary(fit) -> Dict[str, Dict[str, float]]:
     """Median and 16/84 percentiles of every free parameter.
 
-    The samples are in the ``.npz`` already; this puts the numbers a sample fit
-    is read for into the report, so comparing six spectra does not mean opening
-    six archives.  ``theta_best`` is the maximum-likelihood sample.
+    The samples are in the FITS already; this puts the numbers a sample fit is read
+    for into the report, so comparing six spectra does not mean opening six result
+    files.  ``theta_best`` is the maximum-likelihood sample.
     """
     samples = np.asarray(fit.results["samples"], dtype=float)
     if samples.size == 0:                      # a fit with no posterior output
@@ -275,29 +285,6 @@ def _parameter_summary(fit) -> Dict[str, Dict[str, float]]:
     }
 
 
-def _write_posterior(filename: str, fit, spectrum: Spectrum) -> str:
-    """The samples, in a format numpy reads without GalSpec."""
-    results = fit.results
-    payload = {
-        "samples_equal_weight": np.asarray(fit.samples_equal_weight),
-        "samples": np.asarray(results["samples"]),
-        "logl": np.asarray(results["logl"]),
-        "logwt": np.asarray(results["logwt"]),
-        # plain unicode, not dtype=object, so np.load needs no allow_pickle
-        "param_names": np.asarray(list(fit.param_names),
-                                  dtype=f"<U{max(len(n) for n in fit.param_names)}"),
-        "log_evidence": np.asarray(fit.log_evidence),
-        "log_evidence_error": np.asarray(fit.log_evidence_err),
-        "n_iterations": np.asarray(int(fit.n_iterations)),
-        "redshift": np.asarray(spectrum.redshift),
-        "wave": spectrum.wave,
-        "flux": spectrum.flux,
-        "error": spectrum.error,
-    }
-    np.savez_compressed(filename, **payload)
-    return str(filename)
-
-
 def _pyplot():
     """matplotlib with a non-interactive backend, imported when a figure is needed.
 
@@ -312,7 +299,224 @@ def _pyplot():
     return plt
 
 
-def _write_fit_plot(filename: str, fit, spectrum: Spectrum, config) -> str:
+def _figures(fit, spectrum, built, namespace, config, summary, dominated,
+             reading_warnings, timing, fit_date) -> List[Tuple[str, Any]]:
+    """The pages to draw, named, in the order they are bound or written.
+
+    The summary page is always first, because a figure cannot say which
+    configuration produced it or whether a parameter is a measurement or a limit.
+    The rest are the figures ``[output]`` asks for, in the order they are declared
+    there: the fit, the corner plot, the marginal posteriors.  The name becomes the
+    PNG suffix, so the same page is ``<id>_fit.pdf`` page 2 or ``<id>_fit.png``.
+    """
+    pages = [("summary", _summary_figure(
+        fit, spectrum, built, namespace, config, summary, dominated,
+        reading_warnings, timing, fit_date))]
+    if config.output.fit_plot:
+        pages.append(("fit", _fit_figure(fit, spectrum)))
+    if config.output.corner:
+        page = _corner_figure(
+            fit, _flat_names(built, config.output.corner_params, "corner_params"),
+            title=spectrum.source_id)
+        if page is not None:
+            pages.append(("corner", page))
+    if config.output.histogram:
+        pages.append(("histogram", _histogram_figure(
+            fit, _flat_names(built, config.output.hist_params, "hist_params"),
+            title=spectrum.source_id)))
+    return pages
+
+
+def _write_pdf(filename: str, pages: Sequence[Tuple[str, Any]]) -> str:
+    """Bind the figures into one PDF, one page each, with a page number.
+
+    Vector output: a 57k-pixel spectrum stays sharp at any zoom, which is the point
+    of preferring a PDF to a directory of PNGs.  The figures are closed as they are
+    written, so a twenty-source sample does not accumulate twenty open canvases.
+    """
+    plt = _pyplot()
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    total = len(pages)
+    with PdfPages(filename) as pdf:
+        metadata = pdf.infodict()
+        metadata["Title"] = Path(filename).stem
+        metadata["Creator"] = "galspec.pipeline"
+        for index, (_, figure) in enumerate(pages, start=1):
+            figure.text(0.995, 0.004, f"page {index} of {total}", ha="right",
+                        va="bottom", fontsize=7, color="0.45")
+            pdf.savefig(figure, dpi=150, bbox_inches="tight")
+            plt.close(figure)
+    return str(filename)
+
+
+def _write_pngs(stem: str, pages: Sequence[Tuple[str, Any]]) -> List[str]:
+    """One PNG per page, for a talk: ``<id>_summary.png``, ``<id>_fit.png``, ...
+
+    The same figures the PDF holds, at the resolution that goes into a slide; a
+    raster page loses the zoom the vector one keeps, which is why the PDF is the
+    default container.
+    """
+    plt = _pyplot()
+    written = []
+    for name, figure in pages:
+        path = f"{stem}_{name}.png"
+        figure.savefig(path, dpi=130, bbox_inches="tight")
+        plt.close(figure)
+        written.append(path)
+    return written
+
+
+def _summary_figure(fit, spectrum, built, namespace, config, summary, dominated,
+                    reading_warnings, timing, fit_date):
+    """Page one: what was fitted, with what, and what came out.
+
+    Plain text, because the questions a result file is opened for are not the ones
+    a plot answers -- which configuration, how long, how many pixels, and whether a
+    number is a measurement or a limit.  It repeats the report's numbers rather
+    than replacing them: the report is the machine-readable copy, this is the one
+    a person reads beside the figures.
+    """
+    plt = _pyplot()
+    figure = plt.figure(figsize=(8.27, 11.69))       # A4 portrait
+    figure.text(0.06, 0.972, spectrum.source_id, fontsize=15, weight="bold",
+                va="top")
+    components = list(built.components)
+    slots = len(getattr(fit, "full_param_names", fit.param_names))
+    free = len(fit.param_names)
+    parameters = (f"{free} free parameters" if free == slots
+                  else f"{free} free parameters of {slots} parameter slots")
+    named = (f"{len(components)} "
+             f"{'component' if len(components) == 1 else 'components'}: "
+             f"{', '.join(components)}")
+    subtitle = textwrap.wrap(named, width=100) + [
+        f"{parameters}, {spectrum.n_pixels} pixels fitted"]
+    figure.text(0.06, 0.945, "\n".join(subtitle), fontsize=9, va="top",
+                color="0.25", linespacing=1.5)
+
+    lines = _summary_lines(fit, spectrum, config, summary, dominated, timing,
+                           reading_warnings, namespace, built.default_priors,
+                           fit_date)
+    # the text block has the page from 0.912 of its height down to the footer:
+    # 8 pt with a 1.35 line spacing fits 64 lines of it, and a 60-parameter model
+    # is still legible on one page rather than spilling onto a second
+    size = 8.0 if len(lines) <= 64 else (7.2 if len(lines) <= 74 else 6.5)
+    figure.text(0.06, 0.912, "\n".join(lines), family="monospace", fontsize=size,
+                va="top", linespacing=1.35)
+    return figure
+
+
+def _summary_lines(fit, spectrum, config, summary, dominated, timing,
+                   reading_warnings, namespace, default_priors,
+                   fit_date) -> List[str]:
+    """The text of the summary page, line by line.
+
+    Monospace and column-aligned: this ends up in a PDF, so it has to line up by
+    construction rather than by font luck.  ``*`` marks a parameter that took the
+    pipeline's default prior (so its prior is a choice the pipeline made, not the
+    file) and ``!`` one pressed against a prior limit, which is a limit rather than
+    a measurement.
+    """
+    out: List[str] = []
+    width = 96
+
+    def block(title: str, rows: Sequence) -> None:
+        out.append("")
+        out.append(title.upper())
+        for label, value in rows:
+            wrapped = textwrap.wrap(str(value), width=width - 22) or [""]
+            out.append(f"  {label:<20}{wrapped[0]}")
+            out.extend(" " * 22 + extra for extra in wrapped[1:])
+
+    results = getattr(fit, "results", None) or {}
+    diagnostics = []
+    information = results.get("information")
+    if information is not None:
+        diagnostics.append(f"H = {float(information):.2f} nat")
+    acceptance = results.get("acceptance_rate")
+    if acceptance is not None:
+        diagnostics.append(f"acceptance {float(acceptance):.3f}")
+    delta = results.get("delta_logz")
+    if delta is not None:
+        target = results.get("delta_logZ_threshold")
+        diagnostics.append(f"final dlogZ = {float(delta):.3f}"
+                           + (f" (target {float(target):g})"
+                              if target is not None else ""))
+    if results.get("converged") is not None:
+        diagnostics.append("converged" if results["converged"] else "not converged")
+
+    block("the run", [
+        ("evidence", f"log Z = {fit.log_evidence:.3f} +/- {fit.log_evidence_err:.3f}"),
+        ("iterations", f"{int(fit.n_iterations)} dead points, "
+                       f"{int(getattr(fit, 'ncall', 0) or 0)} likelihood calls, "
+                       f"nlive = {int(getattr(fit, 'nlive', 0) or 0)}"),
+        ("sampler", f"JNesty, bound \"{getattr(fit, 'bound', 'multi')}\", "
+                    f"thin {config.output.thin}"),
+        ("device", f"{getattr(fit, 'device', 'unknown')}, "
+                   f"{timing['total']:.1f} s total "
+                   f"({timing['compile']:.1f} s compile, "
+                   f"{timing['sample']:.1f} s sampling)"),
+        ("configuration", f"{Path(config.path).name} "
+                          f"(sha256 {config.digest[:16]})"),
+        ("fit date", fit_date),
+    ] + ([("diagnostics", ", ".join(diagnostics))] if diagnostics else []))
+
+    block("the data", [
+        ("file", os.path.basename(spectrum.path)),
+        ("pixels", f"{spectrum.n_pixels} fitted "
+                   f"(min_pixels {config.data.min_pixels})"),
+        ("window", f"{spectrum.wave.min():.1f}-{spectrum.wave.max():.1f} A rest"
+                   + (f", {len(config.data.mask)} masked window(s)"
+                      if config.data.mask else "")),
+        ("units", f"{spectrum.wave_unit or 'Angstrom'} wavelength, "
+                  f"{spectrum.flux_unit or 'flux as stored'}"),
+        ("redshift", f"{spectrum.redshift:.6g}  ({spectrum.z_source})"),
+        ("extinction", f"E(B-V) = {spectrum.e_bv:.4g}  ({spectrum.e_bv_source}), "
+                       f"R_V = {spectrum.extinction_rv:.2f}"
+                       + (", removed from flux and error"
+                          if config.data.extinction else ", not applied")),
+        ("tokens", ", ".join(f"{name} = {value:.4g}"
+                             for name, value in namespace.items())),
+    ])
+
+    out.append("")
+    out.append("PARAMETERS   * default prior      ! pressed against a prior limit")
+    out.append(f"   {'parameter':<32}{'median':>12}{'16th':>12}{'84th':>12}"
+               f"{'best':>12}")
+    full = list(getattr(fit, "full_param_names", None) or fit.param_names)
+    defaults = set(default_priors or ())
+    for name, flat in zip(full, fit.param_names):
+        stats = summary.get(flat, {})
+        best = stats.get("best")
+        out.append(
+            f"{'*' if flat in defaults else ' '}{'!' if flat in dominated else ' '}"
+            f" {name:<32}"
+            f"{stats.get('median', float('nan')):>12.5g}"
+            f"{stats.get('lower', float('nan')):>12.5g}"
+            f"{stats.get('upper', float('nan')):>12.5g}"
+            f"{(best if best is not None else float('nan')):>12.5g}")
+
+    out.append("")
+    out.append("THE POSTERIOR IS IN THIS SOURCE'S FITS FILE")
+    out.extend(textwrap.wrap(
+        "SAMPLES holds every sample with LOGL, LOGWT and LOGVOL beside it; "
+        "SAMPLES_EQ is the equal-weight resample the numbers above come from; "
+        "SAMPLES_U is the same points in the unit cube; LOGZ/LOGZERR/DLZ_TRAJ/"
+        "SCALE_TR are the run's trajectories, so the dynesty-style diagnostics can "
+        "be rebuilt from the file alone.  PARAM_NAMES gives the column order, "
+        "PARAM_BOUNDS the prior limits, THETA_BEST the maximum-likelihood sample.  "
+        "No other file holds a copy of the posterior.",
+        width=width, initial_indent="  ", subsequent_indent="  "))
+    if reading_warnings:
+        out.append("")
+        out.append("WARNINGS RAISED WHILE READING")
+        for message in reading_warnings:
+            out.extend(textwrap.wrap(message, width=width, initial_indent="  ",
+                                     subsequent_indent="  "))
+    return out
+
+
+def _fit_figure(fit, spectrum: Spectrum):
     """The figure :func:`galspec.plot.plot_fit_jax` draws, at pipeline size.
 
     Evaluation, ties and subcomponents are that function's job; the only decisions
@@ -344,12 +548,10 @@ def _write_fit_plot(filename: str, fit, spectrum: Spectrum, config) -> str:
     ax.set_title(f"{spectrum.source_id}: log Z = {fit.log_evidence:.2f} "
                  f"+/- {fit.log_evidence_err:.2f}, "
                  f"{fit.n_iterations} iterations", fontsize=11)
-    figure.savefig(filename, dpi=130, bbox_inches="tight")
-    plt.close(figure)
-    return str(filename)
+    return figure
 
 
-def _write_corner_plot(filename: str, fit, config, names=None, title=None):
+def _corner_figure(fit, names=None, title=None):
     """A corner plot of ``[output] corner_params``, or of every parameter.
 
     Drawn by :func:`galspec.plot.plot_corner`, which slices the samples: a
@@ -358,30 +560,26 @@ def _write_corner_plot(filename: str, fit, config, names=None, title=None):
     before it starts exploring -- skips this one figure instead of failing a fit
     that has already cost its runtime.
     """
-    plt = _pyplot()
     from ..plot import plot_corner
 
     indices = None
     if names:
         indices = [fit.param_names.index(name) for name in names]
     try:
-        figure = plot_corner(fit, params=indices, filename=filename, dpi=110)
+        return plot_corner(fit, params=indices)
     except ValueError as exc:
-        warnings.warn(f"no corner plot for {title or filename}: {exc}",
+        warnings.warn(f"no corner plot for {title or 'this source'}: {exc}",
                       RuntimeWarning, stacklevel=2)
         return None
-    plt.close(figure)
-    return str(filename)
 
 
-def _write_histogram(filename: str, fit, config, names=None, title=None) -> str:
+def _histogram_figure(fit, names=None, title=None):
     """One panel per parameter, drawn by :func:`galspec.plot.plot_posterior_hist`.
 
     That function already marks the median and the 16-84 band, annotates the prior
     bounds and uses the qualified LaTeX labels, so this only chooses the grid and
     puts the parameters the sampler explored in log space on a log axis.
     """
-    plt = _pyplot()
     from ..plot import plot_posterior_hist
 
     indices = None
@@ -396,10 +594,8 @@ def _write_histogram(filename: str, fit, config, names=None, title=None) -> str:
     log_scale = [full[i] for i in selected if flat[i] in log_sampled]
     figure, _ = plot_posterior_hist(
         fit, params=indices, ncols=ncols, bins=40, log_scale=log_scale or None,
-        title=f"{title}: marginal posteriors" if title else None,
-        filename=filename)
-    plt.close(figure)
-    return str(filename)
+        title=f"{title}: marginal posteriors" if title else None)
+    return figure
 
 
 # --------------------------------------------------------------------------------------

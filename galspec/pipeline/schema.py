@@ -311,9 +311,20 @@ class FitConfig:
     compilation_cache_dir: Optional[str] = None
 
 
+#: Accepted ``[output] figures`` values: one PDF, one PNG per page, or both.
+FIGURE_FORMATS = frozenset({"pdf", "png", "both"})
+
+
 @dataclass(frozen=True)
 class OutputConfig:
+    #: Keep every ``thin``-th posterior sample in the FITS.  The FITS is the only
+    #: copy of the posterior, so a value above 1 throws samples away; it is there
+    #: for a run whose file size, not whose analysis, is the problem.
     thin: int = 1
+    #: The container of the figures: ``"pdf"`` (one ``<id>_fit.pdf``, the default),
+    #: ``"png"`` (one file per page, for slides) or ``"both"``.  The same pages are
+    #: drawn either way -- the summary, then the plots enabled below.
+    figures: str = "pdf"
     fit_plot: bool = True
     corner: bool = False
     histogram: bool = False
@@ -842,13 +853,19 @@ def _read_fit(table: Mapping[str, Any], base: Path) -> FitConfig:
 
 
 def _read_output(table: Mapping[str, Any]) -> OutputConfig:
-    defaults = {"thin": 1, "fit_plot": True, "corner": False, "histogram": False,
-                "corner_params": None, "hist_params": None}
+    defaults = {"thin": 1, "figures": "pdf", "fit_plot": True, "corner": False,
+                "histogram": False, "corner_params": None, "hist_params": None}
     values = _pool(table, defaults, "[output]")
     if values["thin"] < 1:
         _fail("[output].thin", f"must be at least 1, got {values['thin']}")
+    figures = values["figures"]
+    if not isinstance(figures, str) or figures.strip().lower() not in FIGURE_FORMATS:
+        _fail("[output].figures", f"expected one of "
+                                   f"{', '.join(sorted(FIGURE_FORMATS))}, "
+                                   f"got {figures!r}")
     return OutputConfig(
-        thin=int(values["thin"]), fit_plot=bool(values["fit_plot"]),
+        thin=int(values["thin"]), figures=figures.strip().lower(),
+        fit_plot=bool(values["fit_plot"]),
         corner=bool(values["corner"]), histogram=bool(values["histogram"]),
         corner_params=(_string_list(values["corner_params"], "[output].corner_params")
                        if values["corner_params"] else None),

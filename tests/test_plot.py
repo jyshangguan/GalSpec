@@ -235,6 +235,36 @@ def test_plot_fit_jax_draws_the_subcomponents():
     print("  plot_fit_jax draws six dashed subcomponents under [O III]")
 
 
+def test_plot_fit_jax_draws_a_lone_component():
+    """A one-component model is a model: it must draw, with one legend entry.
+
+    The drawing code is written for a compound model -- it names and counts the
+    submodels -- so a lone continuum used to raise ``TypeError`` at the legend.
+    """
+    from galspec import jax_models as jxm
+    wave = np.linspace(4000.0, 4100.0, 500)
+    model = jxm.PowerLaw1D(amplitude=1.0, x_0=5000.0, alpha=0.0,
+                           fixed={"x_0": True}, name="Continuum")
+    flux = np.asarray(model(wave))
+    error = np.full_like(flux, 0.01)
+
+    figure = plt.figure()
+    ax = figure.add_axes([0.1, 0.2, 0.8, 0.7])
+    axr = figure.add_axes([0.1, 0.05, 0.8, 0.12])
+    galspec.plot.plot_fit_jax(wave, flux, model, ax=ax, axr=axr, error=error,
+                              residual_in_sigma=True, legend_kwargs={"fontsize": 8})
+    figure.canvas.draw()
+
+    labels = [line.get_label() for line in ax.lines]
+    assert "Continuum" in labels
+    total = [line for line in ax.lines if line.get_label() == "Total model"][0]
+    assert np.allclose(np.asarray(total.get_ydata(), dtype=float), flux, rtol=1e-12)
+    assert np.allclose(np.asarray(axr.lines[0].get_ydata(), dtype=float), 0.0,
+                       atol=1e-9)
+    plt.close(figure)
+    print("  plot_fit_jax draws a single component")
+
+
 def test_plot_fit_jax_reuses_tied_values():
     """A tied parameter must be drawn at its fitted value, not its default.
 

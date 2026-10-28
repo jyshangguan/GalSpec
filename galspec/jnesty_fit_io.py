@@ -58,7 +58,9 @@ def _results_mapping(results) -> Dict[str, Any]:
     out = {}
     for key in ("samples", "samples_u", "logl", "logvol", "logwt", "logz", "logzerr",
                 "niter", "ncall", "logz_trajectory", "logzerr_trajectory",
-                "delta_logZ_trajectory", "scale_trajectory", "information"):
+                "delta_logZ_trajectory", "scale_trajectory", "information",
+                "eff", "acceptance_rate", "converged", "delta_logz",
+                "delta_logZ_threshold"):
         try:
             value = results[key]
         except (KeyError, TypeError, IndexError):
@@ -80,7 +82,10 @@ def save_jnesty_fit_to_fits(jnesty_fit, filename, thin: int = 1,
         Output file; overwritten if it exists.
     thin : int
         Save every ``thin``-th posterior sample.  ``thin > 1`` shrinks the file
-        for very long runs; the factor is recorded in the ``THIN`` keyword.
+        for very long runs; the factor is recorded in the ``THIN`` keyword, and the
+        number of rows written in ``NSAMP`` (the sample arrays hold the iterations
+        *and* the live points the run ended with, so ``NSAMP = NITER + NLIVE``
+        before thinning).
     extra_header : mapping, optional
         Extra keywords for the primary header, e.g. the provenance a batch run
         wants to travel with the fit (source identifier, redshift, units,
@@ -101,6 +106,7 @@ def save_jnesty_fit_to_fits(jnesty_fit, filename, thin: int = 1,
         raise RuntimeError("this JNesty_Fit has no posterior yet; run .fit() first")
 
     hdul = fits.HDUList()
+    results = _results_mapping(getattr(jnesty_fit, "results", None))
 
     hdr = fits.Header()
     hdr["SAMPLER"] = ("JNESTY", "nested sampler that produced this file")
@@ -112,6 +118,11 @@ def save_jnesty_fit_to_fits(jnesty_fit, filename, thin: int = 1,
     hdr["LOGZERR"] = float(getattr(jnesty_fit, "log_evidence_err", np.nan))
     hdr["NITER"] = int(getattr(jnesty_fit, "n_iterations", 0) or 0)
     hdr["NCALL"] = int(getattr(jnesty_fit, "ncall", 0) or 0)
+    # NITER counts the iterations (the dead points); the sample arrays also hold the
+    # live points the run ended with, so they have NITER + NLIVE rows, not NITER
+    stored = results.get("samples")
+    if stored is not None:
+        hdr["NSAMP"] = int(np.asarray(stored).shape[0] // max(int(thin), 1))
     hdr["RUNTIME"] = float(getattr(jnesty_fit, "runtime_seconds", np.nan))
     hdr["DEVICE"] = str(getattr(jnesty_fit, "device", "unknown"))
     for key, attr in (("RWALK_K", "rwalk_K"), ("QUEUE_SZ", "queue_size"),
@@ -119,6 +130,22 @@ def save_jnesty_fit_to_fits(jnesty_fit, filename, thin: int = 1,
         value = getattr(jnesty_fit, attr, None)
         if value is not None:
             hdr[key] = value
+    # the sampler's own verdict on the run: the run diary a reader needs to judge
+    # whether the evidence is finished, all small enough to be header keywords
+    for keyword, key, comment, cast in (
+            ("INFORM", "information", "Bayesian information H [nat]", float),
+            ("ACCRATE", "acceptance_rate", "fraction of proposed points accepted", float),
+            ("EFF", "eff", "sampling efficiency, niter/ncall", float),
+            ("CONVERGE", "converged", "the run met its own stopping criterion", bool),
+            ("DLZ", "delta_logz", "logZ change when the run stopped", float),
+            ("DLZTHR", "delta_logZ_threshold", "the change it was compared with", float)):
+        value = results.get(key)
+        if value is None:
+            continue
+        try:
+            hdr[keyword] = (cast(value), comment)
+        except (TypeError, ValueError):              # pragma: no cover - odd results
+            continue
     try:
         import jax
         hdr["X64"] = bool(jax.config.jax_enable_x64)
@@ -166,7 +193,6 @@ def save_jnesty_fit_to_fits(jnesty_fit, filename, thin: int = 1,
         hdul.append(fits.ImageHDU(np.asarray(theta_best, dtype=float), name="THETA_BEST"))
 
     # -- sampler output --------------------------------------------------------
-    results = _results_mapping(getattr(jnesty_fit, "results", None))
     for hdu_name, key in (("SAMPLES", "samples"), ("SAMPLES_U", "samples_u"),
                           ("LOGL", "logl"), ("LOGWT", "logwt"), ("LOGVOL", "logvol")):
         value = results.get(key)

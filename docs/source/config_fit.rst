@@ -110,25 +110,35 @@ Requirements on the data
 
 #. **The header supplies the two corrections.** A spectrum is fitted in the rest
    frame, with the Galaxy's reddening removed, and both numbers can be read from
-   the file rather than written into the configuration:
+   the file rather than written into the configuration. One keyword each:
 
    .. list-table::
       :header-rows: 1
-      :widths: 18 24 58
+      :widths: 18 26 56
 
       * - quantity
-        - keys tried in order
+        - header keyword (``[data]``)
         - what the pipeline does
       * - redshift
-        - ``z_keys``, default ``["Z", "REDSHIFT", "ZBEST"]``
+        - ``z_key``, default ``"ZRED"``
         - divides the wavelength by ``1 + z``; the model's line centres are rest
           wavelengths (``"@Halpha"`` or ``6562.819``)
-      * - colour excess
-        - ``e_bv_keys``, default
-          ``["E(B-V)", "EBV", "EBV_GAL", "A_V", "AV"]``
+      * - Galactic reddening
+        - ``e_bv_key``, default ``"EBV"``
         - de-reddens the flux *and* the error with ``extinction.ccm89`` at
-          ``extinction_rv`` (default 3.1), on the observed grid before the
-          wavelength is shifted. An ``A_V`` is divided by ``R_V`` first.
+          ``extinction_rv``, on the observed grid before the wavelength is
+          shifted. The keyword's name says how to read it: a colour excess is
+          taken as is, an ``A_V`` is divided by ``R_V`` first, so
+          ``e_bv_key = "A_V"`` is a complete statement.
+
+   A single keyword, not a list of spellings, because a file either has the
+   keyword or it does not: a list turns "this file has no redshift in it" into a
+   quiet fallback onto whichever of five keys happened to be there for an unrelated
+   reason. If the file stores it under another name, name it once
+   (``z_key = "MYZ"``). ``extinction_rv`` is a configuration value only -- no header
+   is trusted for it, since a survey that stores ``A_V`` leans on ``R_V`` and a wrong
+   ``R_V`` would propagate into every flux without leaving a trace. It defaults to
+   ``3.1``, the Milky Way value.
 
    The precedence is: the catalog's ``z`` column, the header, ``z_default``.
    A value that is *not* in the file is assumed to be zero **and the run warns**:
@@ -225,10 +235,10 @@ The data section
     file = "data/iras07546_pipeline.fits"
     narrow_template_key = "NARROW"     # the measured line profile, inside the file
 
-    z_keys = ["REDSHIFT", "Z", "ZBEST"]
-    e_bv_keys = ["E(B-V)", "EBV", "A_V", "AV"]
+    z_key = "REDSHIFT"                 # one keyword; the default is "ZRED"
+    e_bv_key = "EBV"                   # ... and "EBV"
     extinction = true
-    extinction_rv = 3.1
+    extinction_rv = 3.1                # R_V of the law; the default, config-only
 
     wave_min = 4200.0
     wave_max = 6800.0
@@ -277,23 +287,28 @@ The data section
        ignore it, and every other array lookup is unaffected.  The columns are
        read by position, so their names do not matter; a velocity column with a
        unit is converted to km/s, and one without is taken to be km/s already.
-   * - ``z_keys``
-     - ``["Z", "REDSHIFT", "ZBEST"]``
-     - header keys tried in order.
+   * - ``z_key``
+     - ``"ZRED"``
+     - the header keyword holding the object's redshift.  One keyword, not a list:
+       name the one your files use (``"MYZ"``); a file without it falls back to
+       ``z_default`` and says so.
    * - ``z_default``
      - ``0.0``
      - redshift when neither the catalog nor the header says.  Declaring it
        explicitly is what silences the "assumed" warning.
-   * - ``e_bv_keys``
-     - ``["E(B-V)", "EBV", "EBV_GAL", "A_V", "AV"]``
-     - header keys tried in order for the colour excess.
+   * - ``e_bv_key``
+     - ``"EBV"``
+     - the header keyword holding the Galactic reddening.  A colour-excess name
+       (``EBV``, ``E(B-V)``) is read as is; an extinction name (``A_V``) is divided
+       by ``extinction_rv``.
    * - ``extinction``
      - ``true``
-     - de-redden with the colour excess from the header; ``false`` declares that
-       this spectrum needs no correction (and suppresses the warning).
+     - de-redden with that keyword; ``false`` declares that this spectrum needs no
+       correction (and suppresses the warning).
    * - ``extinction_rv``
      - ``3.1``
-     - ``R_V`` of the reddening law.
+     - ``R_V`` of the reddening law.  Configuration only -- no header is consulted
+       for it, because a wrong ``R_V`` would scale every flux silently.
    * - ``wave_min``, ``wave_max``
      - --
      - rest-frame range to fit.

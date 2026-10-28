@@ -58,7 +58,7 @@ def make_spectrum(tmp_path: Path, name: str = "spec.fits", n: int = 200,
                fits.Column(name=error_col, format="D", array=error)]
     header = fits.Header()
     if z is not None:
-        header["REDSHIFT"] = z
+        header["ZRED"] = z
     path = tmp_path / name
     fits.HDUList([fits.PrimaryHDU(),
                   fits.BinTableHDU.from_columns(columns, header=header)]).writeto(path)
@@ -331,6 +331,7 @@ def test_a_v_is_converted_to_a_colour_excess(tmp_path):
         [data]
         file = "{path}"
         z_default = 0.0
+        e_bv_key = "A_V"                    # the keyword's name says how to read it
         min_pixels = 10
         [model]
         [[model.component]]
@@ -477,7 +478,7 @@ def test_redshift_from_header_catalog_and_default(tmp_path):
     config = load_config(write(tmp_path, config_text(header_z), "a.toml"))
     spectrum = read_spectrum(config, resolve_sources(config)[0])
     assert spectrum.redshift == pytest.approx(0.25)
-    assert spectrum.z_source == "header:REDSHIFT"
+    assert spectrum.z_source == "header:ZRED"
     # the grid is de-shifted: 4000-4200 observed at z=0.25 -> 3200-3360 rest
     assert spectrum.wave.min() == pytest.approx(4000.0 / 1.25)
 
@@ -498,6 +499,102 @@ def test_redshift_from_header_catalog_and_default(tmp_path):
     spectrum = read_spectrum(config, sources[0])
     assert spectrum.redshift == pytest.approx(0.1)
     assert spectrum.z_source == "catalog"
+
+
+def test_one_keyword_per_header_value(tmp_path):
+    """A keyword to look for, not a list of guesses.
+
+    ``ZRED`` and ``EBV`` are the defaults; a file that spells them differently names
+    its keyword once (``z_key = "MYZ"``), and the header's own keyword is what the
+    report quotes.  A list of spellings, as the mode used to take, is rejected with
+    the new name in the message rather than silently ignored.
+    """
+    path = make_spectrum(tmp_path, "named.fits", n=40)
+    with fits.open(path, mode="update") as hdul:
+        hdul[1].header["MYZ"] = 0.4
+        hdul[1].header["Z"] = 0.9            # present, and deliberately not the one we ask for
+    config = load_config(write(tmp_path, f"""
+        [data]
+        file = "{path}"
+        z_key = "MYZ"
+        extinction = false
+        min_pixels = 10
+        [model]
+        [[model.component]]
+        type = "Linear1D"
+    """, "a.toml"))
+    spectrum = read_spectrum(config, resolve_sources(config)[0])
+    assert spectrum.redshift == pytest.approx(0.4)
+    assert spectrum.z_source == "header:MYZ"
+
+    # the default keyword is not in this file, so the run falls back and says so
+    plain = load_config(write(tmp_path, f"""
+        [data]
+        file = "{path}"
+        z_default = 0.05
+        extinction = false
+        min_pixels = 10
+        [model]
+        [[model.component]]
+        type = "Linear1D"
+    """, "b.toml"))
+    fallback = read_spectrum(plain, resolve_sources(plain)[0])
+    assert fallback.redshift == pytest.approx(0.05)
+    assert fallback.z_source == "z_default"
+
+    old = write(tmp_path, f"""
+        [data]
+        file = "{path}"
+        z_keys = ["Z", "MYZ"]
+        [model]
+        [[model.component]]
+        type = "Linear1D"
+    """, "c.toml")
+    with pytest.raises(ConfigError, match=r"z_keys.*now z_key.*single header keyword"):
+        load_config(old)
+
+
+def test_the_reddening_law_comes_only_from_the_configuration(tmp_path):
+    """``extinction_rv`` has no header fallback, on purpose.
+
+    A survey that stores ``A_V`` leans on R_V, so a wrong R_V would propagate into
+    every flux and leave no trace; the value is therefore a decision the
+    configuration states, defaulting to 3.1, and a header keyword that looks like it
+    (``RV``, ``EBVRV``) is ignored.
+    """
+    path = make_spectrum(tmp_path, "av.fits", n=40)
+    with fits.open(path, mode="update") as hdul:
+        hdul[1].header["A_V"] = 1.2
+        hdul[1].header["RV"] = 5.0             # tempting, and not consulted
+        hdul[1].header["EBVRV"] = 5.0
+    config = load_config(write(tmp_path, f"""
+        [data]
+        file = "{path}"
+        z_default = 0.0
+        e_bv_key = "A_V"
+        extinction_rv = 4.0
+        min_pixels = 10
+        [model]
+        [[model.component]]
+        type = "Linear1D"
+    """, "a.toml"))
+    spectrum = read_spectrum(config, resolve_sources(config)[0])
+    assert spectrum.extinction_rv == pytest.approx(4.0)
+    assert spectrum.e_bv == pytest.approx(1.2 / 4.0)
+
+    default = load_config(write(tmp_path, f"""
+        [data]
+        file = "{path}"
+        z_default = 0.0
+        e_bv_key = "A_V"
+        min_pixels = 10
+        [model]
+        [[model.component]]
+        type = "Linear1D"
+    """, "b.toml"))
+    spectrum = read_spectrum(default, resolve_sources(default)[0])
+    assert spectrum.extinction_rv == pytest.approx(3.1)
+    assert spectrum.e_bv == pytest.approx(1.2 / 3.1)
 
 
 def test_masking_trimming_and_min_pixels(tmp_path):

@@ -8,7 +8,7 @@ something else, removes the Galactic extinction the header declares, de-redshift
 to the rest frame, and reports what it did.
 
 Two of those corrections are read from the file rather than invented: the
-redshift (``[data] z_keys``) and the colour excess (``[data] e_bv_keys``, an
+redshift (``[data] z_key``) and the colour excess (``[data] e_bv_key``, an
 ``A_V`` being divided by ``R_V``).  A file that declares neither is fitted as it
 stands -- rest frame, no extinction -- but the report says so instead of leaving
 the reader to assume the correction was applied.
@@ -55,11 +55,11 @@ class Spectrum:
     flux: np.ndarray
     error: np.ndarray
     redshift: float
-    z_source: str                     # 'header:Z' | 'catalog' | 'z_default'
+    z_source: str                     # 'header:ZRED' | 'catalog' | 'z_default'
     flux_unit: Optional[str]
     wave_unit: Optional[str]
     e_bv: float = 0.0                 # colour excess removed from flux and error
-    e_bv_source: str = "assumed"      # 'header:E(B-V)' | 'header:A_V' | 'assumed' | 'none'
+    e_bv_source: str = "assumed"      # 'header:EBV' | 'header:A_V (A_V / R_V)' | 'assumed' | 'none'
     extinction_rv: float = 3.1
     #: ``(velocity_km_s, flux)`` from ``[data] narrow_template_key``, or ``None``
     #: when the file does not carry a template.  Read here rather than in the
@@ -424,17 +424,23 @@ def _to_angstrom(values: np.ndarray, unit: Optional[str], role: str
     return values * factor, label
 
 
-def _header_redshift(headers: Sequence, keys: Sequence[str]
+def _header_redshift(headers: Sequence, key: str
                      ) -> Tuple[Optional[float], Optional[str]]:
+    """The redshift declared by ``key``, and the label to report it under.
+
+    One keyword, searched in the flux HDU's header first and then in the primary
+    header -- the two places a spectral file keeps it in practice.  A keyword
+    that is present but not a usable number is skipped like a missing one, so the
+    caller falls back to ``z_default`` and says so.
+    """
     for header in headers:
-        for key in keys:
-            if key in header:
-                try:
-                    value = float(header[key])
-                except (TypeError, ValueError):
-                    continue
-                if np.isfinite(value) and -0.99 < value:
-                    return value, f"header:{key}"
+        if key in header:
+            try:
+                value = float(header[key])
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(value) and -0.99 < value:
+                return value, f"header:{key}"
     return None, None
 
 
@@ -445,25 +451,27 @@ _COLOUR_KEYS = frozenset({"E(B-V)", "EBV", "E(BV)", "EB-V", "EBV_GAL"})
 _EXTINCTION_KEYS = frozenset({"A_V", "AV", "AV_GAL", "A(V)"})
 
 
-def _header_extinction(headers: Sequence, keys: Sequence[str], r_v: float
+def _header_extinction(headers: Sequence, key: str, r_v: float
                        ) -> Tuple[Optional[float], Optional[str]]:
-    """``E(B-V)`` declared by a header, and which key supplied it."""
+    """``E(B-V)`` declared by ``key``, and the label to report it under.
+
+    The keyword's own name decides how to read it: a colour excess (``EBV``,
+    ``E(B-V)``) is taken as is, and an extinction (``A_V``) is divided by
+    :attr:`DataConfig.extinction_rv`, which only the configuration can set.
+    """
     for header in headers:
-        for key in keys:
-            if key not in header:
-                continue
-            try:
-                value = float(header[key])
-            except (TypeError, ValueError):
-                continue
-            if not np.isfinite(value) or value < 0.0:
-                continue
-            if key.upper() in _COLOUR_KEYS:
-                return value, f"header:{key}"
-            if key.upper() in _EXTINCTION_KEYS:
-                return value / r_v, f"header:{key} (A_V / R_V)"
-            # an unlabelled key in [data] e_bv_keys is read as a colour excess
-            return value, f"header:{key}"
+        if key not in header:
+            continue
+        try:
+            value = float(header[key])
+        except (TypeError, ValueError):
+            continue
+        if not np.isfinite(value) or value < 0.0:
+            continue
+        if key.upper() in _EXTINCTION_KEYS:
+            return value / r_v, f"header:{key} (A_V / R_V)"
+        # a colour-excess name, or any other keyword the file declares
+        return value, f"header:{key}"
     return None, None
 
 
@@ -506,9 +514,9 @@ def read_spectrum(config: PipelineConfig, ref: SourceRef) -> Spectrum:
             error, _, _, error_index = _locate(
                 hdul, data.error_key, data.error_hdu, "error")
             headers = [flux_header, hdul[0].header]
-            z_header, z_header_label = _header_redshift(headers, data.z_keys)
+            z_header, z_header_label = _header_redshift(headers, data.z_key)
             e_bv_header, e_bv_label = _header_extinction(
-                headers, data.e_bv_keys, data.extinction_rv)
+                headers, data.e_bv_key, data.extinction_rv)
             # read while the file is still open: the template belongs to this
             # spectrum, so it is carried on the Spectrum rather than re-opened
             template = (None if data.narrow_template_key is None
@@ -554,7 +562,7 @@ def read_spectrum(config: PipelineConfig, ref: SourceRef) -> Spectrum:
             e_bv, e_bv_source = 0.0, "assumed"
             warnings.warn(
                 f"{path}: no Galactic colour excess in the header "
-                f"({'/'.join(data.e_bv_keys)}); fitting the flux as observed "
+                f"(\"{data.e_bv_key}\"); fitting the flux as observed "
                 "(set [data] extinction = false to silence this)", RuntimeWarning)
         else:
             e_bv, e_bv_source = float(e_bv_header), e_bv_label or "header"

@@ -48,13 +48,14 @@ file = "data/iras07546_pipeline.fits"
 # model takes a line profile uses it unless it names its own template_file.
 narrow_template_key = "NARROW"
 
-# the header carries both corrections; the keys are listed so the file says which
-# header keyword it trusts (these are the pipeline's defaults, written out:
-# Z/REDSHIFT/ZBEST for the redshift, and the colour excess or an A_V for extinction)
-z_keys = ["Z", "REDSHIFT", "ZBEST"]
-e_bv_keys = ["E(B-V)", "EBV", "EBV_GAL", "A_V", "AV"]
+# The header carries both corrections, and each is one keyword: the pipeline's own
+# defaults are ZRED and EBV, and this file names REDSHIFT instead because that is what
+# the converter wrote.  An A_V in place of a colour excess is divided by R_V = 3.1
+# (``extinction_rv``), which only a configuration can set -- no header is trusted for it.
+z_key = "REDSHIFT"
+e_bv_key = "EBV"
 extinction = true           # de-redden with ccm89 before shifting to the rest frame
-extinction_rv = 3.1
+# extinction_rv = 3.1       # R_V of the reddening law; the default
 
 # the rest-frame window of the example, and the percentile that set_priors() calls
 # ``np.percentile(flux, 15.0)``

@@ -1,7 +1,7 @@
 ---
 name: galspec
 description: Use this skill when the user asks to use GalSpec to fit a spectrum, do spectral fitting with GalSpec, or fit AGN or galaxy emission-line or absorption-line spectra with GalSpec.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # GalSpec Spectral Fitting
@@ -25,6 +25,8 @@ This skill helps with:
 - deciding how many broad/narrow components the data need
 - applying instrumental LSF convolution
 - measuring physical parameters from fitted spectra
+- running one fit, or a sample of them, from a TOML configuration file
+  (`python -m galspec.pipeline`), without writing Python
 
 ## When to use this skill
 
@@ -80,6 +82,14 @@ relevant documentation.
 - `BAL QSO`
 - `absorption trough`
 - `broad absorption line`
+
+### Read `fitting_strategies/config_fit.md` first if the request mentions:
+- a TOML configuration file, `fit.toml`, "the config mode", `[data]`/`[model]`/`[fit]`
+- `python -m galspec.pipeline`, "run it from a file", `--dry-run`
+- fitting a **sample** or a batch of spectra with one model (`glob`, `files`,
+  `catalog`), overnight/weekend runs, reproducible fits for a paper
+- `z_key`, `e_bv_key`, `extinction_rv`, `narrow_template_key`, `require_priors`
+- "the same model for many spectra", "no Python", "one FITS file per spectrum"
 
 ### Read `function_reference/gpu_jax_fitting.md` first if the request mentions:
 - `JAX`, `jax`, `GPU`, `CUDA`, `nvidia-smi`
@@ -137,7 +147,11 @@ When this skill is used:
    is available, use the JAX twins plus `JNesty_Fit` instead -- the model is
    identical and the sampler is 10-100x faster
    (`function_reference/gpu_jax_fitting.md`).
-7. Clearly report:
+7. Once the model is settled and the job is *repetition* -- one spectrum to
+   reproduce, or a sample that shares a model -- move it into a TOML file and run
+   `python -m galspec.pipeline` (`fitting_strategies/config_fit.md`).  Validate
+   with `--dry-run`, which prints the resolved tokens and the free parameters.
+8. Clearly report:
    - model components
    - parameter ties
    - assumptions

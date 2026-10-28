@@ -267,14 +267,23 @@ class DataConfig:
     narrow_template_key: Optional[str] = None
     wave_unit: Optional[str] = None
     flux_unit: Optional[str] = None
-    z_keys: Tuple[str, ...] = ("Z", "REDSHIFT", "ZBEST")
+    #: Header keyword holding the object's redshift.  One keyword, not a list:
+    #: a file either has the keyword or it does not, and accepting several
+    #: spellings hides the case where none of them is the one you thought.
+    z_key: str = "ZRED"
     z_default: float = 0.0
     #: True when the file says ``z_default`` itself.  A default the *file* does
     #: not mention is an assumption the pipeline warns about; one the file states
     #: is a decision, and warning about it would train the reader to ignore both.
     z_default_given: bool = False
     extinction: bool = True
-    e_bv_keys: Tuple[str, ...] = ("E(B-V)", "EBV", "EBV_GAL", "A_V", "AV")
+    #: Header keyword holding the Galactic reddening: a colour excess
+    #: (``EBV``, ``E(B-V)``) or an extinction (``A_V``), which is divided by
+    #: :attr:`extinction_rv` -- the keyword's own name says which.
+    e_bv_key: str = "EBV"
+    #: R_V of the reddening law.  A configuration value only: no header is
+    #: trusted for it, because A_V/R_V is the usual way a survey stores its
+    #: reddening and a wrong R_V would propagate quietly into every flux.
     extinction_rv: float = 3.1
     wave_min: Optional[float] = None
     wave_max: Optional[float] = None
@@ -459,13 +468,18 @@ def _read_data(table: Mapping[str, Any], base: Path) -> DataConfig:
         "wave_hdu": None, "flux_hdu": None, "error_hdu": None,
         "narrow_template_key": None,
         "wave_unit": None, "flux_unit": None,
-        "z_keys": ("Z", "REDSHIFT", "ZBEST"), "z_default": 0.0,
+        "z_key": "ZRED", "z_default": 0.0,
         "extinction": True,
-        "e_bv_keys": ("E(B-V)", "EBV", "EBV_GAL", "A_V", "AV"),
-        "extinction_rv": 3.1,
+        "e_bv_key": "EBV", "extinction_rv": 3.1,
         "wave_min": None, "wave_max": None, "mask": (),
         "min_pixels": 50, "continuum_percentile": DEFAULT_CONTINUUM_PERCENTILE,
     }
+    for old_key, new_key, hint in (
+            ("z_keys", "z_key", 'a single header keyword (default "ZRED")'),
+            ("e_bv_keys", "e_bv_key", 'a single header keyword (default "EBV")')):
+        if old_key in table:
+            _fail(f"[data].{old_key}", f"is now {new_key}, {hint}: "
+                                       f'write {new_key} = "..." instead of a list')
     values = _pool(table, defaults, "[data]")
     chosen = [key for key in ("file", "files", "glob", "catalog")
               if table.get(key)]
@@ -496,6 +510,12 @@ def _read_data(table: Mapping[str, Any], base: Path) -> DataConfig:
         _fail("[data].continuum_percentile", "must be between 0 and 100")
     if values["extinction_rv"] <= 0.0:
         _fail("[data].extinction_rv", f"must be positive, got {values['extinction_rv']}")
+    for key in ("z_key", "e_bv_key"):
+        value = values[key]
+        if not isinstance(value, str) or not value.strip():
+            _fail(f"[data].{key}", f"expected a header keyword such as "
+                                   f"{defaults[key]!r}, got {value!r}")
+        values[key] = value.strip()
     template_key = values["narrow_template_key"]
     if template_key is not None:
         if not isinstance(template_key, str) or not template_key.strip():
@@ -518,11 +538,11 @@ def _read_data(table: Mapping[str, Any], base: Path) -> DataConfig:
         error_hdu=values["error_hdu"],
         narrow_template_key=template_key,
         wave_unit=values["wave_unit"], flux_unit=values["flux_unit"],
-        z_keys=_string_list(values["z_keys"], "[data].z_keys"),
+        z_key=values["z_key"],
         z_default=float(values["z_default"]),
         z_default_given="z_default" in table,
         extinction=bool(values["extinction"]),
-        e_bv_keys=_string_list(values["e_bv_keys"], "[data].e_bv_keys"),
+        e_bv_key=values["e_bv_key"],
         extinction_rv=float(values["extinction_rv"]),
         wave_min=values["wave_min"], wave_max=values["wave_max"],
         mask=tuple(windows), min_pixels=int(values["min_pixels"]),

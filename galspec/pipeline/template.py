@@ -100,10 +100,10 @@ error_key = "ERROR"
 # numbers are read from the header when it has them; when it does not, they are
 # assumed to be zero AND THE RUN WARNS.  Declaring them here is silent.
 z_default = 0.0                 # the mock is at rest
-z_keys = ["Z", "REDSHIFT", "ZBEST"]
-e_bv_keys = ["E(B-V)", "EBV", "EBV_GAL", "A_V", "AV"]
-extinction = false              # true: de-redden with the header's colour excess
-# extinction_rv = 3.1           # R_V of the reddening law
+z_key = "ZRED"                  # header keyword holding the object's redshift
+e_bv_key = "EBV"                # ... and holding the Galactic colour excess
+extinction = false              # true: de-redden with that colour excess
+# extinction_rv = 3.1           # R_V of the law; only this file may set it
 
 # Rest-frame window to fit, and windows to drop (sky residuals, telluric bands).
 # wave_min = 4000.0

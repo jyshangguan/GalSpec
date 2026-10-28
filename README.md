@@ -139,10 +139,13 @@ The JAX models are verified against the CPU models by
 GPU and CPU fits are guaranteed to be solving the same problem.
 
 A complete worked example lives in `example/fit_iras07546_jax.py` (script,
-about 8 min on one GPU) and `example/fit_iras07546_jax.ipynb` (the same fit broken
-into annotated cells). The model they fit is in `example/iras07546_model.py`, which
-the three example scripts share, so each one runs on its own -- from the repository
-root, with nothing but the two data files that travel with it:
+about 8 min on one GPU) and `example/fit_iras07546_jax.ipynb` (the same fit written
+out cell by cell -- the model is built literally there, seventeen constructors and
+then the ties, with no wrapper functions, so a cell can be copied and changed). The
+three example scripts import the same model from `example/iras07546_model.py`, and
+`tests/test_example_notebook.py` fails if the notebook and that module disagree on a
+single tie or prior. Each script runs on its own -- from the repository root, with
+nothing but the two data files that travel with it:
 
 ```bash
 python example/fit_iras07546_jax.py           # the hard ties
@@ -354,8 +357,8 @@ first and no script depends on another script's output files:
 | `fit_iras07546_jax.py` | the fiducial fit: 27 free parameters, one measured narrow profile, broad lines tied to H-alpha |
 | `fit_iras07546_jax_tied.py` | whether broad H-beta and H-gamma really share H-alpha's shape (35 parameters, Gaussian priors instead of ties) |
 | `fit_iras07546_jax_toggle.py` | how many broad components the spectrum needs (spike-and-slab on every wing amplitude, 37 parameters) |
-| `iras07546_model.py` | the model all three fit |
-| `_build_notebook.py` | regenerates `fit_iras07546_jax.ipynb` from the script, so the two cannot drift apart |
+| `iras07546_model.py` | the model all three fit, as an importable module |
+| `fit_iras07546_jax.ipynb` | the same model written out literally, cell by cell; `tests/test_example_notebook.py` keeps the two in step |
 
 ## Requirements
 

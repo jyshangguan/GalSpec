@@ -3,8 +3,13 @@
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
+import json
 import os
 import sys
+
+from docutils import nodes
+from sphinx.util.docutils import SphinxDirective
+
 sys.path.insert(0, os.path.abspath('../..'))
 
 # -- Project information -----------------------------------------------------
@@ -150,3 +155,61 @@ texinfo_documents = [
      author, 'GalSpec', 'Spectral Analysis of Galaxy and Active galactic Nuclei.',
      'Miscellaneous'),
 ]
+
+
+# -- A notebook cell as a code block ---------------------------------------------------
+# Every code cell of ``example/fit_iras07546_jax.ipynb`` begins with a ``# %% name``
+# marker.  The walkthrough page quotes those cells, so the code a reader copies out of
+# the documentation is the code the notebook runs -- there is no second copy to drift::
+#
+#     .. nbcode:: ../../example/fit_iras07546_jax.ipynb
+#        :cell: model_broad
+
+_CELL_CACHE = {}
+
+
+def _notebook_cells(path):
+    """``{marker: source}`` for every marked code cell of a notebook."""
+    path = os.path.abspath(path)
+    if path not in _CELL_CACHE:
+        with open(path, "r", encoding="utf-8") as handle:
+            notebook = json.load(handle)
+        cells = {}
+        for cell in notebook["cells"]:
+            if cell.get("cell_type") != "code":
+                continue
+            source = "".join(cell["source"])
+            first = source.splitlines()[0] if source.strip() else ""
+            if first.startswith("# %%"):
+                cells[first[4:].strip()] = source
+        _CELL_CACHE[path] = cells
+    return _CELL_CACHE[path]
+
+
+class NotebookCellDirective(SphinxDirective):
+    """Insert one ``# %% name`` cell of a Jupyter notebook, highlighted as Python."""
+
+    required_arguments = 1
+    optional_arguments = 0
+    final_argument_whitespace = False
+    has_content = False
+    option_spec = {"cell": str}
+
+    def run(self):
+        notebook = self.arguments[0]
+        marker = self.options.get("cell")
+        if not marker:
+            raise self.error("nbcode needs a :cell: option naming the cell's marker")
+        cells = _notebook_cells(os.path.join(self.env.srcdir, notebook))
+        if marker not in cells:
+            known = ", ".join(sorted(cells))
+            raise self.error(f"no %%%% cell {marker!r} in {notebook}; it has: {known}")
+        block = nodes.literal_block(cells[marker], cells[marker])
+        block["language"] = "python"
+        self.set_source_info(block)
+        return [block]
+
+
+def setup(app):
+    app.add_directive("nbcode", NotebookCellDirective)
+    return {"version": "1.0", "parallel_read_safe": True}

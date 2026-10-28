@@ -2,22 +2,25 @@ A realistic fit, start to finish
 ================================
 
 One AGN spectrum, one model, one sampler, and the step before it: measuring the narrow
-lines' profile. This page is the whole fit as the scripts run it. Every code block
-below is a verbatim slice of a file in the repository, and the figures are copies of
-the files those scripts write, so nothing here is hand-assembled:
+lines' profile. Every code block on this page is a cell of
+``example/fit_iras07546_jax.ipynb`` -- the notebook builds the model literally, seventeen
+constructors and then the ties, with no ``build_model()`` in the way -- so a block can be
+copied into a notebook and run:
 
-* ``example/fit_iras07546_o3_template.py`` -- step 2, measures the narrow-line profile
-  on the [O III] doublet and writes it to a file (the code calls this *stage 1*: it is
-  the first of the two fits);
-* ``example/iras07546_model.py`` -- the model the fit uses, one piece at a time;
-* ``example/fit_iras07546_jax.py`` -- steps 4 to 7, the whole-spectrum fit.
-
-``example/fit_iras07546_jax.ipynb`` runs the last of those cell by cell.
+* ``example/fit_iras07546_jax.ipynb`` -- the whole fit, cell by cell: the data, the model,
+  the ties, the priors, the sampler, the figures;
+* ``example/fit_iras07546_o3_template.py`` -- step 2, measures the narrow-line profile on
+  the [O III] doublet and writes it to a file (the code calls this *stage 1*: it is the
+  first of the two fits);
+* ``example/iras07546_model.py`` -- the same model as an importable module, for the three
+  example scripts. ``tests/test_example_notebook.py`` executes the notebook's model cells
+  and compares them with the module's, tie for tie and prior for prior, so the two copies
+  cannot drift apart.
 
 IRAS 07546+3928 at z = 0.0953: 4200-6800 A in the rest frame, 57 000 pixels at 0.046 A
 sampling, H-gamma through H-alpha with the strong forbidden lines. The fit has 27 free
-parameters, runs with 400 live points and ``dlogz = 0.01``, and takes about twelve
-minutes on one GPU.
+parameters, runs with 400 live points and ``dlogz = 0.01``, and takes about eight minutes
+on one GPU.
 
 Twelve of those 27 are narrow-line parameters -- eleven peak amplitudes and one shared
 velocity shift; the narrow *profile* is not fitted at all. It is one measured object,
@@ -29,18 +32,64 @@ instead of 30, and step 2 is where the shape comes from, so it comes first.
    :local:
    :depth: 2
 
+The spectrum
+------------
+
+Start with the data as it arrives, before anything is cut. IRAS 07546+3928 was observed
+with a long slit and a grism, so the flux is a FITS primary array with a start wavelength
+and a step in the header, and no error array: the error has to come from the spectrum
+itself.
+
+The figure shows the observed flux, the same flux with the foreground reddening removed,
+and the +-1 sigma band that the fit will be given. Two things are worth reading off it.
+The correction is a slope, not a rescale -- ``E(B-V) = 0.176`` is a modest Galactic
+extinction, so it changes the continuum shape and leaves the lines where they are. And the
+error is not noise on a smooth curve: it grows with the flux, because part of it is the
+photon noise of the source itself.
+
+.. figure:: _static/example_figures/iras07546_spectrum_observed.png
+   :width: 100%
+
+   The observed spectrum (grey), the same after the Milky Way reddening is removed (blue),
+   and +-1 sigma of the error the fit is given (band). The shaded region is the wavelength
+   range the fit actually uses -- and it is the only range the error exists over, because
+   that is where it is measured (section 1).
+
+.. figure:: _static/example_figures/iras07546_data_window.png
+   :width: 100%
+
+   The fitted window, 4200-6800 A rest frame: the spectrum, the error on its own scale
+   (it rises where the spectrum does, because part of it is photon noise), and the
+   line-free level the priors are scaled from -- the 15th percentile of the flux. The
+   scale is logarithmic so that a 2% error and a fourfold line peak fit in one panel.
+
 1. Read the spectrum
 --------------------
 
-The data come from a FITS file, are dereddened, shifted to the rest frame and cropped;
-the error array is re-derived from the scatter of the spectrum itself rather than
-trusted from the header. That last step matters: a wrong error scale makes every
-posterior too narrow or too wide by the same factor.
+Three transformations happen in one cell: the reddening correction (divide by the dust
+transmission on the observed grid, i.e. multiply by ``10**(0.4 A_lambda)``, with the CCM89
+law and ``E(B-V) = 0.176`` -- dust in our own Galaxy, not at the redshift of the object),
+the shift to the rest frame
+(``wave / (1 + z)``), and the window. The error is re-derived from the scatter of the
+spectrum rather than trusted from a header: subtract a running median, take the median of
+the absolute remainder in the same window -- which ignores the few pixels that belong to
+emission lines -- divide by 0.6745 to turn it into a Gaussian sigma, and smooth over a few
+hundred A. Then add ``PHOTON_FRACTION`` of the flux in quadrature: the photon noise of the
+source, plus what the model does not describe exactly (flux calibration, the shape of the
+Fe II template, departures from a pure power law).
 
-.. literalinclude:: ../../example/iras07546_model.py
-   :language: python
-   :start-after: # %% load
-   :end-before: # %% helpers
+That last step matters more than it looks, in two ways. A wrong error *scale* does not
+make a fit fail; it makes every posterior too narrow or too wide by the same factor,
+invisibly -- the parameter is 5% here, and it is the one number in the data step that is a
+judgement. And the *order* of the operations is part of the model: the recipe reads
+neighbouring pixels, so measuring it before the wavelength cut instead of after moves the
+4 000 pixels at the window edges by up to 8%, which is tens of nats of evidence for a
+spectrum that looks identical. The cell derives the error from the window, and
+``tests/test_example_notebook.py`` asserts that this cell returns the same three arrays as
+``load_spectrum()`` in ``example/iras07546_model.py`` -- bit for bit, not approximately.
+
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: data
 
 2. Measure the narrow-line profile on [O III]
 ---------------------------------------------
@@ -161,25 +210,15 @@ were a poor description of the data this number would be orders of magnitude abo
 0.086 the free fit reaches. The frozen profile is a smoother description, so it is not
 expected to be identical -- only close.
 
-3. Build the model, one piece at a time
----------------------------------------
+3. Build the model, one component at a time
+-------------------------------------------
 
-The whole-spectrum model is a compound astropy model: a power-law continuum, the iron
-template, and one submodel per line. It is built by four independent functions -- one
-per physical piece -- that are then summed and tied, which is the only reason the
-pieces can be drawn and checked separately, as the four figures below do.
-
-The script's step is one call, after the spectrum and the profile are read:
-
-.. literalinclude:: ../../example/fit_iras07546_jax.py
-   :language: python
-   :start-after: # %% step-2-model
-   :end-before: # %% step-3-fitter
-   :dedent: 4
-
-Everything it calls lives in ``example/iras07546_model.py``, so this example,
-``fit_iras07546_jax_tied.py`` and ``fit_iras07546_jax_toggle.py`` fit the same thing
-instead of three copies of it.
+The whole-spectrum model is seventeen additive components of three kinds: a power-law
+continuum, the Fe II template, and fifteen lines. An astropy model composes with ``+``,
+a ``galspec.jax_models`` model composes the same way, so the model is built by naming the
+parts one after another and summing them. There is no builder function, and every piece
+stays a model object that can be called on a wavelength array on its own -- which is what
+lets the four figures below draw each chunk of the model from the fitted parameters.
 
 3.1. The continuum
 ~~~~~~~~~~~~~~~~~~
@@ -189,10 +228,8 @@ middle of the range, so that amplitude and slope are nearly independent -- move 
 anchor to the blue end and the two parameters become a line's intercept and gradient,
 correlated at the 0.99 level.
 
-.. literalinclude:: ../../example/iras07546_model.py
-   :language: python
-   :start-at: def build_continuum():
-   :end-before: def build_broad_lines(
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: model_continuum
 
 .. figure:: _static/example_figures/iras07546_jax_model_continuum.png
    :width: 78%
@@ -201,53 +238,8 @@ correlated at the 0.99 level.
    comes out at 1.07 in F-lambda, which is a slope of -0.93 in F-nu -- redder than a
    bare quasar's -0.5, the starburst showing through.
 
-3.2. The broad lines
-~~~~~~~~~~~~~~~~~~~~
-
-Three Balmer lines and two helium lines. Each Balmer line is a core plus a wind
-(``Line_MultiGauss``), and He I 5876 and He II 4686 are weak enough to be one Gaussian
-each.
-
-.. literalinclude:: ../../example/iras07546_model.py
-   :language: python
-   :start-at: def build_broad_lines(
-   :end-before: def build_narrow_lines(
-
-What is *not* in this function is as important as what is: no ties yet. The pieces are
-built loose and tied afterwards (sections 3.5-3.7), because a tie is a callable resolved by
-name at evaluation time and does not need the compound model to exist.
-
-.. figure:: _static/example_figures/iras07546_jax_model_broad.png
-   :width: 100%
-
-   Left: the five broad components and their sum, from the fitted parameters. Right: the
-   same five lines aligned on their peaks and normalised. The shift and the width are
-   shared, so the curves nearly coincide; what separates them is the wind amplitude,
-   which is free per line -- the Balmer decrement of the wind, and a measurement.
-
-3.3. The narrow lines
-~~~~~~~~~~~~~~~~~~~~~
-
-Ten lines, all on the measured profile: one amplitude each, the atomic ratio for the
-second peak of the forbidden doublets, and no width anywhere, because the profile
-carries it. [S II] is the exception that keeps both amplitudes free, because
-6716/6731 is a density diagnostic.
-
-.. literalinclude:: ../../example/iras07546_model.py
-   :language: python
-   :start-at: def build_narrow_lines(
-   :end-before: def build_iron_template(
-
-.. figure:: _static/example_figures/iras07546_jax_model_narrow.png
-   :width: 100%
-
-   Left: where the ten narrow lines sit, each with its amplitude from the fit. Right: the
-   same ten, aligned on their peaks and normalised -- one curve, not ten, which is the
-   whole point of the template. The offset curves are the doublets keeping their atomic
-   separation: [N II] at -1 594 km/s, [S II] at -670 km/s.
-
-3.4. The iron template
-~~~~~~~~~~~~~~~~~~~~~~
+3.2. The Fe II template
+~~~~~~~~~~~~~~~~~~~~~~~
 
 The Fe II pseudo-continuum is not a line: it is a forest of blends between 4 200 and
 5 600 A that no individual transition can be fitted. It is used as a template --
@@ -257,35 +249,90 @@ continuum of 0.66, a quarter of the total, and that structure has to go somewher
 model without it gives the flux to whatever else is nearby -- the continuum, or a wing
 on the nearest broad line.
 
-.. literalinclude:: ../../example/iras07546_model.py
-   :language: python
-   :start-at: def build_iron_template(
-   :end-before: def tie_narrow_lines(
+The kernel is a ``Line_MultiGauss`` the compound model does not own; its parameters are
+tied in section 4.3, which is why the iron costs exactly one free parameter -- its
+amplitude.
+
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: model_iron
 
 .. figure:: _static/example_figures/iras07546_jax_model_iron.png
    :width: 78%
 
    The Fe II pseudo-continuum under H-beta, [O III] and H-gamma, from the fitted
    amplitude. The wiggles are the template's own structure; what the fit decides is the
-   broadening (section 3.7) and the amplitude.
+   broadening (section 4.3) and the amplitude.
 
-3.5. Tying the narrow lines: one shift, one ratio per doublet
+3.3. The broad lines
+~~~~~~~~~~~~~~~~~~~~
+
+Three Balmer lines and two helium lines. Each Balmer line is a core plus a wind:
+``n_components=2`` puts ``amp_c``/``dv_c``/``sigma_c`` and
+``amp_w0``/``dv_w0``/``sigma_w0`` in one constructor call. He I 5876 and He II 4686 are
+weak enough to be one Gaussian each.
+
+What is *not* in this cell is as important as what is: no ties yet. The pieces are built
+loose and tied afterwards, because a tie resolves its reference by name at evaluation time
+and does not need the compound model to exist.
+
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: model_broad
+
+.. figure:: _static/example_figures/iras07546_jax_model_broad.png
+   :width: 100%
+
+   Left: the five broad components and their sum, from the fitted parameters. Right: the
+   same five lines aligned on their peaks and normalised. The shift and the width are
+   shared, so the curves nearly coincide; what separates them is the wind amplitude,
+   which is free per line -- the Balmer decrement of the wind, and a measurement.
+
+3.4. The narrow lines
+~~~~~~~~~~~~~~~~~~~~~
+
+Ten lines, all on the measured profile. The template is read from the file and handed to
+each line as ``template_velc`` and ``template_flux``; a line that uses it has an amplitude
+and a shift, and no width anywhere, because the profile carries it. A forbidden doublet is
+one component with two peaks: the second amplitude is the atomic ratio (tied in section 4)
+or, for [S II], free, because 6716/6731 measures the electron density.
+
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: model_narrow
+
+.. figure:: _static/example_figures/iras07546_jax_model_narrow.png
+   :width: 100%
+
+   Left: where the ten narrow lines sit, each with its amplitude from the fit. Right: the
+   same ten, aligned on their peaks and normalised -- one curve, not ten, which is the
+   whole point of the template. The offset curves are the doublets keeping their atomic
+   separation: [N II] at -1 594 km/s, [S II] at -670 km/s.
+
+3.5. The sum
+~~~~~~~~~~~~
+
+The seventeen pieces are summed in a fixed order -- narrow and broad alternating, so that a
+reader finds [O III] next to H-beta rather than in a block at the end -- and then given
+display names, because a legend should say ``BH$\alpha$ (broad)`` and not ``b_halpha``.
+
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: model_sum
+
+4. The ties
+-----------
+
+A tie is not a constraint in the sampler: it removes a parameter. The tied parameter is
+computed from another model's parameter at evaluation time, so the sampler never sees it
+and no likelihood penalty enforces it. The ``jxm.tie.*`` objects look the reference up by
+name, which is why they can be assigned before or after the pieces are summed.
+
+4.1. Tying the narrow lines: one shift, one ratio per doublet
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The narrow lines share a velocity: eleven peaks become one measurement of the
 narrow-line-region systemic velocity, and no line can drift on its own. The second peak
 of a forbidden doublet is not fitted at all, because the ratio is atomic.
 
-.. literalinclude:: ../../example/iras07546_model.py
-   :language: python
-   :start-at: def tie_narrow_lines(
-   :end-before: def tie_broad_lines(
-
-A tie is a callable, not a value: ``tie_MultiGauss_dv_c("OIII")`` looks the reference up
-by name when the model is evaluated, so ties can be assigned before the compound model
-exists and they follow their reference through every sample. That is also why the
-pieces above are built loose and tied afterwards: the model does not have to be
-assembled in one expression.
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: ties_narrow
 
 Tying every narrow shift is a statement rather than a measurement: a line that really
 sits at a different velocity is absorbed into its amplitude and into the residual, and
@@ -294,7 +341,7 @@ the model cannot report it. These lines do come from the same gas, so it is a go
 the code. The right-hand panel of the narrow-line figure above is what it buys: ten
 curves that are one curve.
 
-3.6. Tying the broad lines: one shape, three amplitudes
+4.2. Tying the broad lines: one shape, three amplitudes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Broad H-beta and H-gamma follow H-alpha component by component: the core's shift and
@@ -302,10 +349,8 @@ width, and every wind's shift and width. What is *not* tied is the amplitude, of
 core or of the wind -- the Balmer decrement is a measurement, and it is one of the
 things this fit is for.
 
-.. literalinclude:: ../../example/iras07546_model.py
-   :language: python
-   :start-at: def tie_broad_lines(
-   :end-before: def tie_iron_template(
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: ties_broad
 
 This is the "one broad-line region" assumption, and it is the one
 ``example/fit_iras07546_jax_tied.py`` tests: that script releases the eight parameters
@@ -313,7 +358,7 @@ removed here, puts a Gaussian on the difference instead of a tie, and reports ho
 each line moved in units of that width (:doc:`priors` has the construction and the
 result -- H-gamma's wind is the one that disagrees).
 
-3.7. Tying the iron template: its kernel *is* broad H-alpha
+4.3. Tying the iron template: its kernel *is* broad H-alpha
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The iron is a template convolved with a broadening kernel. Every parameter of that
@@ -322,131 +367,111 @@ component, which is the strongest statement in the model: the iron lines come fr
 same gas as the Balmer line, so they cannot have a velocity structure the Balmer line
 does not have.
 
-.. literalinclude:: ../../example/iras07546_model.py
-   :language: python
-   :start-at: def tie_iron_template(
-   :end-before: def build_model(
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: ties_iron
 
 Why tie rather than fit the kernel? Because a free kernel width lets the iron absorb Fe
 II flux into a fake wind, and earlier fits of this object did exactly that -- the
 narrow lines were fitted well and the broad profile was quietly wrong. With the kernel
 tied, the iron costs exactly one free parameter, its amplitude.
 
-3.8. The composition, and a prior for every parameter
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The three cells of this section take the model from 56 parameters to 32 (the narrow ties)
+to 27 (the broad and iron ties); the printouts at the end of each one say so.
 
-The four pieces are summed in a fixed order -- narrow and broad alternating, so that a
-reader finds [O III] next to H-beta rather than in a block at the end -- and then tied:
+5. A prior for every parameter
+------------------------------
 
-.. literalinclude:: ../../example/iras07546_model.py
-   :language: python
-   :start-at: def build_model(
-   :end-before: # %% priors
+One prior per free parameter, and every one of them is scaled from the spectrum rather than
+copied from a previous fit, so the recipe transfers to another object without hand-tuning.
 
-Seventeen components, 27 free parameters: two for the continuum, one for the iron,
-twelve for the narrow lines (eleven peaks and one shared shift), twelve for the broad
-lines.
+Two shapes do the work. ``LogUniform`` gives equal probability per factor of ten, which is
+what a line peak that may be four decades fainter than the brightest pixel needs -- a
+linear box would put 99% of its prior at the bright end and never visit the faint lines.
+``Uniform`` is right for a quantity whose natural range is already the physical one: a
+velocity shift, a width, or a ratio bounded by 1.
 
-The priors are attached by ``set_priors``, in four groups: continuum and iron, every
-line peak (log-uniform), narrow kinematics (the one shared shift -- there is no narrow
-width to give a prior to, because the profile carries it), and broad kinematics (one
-width box of 300-8 000 km/s for the core *and* the wind, with each Balmer line keeping
-its own amplitude). The recipe is written out on :doc:`priors`, which also explains what
-each shape does and how to make one parameter's prior depend on another's.
+The dictionary is written out parameter by parameter, because that is the thing a reader
+edits to fit their own object; the loop after it is the entire mechanism. It ends by
+walking every free parameter and asserting that each one has a prior: a fit with an unset
+prior is a silent bug -- the parameter samples its whole default box -- and the assertion
+turns that into an error before the sampler starts.
 
-A fit with an unset prior is a silent bug: the parameter then samples its whole default
-box. ``set_priors`` ends by walking every free parameter and raising if one has no
-prior, which turns that bug into an error before the sampler starts.
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: priors
 
-4. Run the sampler
+The recipe is written out on :doc:`priors`, which also explains what each shape does and
+how to make one parameter's prior depend on another's.
+
+6. Run the sampler
 ------------------
 
-Nested sampling on the GPU. ``nlive`` live points are kept, and the run stops when less
-than ``dlogz`` of the evidence may remain unseen.
+Nested sampling on the GPU. ``nlive`` live points are drawn from the prior and the worst
+one is repeatedly replaced with a point of higher likelihood: the volume shrinks, the
+likelihood rises, and the integral of both is the evidence. The surviving points are a
+weighted sample of the posterior, which is what everything below quotes. The run stops
+when less than ``dlogz`` of the evidence may remain unseen.
 
-.. literalinclude:: ../../example/fit_iras07546_jax.py
-   :language: python
-   :start-after: # %% step-3-fitter
-   :end-before: # %% step-4-fit
-   :dedent: 4
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: sampler
 
-.. literalinclude:: ../../example/fit_iras07546_jax.py
-   :language: python
-   :start-after: # %% step-4-fit
-   :end-before: # %% step-5-results
-   :dedent: 4
+Before spending the runtime, a check: draw parameter sets from the priors alone and look
+at the band they span. If the data sit inside it, the prior contains the answer -- which
+is why no least-squares seed is needed and the starting values in the model do not matter.
 
-The run prints its own summary::
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: prior_check
 
-      template: iras07546_narrow_template.txt, 8001 points, -4000 to +4000 km/s, FWHM 588 km/s
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: run
 
-      model: 17 components, no LSF convolution, 27 free parameters
-             narrow lines are the template: 10 of the 17 components, one shift, no widths
+It prints::
 
-          log Z = 130677.27 +- 0.58   (60678 iterations, 11.7 min)
-       chi2/dof = 0.315, residual rms 0.56 sigma, worst pixel 3.9 sigma
+     log Z = 130678.63 +- 0.58   (59786 iterations, 7.9 min)
 
-5. Present the results
+and the next cell adds the residual::
+
+     chi2/dof = 0.315, residual rms 0.56 sigma, worst pixel 3.9 sigma
+
+JNesty seeds its live points from a fixed key, so a rerun visits the same points. That is
+not bitwise identity -- the same fit run twice comes out a nat apart, from the last bits of
+a float sum feeding the sampler's ordering -- but it does mean the quoted uncertainty is
+the *sampler's* error bar, and the run-to-run scatter sits well inside it.
+
+7. Present the results
 ----------------------
 
-The best fit, the residual, and the table a paper would quote -- medians with the 16th
-and 84th percentiles. Widths and integrated fluxes are *derived* from those numbers, so
-they are computed here rather than sampled.
+The table is the answer: posterior median and the 16th/84th percentiles, a 68% credible
+interval, the Bayesian counterpart of "1 sigma".
 
-.. literalinclude:: ../../example/fit_iras07546_jax.py
-   :language: python
-   :start-after: # %% step-5-results
-   :end-before: # %% step-6-figure
-   :dedent: 4
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: table
 
-.. code-block:: text
+Read it with the ties in mind -- ``OIII.dv_c`` is the shift of *every* narrow line, and
+``b_halpha.sigma_w0`` is the width of the wind in *all three* Balmer lines, in He I and in
+the Fe II kernel. The unit column is read off the parameter's suffix, so nothing has to be
+remembered: ``amp*`` is a flux density, ``dv*``/``sigma*`` is km/s, ``amp_w*`` is a ratio to
+the core.
 
-   parameter                  median         -         +  unit
-   ----------------------------------------------------------------------------
-   Continuum.amplitude       0.54259   0.00026   0.00027  1e-14 erg/s/cm2/A
-   Continuum.alpha            1.0747    0.0044    0.0044
-   FeII.amplitude            0.24733    0.0015    0.0015  1e-14 erg/s/cm2/A
-   n_halpha.amplitude         2.4281     0.025     0.024  1e-14 erg/s/cm2/A
-   b_halpha.amp_c             1.5429     0.013     0.013  1e-14 erg/s/cm2/A
-   b_halpha.dv_c              209.44       2.6       2.5  km/s
-   b_halpha.sigma_c           1194.4       5.5       5.9  km/s
-   b_halpha.amp_w0           0.13541    0.0019    0.0019  ratio to core
-   b_halpha.dv_w0            -420.46        18        18  km/s
-   b_halpha.sigma_w0          4316.4        41        42  km/s
-   n_hbeta.amplitude         0.61144      0.01    0.0099  1e-14 erg/s/cm2/A
-   b_hbeta.amp_c             0.62481    0.0045    0.0044  1e-14 erg/s/cm2/A
-   b_hbeta.amp_w0            0.19568    0.0039    0.0039  ratio to core
-   n_hgamma.amplitude        0.16966    0.0078    0.0078  1e-14 erg/s/cm2/A
-   b_hgamma.amp_c             0.2956     0.004    0.0042  1e-14 erg/s/cm2/A
-   b_hgamma.amp_w0            0.1264    0.0068    0.0071  ratio to core
-   OIII.amp_c0                2.2814    0.0077    0.0076  1e-14 erg/s/cm2/A
-   OIII.dv_c                  95.596      0.97         1  km/s
-   NII.amp_c0                0.65068     0.016     0.016  1e-14 erg/s/cm2/A
-   SII.amp_c0               0.033291    0.0022    0.0022  1e-14 erg/s/cm2/A
-   SII.amp_c1               0.062543    0.0021    0.0022  1e-14 erg/s/cm2/A
-   OI.amp_c0                0.086604     0.002     0.002  1e-14 erg/s/cm2/A
-   HeII.amplitude           0.031606     0.005    0.0046  1e-14 erg/s/cm2/A
-   b_heii.amp_c                0.098    0.0023    0.0024  1e-14 erg/s/cm2/A
-   OIII4363.amplitude       0.047033     0.005    0.0049  1e-14 erg/s/cm2/A
-   n_hei.amplitude          0.045207    0.0031     0.003  1e-14 erg/s/cm2/A
-   b_hei.amp_c              0.040059    0.0013    0.0014  1e-14 erg/s/cm2/A
+Note what is **not** in the table: any narrow-line width. The ten narrow lines contribute
+twelve numbers -- eleven peaks (six singlets, four doublet main peaks and both peaks of
+[S II]) and one shared shift -- where a Gaussian per line spends a width on top of that.
+The 27-parameter count against the published model's 30 comes from exactly there.
 
-The table is three rows shorter than the Gaussian model's and has no ``OIII.sigma_c``
-row: the narrow lines contribute one peak each (``amp_c0``, or both peaks for [S II],
-whose ratio is a density diagnostic) and one shared shift. The [S II] ratio that comes
-out is 0.0625/0.0333 = 1.88, which is high for a narrow-line region and is the number
-to check against an electron-density calculation.
+The comparison against the published model, and the widths and fluxes a paper would quote:
 
-The figure: data, model, and residuals in units of the error, with the 1-sigma guides
-drawn so that a good fit is visibly flat and inside them. The dashed curves are the
-sub-components of the multi-Gaussian lines -- broad H-alpha's core and its wind, one
-curve each -- which ``plot_fit_jax`` takes from ``model[...].subcomponents``.
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: scoreboard
 
-.. literalinclude:: ../../example/fit_iras07546_jax.py
-   :language: python
-   :start-after: # %% step-6-figure
-   :end-before: # %% step-6b-model-pieces
-   :dedent: 4
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: fluxes
+
+A flux is a combination of parameters, so it is computed per posterior sample rather than
+from the medians: that is how its error bar inherits the correlations in the fit. The
+narrow-line flux needs the template's area on the velocity grid, which is read once off the
+profile -- the same area for all ten lines, since they share the shape.
+
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: fit_figure
 
 .. figure:: _static/example_figures/iras07546_jax_fit.png
    :width: 100%
@@ -456,21 +481,12 @@ curve each -- which ``plot_fit_jax`` takes from ``model[...].subcomponents``.
    line they belong to. The lower panel is the residual in units of the error, with the
    +-1 sigma guides.
 
-The four pieces of the model are also drawn on their own, from the fitted parameters, by
-one call in the script (``plot_model_pieces``, in the same file). Those are the four
-figures in section 3, and they are the reason the model is written as four functions:
-each piece can be drawn, compared with the data, and corrected before the next one is
-added.
-
 Three windows: 870 A, 380 A and 250 A wide, against the 2 600 A in the figure above. On
 that page a 700 km/s narrow core is two pixels; here it is a profile, and the wings of
 the broad lines are visible at all.
 
-.. literalinclude:: ../../example/fit_iras07546_jax.py
-   :language: python
-   :start-after: # %% step-7-zooms
-   :end-before: # %% step-8-posteriors
-   :dedent: 4
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: zooms
 
 .. figure:: _static/example_figures/iras07546_jax_fit_Hgamma_Hbeta.png
    :width: 95%
@@ -492,11 +508,11 @@ the broad lines are visible at all.
 The posterior itself: one histogram per parameter, and the joint distribution of the
 parameters that a reader is most likely to want a covariance for.
 
-.. literalinclude:: ../../example/fit_iras07546_jax.py
-   :language: python
-   :start-after: # %% step-8-posteriors
-   :end-before: # %% step-9-save
-   :dedent: 4
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: corner
+
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: histograms
 
 .. figure:: _static/example_figures/iras07546_jax_histograms.png
    :width: 100%
@@ -508,51 +524,50 @@ parameters that a reader is most likely to want a covariance for.
 
    The joint posterior of the parameters the fit is most sensitive to.
 
-6. Save it, and read it back
+8. Save it, and read it back
 ----------------------------
 
-The samples as plain arrays, and the whole fit as one FITS file: model, priors, samples,
-evidence, and the GPU-side arrays needed to resume. Reloading gives a
-:class:`galspec.JNesty_Fit` whose quantiles, best fit and plots work unchanged.
+A nested-sampling run is expensive; the file should be the thing you keep. One FITS holds
+the samples and their weights, their unit-cube coordinates, the evidence and its error, the
+parameter names, bounds and priors, the sampler's convergence trajectory, the model
+description and the spectrum that was fitted -- everything the figures above are drawn
+from. Reloading gives a :class:`galspec.JNesty_Fit` whose quantiles, best fit and plots work
+unchanged.
 
-.. literalinclude:: ../../example/fit_iras07546_jax.py
-   :language: python
-   :start-after: # %% step-9-save
-   :end-before: # %% entry
-   :dedent: 4
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: save
 
-.. code-block:: python
+.. nbcode:: ../../example/fit_iras07546_jax.ipynb
+   :cell: readback
 
-   from galspec.jnesty_fit_io import load_jnesty_fit_from_fits
+What is in the file -- and the one thing that cannot be stored, a prior written as a plain
+Python function -- is on :doc:`jax_gpu`; the priors that went into it are on :doc:`priors`.
+The same fit driven from a configuration file instead of a notebook is :doc:`config_fit`:
+that is what to reach for when the model is the same and the spectra are many.
 
-   fit = load_jnesty_fit_from_fits("example/output/iras07546_jax_fit.fits")
-   print(fit.log_evidence)                     # the same number, from the file
-
-What is in the file -- and the one thing that cannot be stored -- is on
-:doc:`jax_gpu`; the priors that went into it are on :doc:`priors`.
-
-7. What the numbers say
+9. What the numbers say
 -----------------------
 
-The fit prints its own comparison, which is the point of writing the model this way:
+The comparison printed in section 7 is the point of writing the model this way:
 
 .. code-block:: text
 
      model                       free         ln Z  chi2/dof
      --------------------------------------------------------
      published                     30    130889.60     0.307
-    *template                      27    130677.27     0.315
-                                        Delta = -212.33
+     template                      27    130677.27     0.315
+    *this run                      27    130678.63     0.315
+                                        Delta = -210.97 nats against the published Gaussian model
 
 The published model is the same spectrum, the same continuum, the same broad lines and
 the same priors, with a Gaussian per narrow line and one width shared between them. The
-only difference is the narrow-line profile, so the 212 nats are the price of that
+only difference is the narrow-line profile, so the 211 nats are the price of that
 assumption -- not of the code: the templated model fits [O III] itself better, and a
 second, independently written implementation of the same model agrees to a hundredth of
-a nat. Re-running this one lands a nat or two away, inside its 0.58 error bar -- see
-:doc:`priors` on why the fixed key does not buy bitwise identity -- and re-extracting the
-template moves it by more than that again, so the comparison is between runs made on the
-same template file.
+a nat. This run lands about a nat from the stored ``template`` row, inside its 0.58
+error bar -- see :doc:`priors` on why the fixed key does not buy bitwise identity -- and
+re-extracting the template moves the evidence by more than that again, so the comparison
+is between runs made on the same template file.
 
 The reason is measurable rather than mysterious. The same local treatment applied to
 narrow H-alpha instead of [O III] gives a width of about 300 km/s, against an equivalent
@@ -581,11 +596,12 @@ values because nothing physical varies them.
 Where to go next
 ----------------
 
+* ``example/fit_iras07546_jax.ipynb``: this page, cell by cell. Copy a cell, change a
+  number, run it -- the model has no builder function to look up.
 * ``example/fit_iras07546_o3_template.py``: step 2 on its own -- the window fit, the
   profile, and the file the whole-spectrum fit reads.
-* ``example/iras07546_model.py``: the model itself -- the seventeen components, the
-  ties and the priors, shared by all three fitting scripts so that each one runs on its
-  own.
+* ``example/iras07546_model.py``: the same model as an importable module, shared by the
+  three fitting scripts. ``tests/test_example_notebook.py`` holds it to the notebook.
 * ``example/fit_iras07546_jax_tied.py``: the same fit with the Balmer kinematics
   released and centred on H-alpha, which turns "the lines share one profile" into a
   measurement (:doc:`priors` has the construction and the result).

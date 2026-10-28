@@ -256,21 +256,26 @@ def test_the_shipped_example_config():
                            / "iras07546_narrow_template.txt", comments="#")
     assert np.array_equal(velocity, reference[:, 0])
     assert np.array_equal(profile, reference[:, 1])
-    built = build_model(config, source_namespace(
-        spectrum.flux, spectrum.wave, spectrum.redshift,
-        config.data.continuum_percentile), spectrum)
+    namespace = source_namespace(spectrum.flux, spectrum.wave, spectrum.redshift,
+                                 config.data.continuum_percentile)
+    built = build_model(config, namespace, spectrum)
     assert len(built.free_parameters) == 27
-    # the reference fit's per-component priors: the ones the defaults reproduce
-    # (a wind amplitude in [0, 1], a wind velocity within 6000 km/s, alpha +-5)
-    # are left to the pipeline, the rest are written out because the script's
-    # numbers differ from the defaults (an absolute 1e-3 amplitude floor, 300-8000
-    # km/s for the broad lines) or are tuned to the object
+    # Twenty-one priors are the pipeline's defaults for their kind: every line
+    # amplitude (loguniform from 1e-3*continuum_level, so a sample whose flux spans
+    # decades needs one file), alpha, the wind amplitudes and one wind velocity.  The
+    # six written out are statements about this object: the 300-8000 km/s broad widths,
+    # the continuum's 0.2-4*continuum_level, the iron ceiling against the continuum
+    # instead of the brightest pixel, and the two narrow-line velocity windows.
     defaults = {line.split(":")[0] for line in built.default_priors}
-    assert defaults == {"Continuum.alpha", "b_halpha.amp_w0", "b_halpha.dv_w0",
-                        "b_hbeta.amp_w0", "b_hgamma.amp_w0"}
-    assert defaults.isdisjoint({"n_halpha.amplitude", "b_halpha.sigma_c",
-                                "b_halpha.sigma_w0", "Continuum.amplitude",
-                                "FeII.amplitude", "b_halpha.dv_c", "OIII.dv_c"})
+    assert len(defaults) == 21
+    assert defaults.isdisjoint({"Continuum.amplitude", "FeII.amplitude",
+                                "b_halpha.dv_c", "b_halpha.sigma_c",
+                                "b_halpha.sigma_w0", "OIII.dv_c"})
+    for name in ("n_halpha.amplitude", "b_halpha.amp_c", "SII.amp_c1", "b_hei.amp_c"):
+        assert name in defaults
+    # the amplitude floor follows the continuum level, not an absolute number
+    floor = built.model.get_prior("n_halpha.amplitude").support[0]
+    assert floor == pytest.approx(1e-3 * namespace["continuum_level"])
 
 
 def test_reading_the_example_spectrum():

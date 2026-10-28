@@ -12,9 +12,18 @@
 #
 # The model is the "template" model of the example: seventeen additive components,
 # 27 free parameters, one measured narrow-line profile, broad lines and the iron
-# pseudo-continuum tied to broad H-alpha.  The published evidence for exactly this
-# model, data and prior set is log Z = 130677.27 +/- 0.58 (example/iras07546_model.py,
-# REFERENCE["template"], 400 live points, dlogz 0.01).
+# pseudo-continuum tied to broad H-alpha.  The published evidence for this model and
+# data is log Z = 130677.27 +/- 0.58 (example/iras07546_model.py, REFERENCE["template"],
+# 400 live points, dlogz 0.01) under set_priors().
+#
+# One prior deliberately differs.  set_priors() puts an *absolute* 1e-3 under every
+# line amplitude; this file lets the default scale it with the spectrum
+# (1e-3*continuum_level, 5e-4 here), so each of the sixteen log-uniform amplitudes is
+# wider in log-range by ln(12.99/5e-4)/ln(12.99/1e-3) = 1.074 and contributes
+# -ln(1.074) = -0.071 to log Z: a run of this file should report about 130676.1, and
+# nothing else -- the posteriors are the same, because a constant factor times a
+# log-uniform prior changes the normalisation, not the shape.  Override the
+# ``# default:`` blocks below with absolute limits to reproduce 130677.27 exactly.
 #
 # How the file was developed and tested: develop/dev_config/ (test_iras07546_config.py
 # checks the parity with the script below, and make_report.py writes the walkthrough).
@@ -22,7 +31,9 @@
 # Read this file next to the script: every [model.component] below is one call of
 # build_continuum() / build_iron_template() / build_narrow_lines() /
 # build_broad_lines(), the tie tables are tie_narrow_lines() + tie_broad_lines() +
-# tie_iron_template(), and the prior tables are set_priors().  Nothing else is
+# tie_iron_template(), and the prior tables are set_priors(), with the pipeline's
+# default filling in wherever the script's number is the default's.  No starting
+# value is written at all: nested sampling draws from the prior.  Nothing else is
 # going on, which is the point of having the mode.
 
 [run]
@@ -81,18 +92,24 @@ hist_params = [
 # the corner plot refer to.
 # ------------------------------------------------------------------------------------
 [model]
-# Every free parameter has a prior: five of them take the pipeline's default for
-# their kind (``Continuum.alpha``, the three wind amplitudes and one wind velocity --
-# the blocks below are comments, and deleting the leading '#' overrides one), and the
-# other twenty-two are written out.  They are written out because the reference fit's
-# numbers differ from the defaults in two ways, both deliberate: it uses an absolute
-# 1e-3 as the faintest allowed line (the default scales with the continuum level, and
-# a thousandth of 0.499 is 5e-4 here), and it gives the *broad* lines a 300-8000 km/s
-# width (the default width starts at 10 km/s, which a narrow line needs).  Writing
-# those numbers down is what makes this file reproduce ``fit_iras07546_jax.py``.
+# No starting values: a parameter's value is only where a search would begin, and a
+# nested sampler never begins -- it draws its live points from the prior.  What is
+# left below is what the model *is*: the line centres (``wavec``), the continuum's
+# pivot (``x_0``), the fixed iron redshift, the number of Gaussians in a profile, and
+# the ties that make one line's kinematics another's.  The values
+# ``fit_iras07546_jax.py`` starts from are in the comment above each component, and
+# ``--dry-run`` prints the ones the pipeline resolved.
 #
-# ``require_priors = true`` would demand that *every* prior be written here; it is
-# not set because the five commented blocks are meant to stay defaults.  Set it in a
+# Every free parameter has a prior, and twenty-one of the twenty-seven take the
+# pipeline's default for their kind: the blocks below are comments, and deleting the
+# leading '#' overrides one.  Six are written out, each because it is a statement about
+# this object: the broad lines' widths, 300-8000 km/s (the default floor is 10, which is
+# a *narrow* line's), the continuum's ``0.2-4*continuum_level``, the iron ceiling
+# against the continuum rather than against the brightest pixel, and the two
+# narrow-line velocity windows, broad H-alpha's and [O III]'s.
+#
+# ``require_priors = true`` would demand that *every* prior be written here; it is not
+# set because the commented blocks are meant to stay defaults.  Set it in a
 # configuration whose priors you want checked.
 
 # ---- 1. the power-law continuum ----------------------------------------------------
@@ -100,9 +117,7 @@ hist_params = [
 [[model.component]]
 type = "PowerLaw1D"
 name = "Continuum"
-amplitude = 0.55
 x_0 = 5500.0
-alpha = 1.0
 fixed = { x_0 = true }
 
 [model.component.priors.amplitude]
@@ -125,13 +140,7 @@ upper = "4*continuum_level"
 type = "IronTemplate_tied"
 name = "FeII"
 n_components = 2
-amplitude = 0.2
 z = 0.0
-dv_c = 0.0
-sigma_c = 1500.0
-amp_w0 = 0.10
-dv_w0 = 0.0
-sigma_w0 = 6000.0
 fixed = { z = true }
 
 [model.component.ties]
@@ -141,47 +150,46 @@ amp_w0 = "b_halpha.amp_w0"
 dv_w0 = "b_halpha.dv_w0"
 sigma_w0 = "b_halpha.sigma_w0"
 
+# explicit: the ceiling is the continuum level, not the brightest pixel (the iron
+# blend is not what sets the flux scale).  The floor is the default's.
 [model.component.priors.amplitude]
 kind = "loguniform"
-lower = "1e-3"
+lower = "1e-3*continuum_level"
 upper = "3*continuum_level"
 
-# ---- 3. the ten narrow lines, on the measured profile -------------------------------
-# Line_template(amplitude=2.2, dv=0, wavec=LINE_WAVE["Halpha"], name="n_halpha")
+# ---- 3. hydrogen: the three Balmer lines -------------------------------------------
+# Each line is a narrow one on the measured profile plus a broad core and wind.  The
+# script's starting points, which the sampler does not need, are
+#   n_halpha 2.2 / b_halpha 0.65 (amp_c) 0.10 (amp_w0) / n_hbeta 0.8 / b_hbeta 0.22
+#   n_hgamma 0.4 / b_hgamma 0.10 (amp_c) 0.20 (amp_w0), every dv 0, sigma 1500 + 6000.
+# Broad H-alpha owns the kinematics that every other broad line -- and the iron kernel
+# above -- follows, component by component.
 
 [[model.component]]
 type = "Line_template"
 name = "n_halpha"
-amplitude = 2.2
-dv = 0.0
 wavec = "@Halpha"
 
 [model.component.ties]
 dv = "OIII.dv_c"
 
-# explicit: the reference script's absolute 1e-3 (the default is 1e-3*continuum_level)
-[model.component.priors.amplitude]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default: loguniform(1e-3*continuum_level, 3*max_flux) -- uncomment to override
+# [model.component.priors.amplitude]
+# kind = "loguniform"
+# lower = "1e-3*continuum_level"
+# upper = "3*max_flux"
 
 [[model.component]]
 type = "Line_MultiGauss"
 name = "b_halpha"
 n_components = 2
-amp_c = 0.65
-dv_c = 0.0
-sigma_c = 1500.0
 wavec = "@Halpha"
-amp_w0 = 0.10
-dv_w0 = 0.0
-sigma_w0 = 6000.0
 
-# explicit: the reference script's absolute 1e-3 (the default is 1e-3*continuum_level)
-[model.component.priors.amp_c]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default: loguniform(1e-3*continuum_level, 3*max_flux) -- uncomment to override
+# [model.component.priors.amp_c]
+# kind = "loguniform"
+# lower = "1e-3*continuum_level"
+# upper = "3*max_flux"
 
 # default prior of b_halpha.amp_w0: uniform(0, 1) -- uncomment to override
 # [model.component.priors.amp_w0]
@@ -215,30 +223,22 @@ upper = 8000.0
 [[model.component]]
 type = "Line_template"
 name = "n_hbeta"
-amplitude = 0.8
-dv = 0.0
 wavec = "@Hbeta"
 
 [model.component.ties]
 dv = "OIII.dv_c"
 
-# explicit: the reference script's absolute 1e-3 (the default is 1e-3*continuum_level)
-[model.component.priors.amplitude]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default: loguniform(1e-3*continuum_level, 3*max_flux) -- uncomment to override
+# [model.component.priors.amplitude]
+# kind = "loguniform"
+# lower = "1e-3*continuum_level"
+# upper = "3*max_flux"
 
 [[model.component]]
 type = "Line_MultiGauss"
 name = "b_hbeta"
 n_components = 2
-amp_c = 0.22
-dv_c = 0.0
-sigma_c = 1500.0
 wavec = "@Hbeta"
-amp_w0 = 0.20
-dv_w0 = 0.0
-sigma_w0 = 6000.0
 
 [model.component.ties]
 dv_c = "b_halpha.dv_c"
@@ -246,11 +246,11 @@ sigma_c = "b_halpha.sigma_c"
 dv_w0 = "b_halpha.dv_w0"
 sigma_w0 = "b_halpha.sigma_w0"
 
-# explicit: the reference script's absolute 1e-3 (the default is 1e-3*continuum_level)
-[model.component.priors.amp_c]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default: loguniform(1e-3*continuum_level, 3*max_flux) -- uncomment to override
+# [model.component.priors.amp_c]
+# kind = "loguniform"
+# lower = "1e-3*continuum_level"
+# upper = "3*max_flux"
 
 # default prior of b_hbeta.amp_w0: uniform(0, 1) -- uncomment to override
 # [model.component.priors.amp_w0]
@@ -261,30 +261,22 @@ upper = "3*max_flux"
 [[model.component]]
 type = "Line_template"
 name = "n_hgamma"
-amplitude = 0.4
-dv = 0.0
 wavec = "@Hgamma"
 
 [model.component.ties]
 dv = "OIII.dv_c"
 
-# explicit: the reference script's absolute 1e-3 (the default is 1e-3*continuum_level)
-[model.component.priors.amplitude]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default: loguniform(1e-3*continuum_level, 3*max_flux) -- uncomment to override
+# [model.component.priors.amplitude]
+# kind = "loguniform"
+# lower = "1e-3*continuum_level"
+# upper = "3*max_flux"
 
 [[model.component]]
 type = "Line_MultiGauss"
 name = "b_hgamma"
 n_components = 2
-amp_c = 0.10
-dv_c = 0.0
-sigma_c = 1500.0
 wavec = "@Hgamma"
-amp_w0 = 0.20
-dv_w0 = 0.0
-sigma_w0 = 6000.0
 
 [model.component.ties]
 dv_c = "b_halpha.dv_c"
@@ -292,11 +284,11 @@ sigma_c = "b_halpha.sigma_c"
 dv_w0 = "b_halpha.dv_w0"
 sigma_w0 = "b_halpha.sigma_w0"
 
-# explicit: the reference script's absolute 1e-3 (the default is 1e-3*continuum_level)
-[model.component.priors.amp_c]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default: loguniform(1e-3*continuum_level, 3*max_flux) -- uncomment to override
+# [model.component.priors.amp_c]
+# kind = "loguniform"
+# lower = "1e-3*continuum_level"
+# upper = "3*max_flux"
 
 # default prior of b_hgamma.amp_w0: uniform(0, 1) -- uncomment to override
 # [model.component.priors.amp_w0]
@@ -304,26 +296,25 @@ upper = "3*max_flux"
 # lower = 0.0
 # upper = 1.0
 
-# He I 5876 and He II 4686 are weak enough to stay one Gaussian each, with the
-# shape of broad H-alpha's core and only their own peak free
+# ---- 4. the forbidden doublets -----------------------------------------------------
+# Line_template_doublet(amp_c0=1.8, amp_c1=1.8/2.98, dv_c=0, wavec0=OIII_5007,
+#                       wavec1=OIII_4959, name="OIII"); the 2.98 is atomic physics.
+# [O III] also owns the narrow-line velocity every other narrow line follows.
 
 [[model.component]]
 type = "Line_template_doublet"
 name = "OIII"
-amp_c0 = 1.8
-amp_c1 = "1.8/2.98"        # the atomic ratio, written as arithmetic
-dv_c = 0.0
 wavec0 = "@OIII_5007"
 wavec1 = "@OIII_4959"
 
 [model.component.ties]
 amp_c1 = { kind = "doublet_ratio", ref = "OIII", ratio = 2.98 }
 
-# explicit: the reference script's absolute 1e-3 (the default is 1e-3*continuum_level)
-[model.component.priors.amp_c0]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default: loguniform(1e-3*continuum_level, 3*max_flux) -- uncomment to override
+# [model.component.priors.amp_c0]
+# kind = "loguniform"
+# lower = "1e-3*continuum_level"
+# upper = "3*max_flux"
 
 [model.component.priors.dv_c]
 kind = "uniform"
@@ -333,9 +324,6 @@ upper = 1000.0
 [[model.component]]
 type = "Line_template_doublet"
 name = "NII"
-amp_c0 = 1.0
-amp_c1 = "1.0/2.96"
-dv_c = 0.0
 wavec0 = "@NII_6583"
 wavec1 = "@NII_6548"
 
@@ -343,11 +331,11 @@ wavec1 = "@NII_6548"
 amp_c1 = { kind = "doublet_ratio", ref = "NII", ratio = 2.96 }
 dv_c = "OIII.dv_c"
 
-# explicit: the reference script's absolute 1e-3 (the default is 1e-3*continuum_level)
-[model.component.priors.amp_c0]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default: loguniform(1e-3*continuum_level, 3*max_flux) -- uncomment to override
+# [model.component.priors.amp_c0]
+# kind = "loguniform"
+# lower = "1e-3*continuum_level"
+# upper = "3*max_flux"
 
 # [S II]: both peaks keep their own amplitude, because 6716/6731 is a density
 # diagnostic and not an atomic constant
@@ -355,33 +343,27 @@ upper = "3*max_flux"
 [[model.component]]
 type = "Line_template_doublet"
 name = "SII"
-amp_c0 = 0.10
-amp_c1 = 0.10
-dv_c = 0.0
 wavec0 = "@SII_6716"
 wavec1 = "@SII_6731"
 
 [model.component.ties]
 dv_c = "OIII.dv_c"
 
-# explicit: the reference script's absolute 1e-3 (the default is 1e-3*continuum_level)
-[model.component.priors.amp_c0]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default: loguniform(1e-3*continuum_level, 3*max_flux) -- uncomment to override
+# [model.component.priors.amp_c0]
+# kind = "loguniform"
+# lower = "1e-3*continuum_level"
+# upper = "3*max_flux"
 
-# explicit: the reference script's absolute 1e-3 (the default is 1e-3*continuum_level)
-[model.component.priors.amp_c1]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default: loguniform(1e-3*continuum_level, 3*max_flux) -- uncomment to override
+# [model.component.priors.amp_c1]
+# kind = "loguniform"
+# lower = "1e-3*continuum_level"
+# upper = "3*max_flux"
 
 [[model.component]]
 type = "Line_template_doublet"
 name = "OI"
-amp_c0 = 0.05
-amp_c1 = "0.05/3.0"
-dv_c = 0.0
 wavec0 = "@OI_6300"
 wavec1 = "@OI_6364"
 
@@ -389,107 +371,92 @@ wavec1 = "@OI_6364"
 amp_c1 = { kind = "doublet_ratio", ref = "OI", ratio = 3.00 }
 dv_c = "OIII.dv_c"
 
-# explicit: the reference script's absolute 1e-3 (the default is 1e-3*continuum_level)
-[model.component.priors.amp_c0]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default: loguniform(1e-3*continuum_level, 3*max_flux) -- uncomment to override
+# [model.component.priors.amp_c0]
+# kind = "loguniform"
+# lower = "1e-3*continuum_level"
+# upper = "3*max_flux"
 
-# ---- 5. the broad lines: a core and one wind each ----------------------------------
-# Line_MultiGauss(n_components=2, amp_c=0.65, dv_c=0, sigma_c=1500, wavec=Halpha,
-#                 amp_w0=0.10, dv_w0=0, sigma_w0=6000, name="b_halpha")
-# Broad H-alpha owns the kinematics: every other broad line -- and the iron kernel
-# above -- follows it, component by component, while each line keeps its own peak
-# and its own wind amplitude (the Balmer decrement is a measurement).
+# ---- 5. helium: He II 4686, narrow and broad ---------------------------------------
+# Line_template(amplitude=0.08) on the narrow velocity, plus one broad Gaussian riding
+# the shape of broad H-alpha's core with only its own peak free.
 
 [[model.component]]
 type = "Line_template"
 name = "HeII"
-amplitude = 0.08
-dv = 0.0
 wavec = "@HeII_4686"
 
 [model.component.ties]
 dv = "OIII.dv_c"
 
-# explicit: the reference script's absolute 1e-3 (the default is 1e-3*continuum_level)
-[model.component.priors.amplitude]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default: loguniform(1e-3*continuum_level, 3*max_flux) -- uncomment to override
+# [model.component.priors.amplitude]
+# kind = "loguniform"
+# lower = "1e-3*continuum_level"
+# upper = "3*max_flux"
 
 [[model.component]]
 type = "Line_MultiGauss"
 name = "b_heii"
 n_components = 1
-amp_c = 0.05
-dv_c = 0.0
-sigma_c = 1500.0
 wavec = "@HeII_4686"
 
 [model.component.ties]
 dv_c = "b_halpha.dv_c"
 sigma_c = "b_halpha.sigma_c"
 
-# explicit: the reference script's absolute 1e-3 (the default is 1e-3*continuum_level)
-[model.component.priors.amp_c]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default: loguniform(1e-3*continuum_level, 3*max_flux) -- uncomment to override
+# [model.component.priors.amp_c]
+# kind = "loguniform"
+# lower = "1e-3*continuum_level"
+# upper = "3*max_flux"
+
+# ---- 6. the faint ones --------------------------------------------------------------
+# [O III] 4363 and He I 5876: weak enough that each narrow line stays a single Gaussian
+# on the narrow-line velocity, and He I's broad wing a single Gaussian on the shape of
+# broad H-alpha's core with only its own peak free.
 
 [[model.component]]
 type = "Line_template"
 name = "OIII4363"
-amplitude = 0.05
-dv = 0.0
 wavec = "@OIII_4363"
 
 [model.component.ties]
 dv = "OIII.dv_c"
 
-# explicit: the reference script's absolute 1e-3 (the default is 1e-3*continuum_level)
-[model.component.priors.amplitude]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
-
-# ---- 4. the forbidden doublets -----------------------------------------------------
-# Line_template_doublet(amp_c0=1.8, amp_c1=1.8/2.98, dv_c=0, wavec0=OIII_5007,
-#                       wavec1=OIII_4959, name="OIII"); the 2.98 is atomic physics.
-# [O III] also owns the narrow-line velocity every other narrow line follows.
+# default: loguniform(1e-3*continuum_level, 3*max_flux) -- uncomment to override
+# [model.component.priors.amplitude]
+# kind = "loguniform"
+# lower = "1e-3*continuum_level"
+# upper = "3*max_flux"
 
 [[model.component]]
 type = "Line_template"
 name = "n_hei"
-amplitude = 0.12
-dv = 0.0
 wavec = "@HeI_5876"
 
 [model.component.ties]
 dv = "OIII.dv_c"
 
-# explicit: the reference script's absolute 1e-3 (the default is 1e-3*continuum_level)
-[model.component.priors.amplitude]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default: loguniform(1e-3*continuum_level, 3*max_flux) -- uncomment to override
+# [model.component.priors.amplitude]
+# kind = "loguniform"
+# lower = "1e-3*continuum_level"
+# upper = "3*max_flux"
 
 [[model.component]]
 type = "Line_MultiGauss"
 name = "b_hei"
 n_components = 1
-amp_c = 0.06
-dv_c = 0.0
-sigma_c = 1500.0
 wavec = "@HeI_5876"
 
 [model.component.ties]
 dv_c = "b_halpha.dv_c"
 sigma_c = "b_halpha.sigma_c"
 
-# explicit: the reference script's absolute 1e-3 (the default is 1e-3*continuum_level)
-[model.component.priors.amp_c]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default: loguniform(1e-3*continuum_level, 3*max_flux) -- uncomment to override
+# [model.component.priors.amp_c]
+# kind = "loguniform"
+# lower = "1e-3*continuum_level"
+# upper = "3*max_flux"
 

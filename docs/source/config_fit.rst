@@ -23,9 +23,10 @@ the script parameter by script parameter
 (``develop/dev_config/test_iras07546_config.py``). Read it next to this page.
 
 A file can be much shorter than that one. Nested sampling draws from the prior, so
-neither the starting values nor the priors have to be written down -- and the
-narrow-line profile can travel inside the spectrum's own FITS file. A complete
-configuration for one emission line is::
+neither the starting values nor the priors have to be written down -- the IRAS file
+below writes no starting value at all, only what the model *is* (line centres, a fixed
+redshift, the ties) -- and the narrow-line profile can travel inside the spectrum's own
+FITS file. A complete configuration for one emission line is::
 
     [data]
     file = "spectrum.fits"
@@ -607,8 +608,8 @@ The named kinds are the GalSpec conventions, written as
      - ``reference``
 
 The IRAS model is held together by 29 such ties, and they are the whole physical
-content of the model beyond the starting values: one narrow-line velocity, one
-broad-line kinematics, and three atomic ratios. Written as they appear in the
+content of the model beyond the line centres and the fixed values: one narrow-line
+velocity, one broad-line kinematics, and three atomic ratios. Written as they appear in the
 file, for the four kinds of reader -- the profile comes from the data file
 (``[data] narrow_template_key``), so no component repeats a path:
 
@@ -774,27 +775,40 @@ sampler starts, so a mistake costs a second instead of a night:
   bounds, because they truncate it);
 * no free parameter means nothing to fit, which is also an error.
 
-The IRAS file follows ``set_priors()`` by *leaving a prior defaulted wherever the
-default is the number the script uses*: five of its twenty-seven free parameters
-cannot differ (``alpha`` in ``[-5, 5]``, three wind amplitudes in ``[0, 1]``,
-``dv_w0`` within 6000 km/s). The other twenty-two are written out for one of two
-reasons, and both are worth knowing when writing a new file:
+The IRAS file leaves **twenty-one of its twenty-seven** priors to the defaults:
+every line amplitude (``loguniform(1e-3*continuum_level, 3*max_flux)``, the
+reference script's ``loguniform(1e-3, 3*max_flux)`` with a floor that scales
+instead of one absolute number), ``alpha``, the three wind amplitudes and one wind
+velocity. Six are written out, and each is worth knowing about when writing a new
+file:
 
-* the reference fit uses an **absolute** ``1e-3`` as the faintest line the data
-  could support, while the default scales as ``1e-3*continuum_level`` (5e-4 for
-  this object). Leaving them defaulted would widen the prior by a factor two and
-  move ``log Z`` by about 0.7 per amplitude -- a different evidence, not a
-  different code path;
-* it gives the **broad** lines a 300-8000 km/s width, while the default floor is
-  10 km/s, which a narrow line needs. A floor of 300 is a statement about the
-  object, not about units, so it cannot be a default.
+* the **broad** lines' widths: 300-8000 km/s, while the default floor is 10 km/s,
+  which a *narrow* line needs. A floor of 300 is a statement about the object, not
+  about units, so it cannot be a default;
+* the continuum's ``0.2-4*continuum_level`` and the iron template's
+  ``3*continuum_level`` ceiling -- a pseudo-continuum is scaled by the continuum,
+  not by the brightest emission line;
+* the two narrow-line velocity windows, broad H-alpha at 2500 km/s and [O III] at
+  1000 km/s, which the systemic reference needs.
 
-The remaining four are tuned to this object: the continuum's
-``0.2-4*continuum_level``, the iron template's ``3*continuum_level`` ceiling, and
-the two velocity windows -- broad H-alpha at 2500 km/s, [O III] at 1000 km/s --
-that the systemic reference needs. The commented blocks next to each component
-show the default each one would otherwise take, so overriding is deleting a
-``#``. The mapping is one line of the script per table of the file, which is the
+The scaled amplitude floor is not cosmetic for this object: 1e-3 of a continuum
+level of 0.4991 is 5e-4, half the script's absolute floor, so a *log-uniform* prior
+with the same ceiling is wider by ``ln(12.99/5e-4) / ln(12.99/1e-3) = 1.074`` in its
+log-range, and a log-uniform density scales as ``1/ln(b/a)``. Each of the sixteen
+amplitudes therefore lowers the evidence by ``ln(1.074) = 0.071``, and the total is
+about ``-1.1``: the published ``130677.27`` belongs to the script's prior, and a file
+that uses the scaled floor would report about ``130676.1``.
+
+Only the *number* moves. The two priors differ by a constant factor wherever both are
+non-zero, so the posterior is the same up to the renormalisation the added faint tail
+implies -- and that tail (amplitudes between 5e-4 and 1e-3, where no line of this
+spectrum lives) can only bring the shift back toward zero. The offset is also worth
+putting next to the ±0.58 sampling error: it is a deliberate difference in the
+*family of models*, not a defect in the fit. A short run cannot measure it either --
+a nested-sampling run truncated at a few hundred iterations is dominated by its
+un-converged initial state, and the numbers it reports differ by far more than one
+nat -- which is why the value above is the exact prior-volume ratio rather than a
+measured difference. The mapping is one line of the script per table of the file, which is the
 property to aim for when writing a new configuration:
 
 .. list-table::
@@ -813,8 +827,8 @@ property to aim for when writing a new configuration:
    * - ``build_broad_lines()`` + ``tie_broad_lines()``
      - five ``Line_MultiGauss`` components and their ties
    * - ``set_priors(model, flux)``
-     - the twenty-two ``[model.component.priors.*]`` tables, plus the pipeline's
-       default prior for the other five parameters
+     - the six ``[model.component.priors.*]`` tables, plus the pipeline's default
+       prior for the other twenty-one parameters
    * - ``JNesty_Fit(..., nlive=NLIVE, dlogz=DLOGZ, ...)``
      - ``[fit]``
 

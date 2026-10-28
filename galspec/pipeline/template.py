@@ -161,8 +161,9 @@ histogram = false
 # which prior each free parameter ended up with.
 #
 # The values (amplitude, dv, sigma) are optional too: nested sampling draws from the
-# prior, so they only say where the model starts.  They are written out here because
-# they document the model.
+# prior, so they only say where the search would have started.  The reference file in
+# example/ writes none of them; they are spelled out here because a tutorial is where
+# a starting value is worth reading next to the model it describes.
 require_priors = false      # true: every prior must be spelled out in this file
 
 # ---- the whole model could be this short --------------------------------------------

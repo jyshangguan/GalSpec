@@ -853,6 +853,79 @@ def _read_run(table: Mapping[str, Any], base: Path) -> RunConfig:
 # --------------------------------------------------------------------------------------
 # Per-source statistics used by expressions
 # --------------------------------------------------------------------------------------
+#: Width of the running median that keeps a noise spike out of ``max_flux``.
+#: Five pixels outvote any outlier up to two pixels wide -- a cosmic ray or a hot
+#: pixel, which is what the median is there for; a real line is wider than that at any sensible
+#: dispersion, and a *narrow* line loses only the tip of its profile -- which is
+#: the right trade for a number whose job is to set a prior scale, not a peak flux.
+MEDIAN_WINDOW = 5
+
+#: How far from the running median a pixel may sit before the sigma clip replaces
+#: it by that median, in units of the residual spread.  Wide, because the clip is
+#: a safety net for what the median filter cannot outvote, not a line detector.
+CLIP_SIGMA = 3.0
+
+
+def _running_median(values: "np.ndarray", window: int) -> "np.ndarray":
+    """Median of ``window`` neighbouring pixels, with the edges extended."""
+    import numpy as np
+
+    if window <= 1:
+        return values.copy()
+    half = window // 2
+    padded = np.pad(values, half, mode="edge")
+    windows = np.lib.stride_tricks.sliding_window_view(padded, window)
+    return np.median(windows, axis=-1)
+
+
+def _despiked_flux(values: "np.ndarray") -> "np.ndarray":
+    """The flux with noise spikes removed, for the extreme-value statistics.
+
+    Two passes, both leaving a real line standing:
+
+    * a running median of :data:`MEDIAN_WINDOW` pixels, which outvotes anything
+      up to two pixels wide;
+    * a sigma clip of the residual against that median, replacing the remaining
+      pixels that stand more than :data:`CLIP_SIGMA` residual spreads away *and*
+      disagree with both neighbours -- an isolated straggler is a cosmic ray or a
+      bad column, while a line's own flank does not look like that.
+
+    The result is what ``peak_flux``, ``max_flux`` and ``min_flux`` are measured
+    on, so one hot pixel cannot inflate every amplitude prior of the model.
+    ``median_flux``, ``continuum_level`` and ``rms`` keep the raw arrays: a
+    percentile is already robust, and smoothing a percentile would quietly change
+    the number the user wrote into the file.
+    """
+    import numpy as np
+
+    if values.size < 7:
+        return values.copy()
+    window = MEDIAN_WINDOW if values.size >= 25 else 3
+    work = values.copy()
+    finite = np.isfinite(work)
+    if not finite.all():                     # a gap must not become a NaN window
+        work[~finite] = float(np.median(work[finite])) if finite.any() else 0.0
+    for _ in range(5):
+        smoothed = _running_median(work, window)
+        residual = values - smoothed
+        good = np.isfinite(residual)
+        if not good.any():
+            break
+        centre = float(np.median(residual[good]))
+        spread = 1.4826 * float(np.median(np.abs(residual[good] - centre)))
+        if not np.isfinite(spread) or spread <= 0.0:
+            break
+        neighbours = np.abs(np.pad(values, 1, mode="edge")[:-2]
+                            - np.pad(values, 1, mode="edge")[2:])
+        outliers = good & (np.abs(residual) > CLIP_SIGMA * spread) \
+            & (neighbours < CLIP_SIGMA * spread)
+        if not outliers.any():
+            break
+        work = np.where(outliers, smoothed, work)
+    final = _running_median(work, window)
+    return np.where(np.isfinite(final), final, work)
+
+
 def source_namespace(flux, wave=None, redshift: float = 0.0,
                      continuum_percentile: float = DEFAULT_CONTINUUM_PERCENTILE
                      ) -> Dict[str, float]:
@@ -872,7 +945,9 @@ def source_namespace(flux, wave=None, redshift: float = 0.0,
     Returns
     -------
     dict
-        ``{name: value}`` for every name in :data:`TOKEN_NAMES`.
+        ``{name: value}`` for every name in :data:`TOKEN_NAMES`.  The extremes
+        (``peak_flux``, ``max_flux``, ``min_flux``) are measured on the
+        despiked flux, not on the raw pixels -- see :func:`_despiked_flux`.
     """
     import numpy as np
 
@@ -880,14 +955,16 @@ def source_namespace(flux, wave=None, redshift: float = 0.0,
     finite = values[np.isfinite(values)]
     if finite.size == 0:
         raise ConfigError("cannot compute the flux statistics of an empty spectrum")
-    peak = float(np.max(np.abs(finite)))
+    extremes = _despiked_flux(values)
+    extremes = extremes[np.isfinite(extremes)]
+    peak = float(np.max(np.abs(extremes)))
     namespace = {
         "peak_flux": peak,
         "median_flux": float(np.median(finite)),
         "continuum_level": float(np.percentile(finite, continuum_percentile)),
         "rms": float(np.std(finite)),
-        "min_flux": float(np.min(finite)),
-        "max_flux": float(np.max(finite)),
+        "min_flux": float(np.min(extremes)),
+        "max_flux": float(np.max(extremes)),
         "n_pixels": float(np.size(finite)),
         "z": float(redshift),
     }

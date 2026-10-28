@@ -93,20 +93,26 @@ def describe_model(model: Any) -> List[str]:
 #: ``(base-name prefixes, prior kind, lower, upper, scaled lower)``, tried in
 #: order, for a free parameter that the configuration gives neither a prior nor
 #: a bound.  The numbers describe the quantity rather than one source: a line
-#: amplitude can be a thousandth of the spectrum or three times its peak (so the
-#: prior is logarithmic), a velocity is a few thousand km/s, a width is hundreds
-#: to thousands, a power-law index is a decade either way.
+#: amplitude lies between a thousandth of the continuum and three times the
+#: spectrum's peak (so the prior is logarithmic), a velocity is a few thousand
+#: km/s, a width is tens to thousands of km/s, a power-law index is a decade
+#: either way.
 #:
-#: The fifth entry is a second chance at the lower bound.  ``1e-3`` is a number
-#: the *data* has to justify: in a file whose flux is not of order unity it can
-#: sit above ``3*max_flux``, which leaves an empty interval.  When that happens
-#: the default becomes ``1e-3*max_flux`` instead, and the run report says so.
+#: Both ends of the amplitude interval are *scaled* by the spectrum: a
+#: thousandth of the continuum level is a lower bound that survives a sample
+#: spanning decades of flux, where an absolute ``1e-3`` would either sit above
+#: the brightest pixel or invite an amplitude the data cannot support.
+#:
+#: The fifth entry is a second chance at the lower bound, used when the resolved
+#: interval is empty or inverted (a negative continuum, a spectrum whose
+#: continuum level is above ``3*max_flux``).  The run report then says so.
 DEFAULT_PRIORS: Tuple[Tuple[Tuple[str, ...], str, str, str, Optional[str]], ...] = (
     (("amp_w",), "uniform", "0.0", "1.0", None),
-    (("amplitude", "amp"), "loguniform", "1e-3", "3*max_flux", "1e-3*max_flux"),
+    (("amplitude", "amp"), "loguniform", "1e-3*continuum_level", "3*max_flux",
+     "1e-3*max_flux"),
     (("dv_w",), "uniform", "-6000.0", "6000.0", None),
     (("dv",), "uniform", "-3000.0", "3000.0", None),
-    (("sigma", "stddev"), "uniform", "300.0", "8000.0", None),
+    (("sigma", "stddev"), "uniform", "10.0", "8000.0", None),
     (("alpha",), "uniform", "-5.0", "5.0", None),
     (("h3", "h4"), "uniform", "-0.5", "0.5", None),
     (("logtau",), "uniform", "-3.0", "3.0", None),
@@ -518,17 +524,18 @@ def _apply_default_priors(model, plans, namespace: Mapping[str, float]
         low = _number(lower, namespace, path)
         high = _number(upper, namespace, path)
         note = ""
-        if not low < high:
+        unusable = not low < high or (prior_kind == "loguniform" and low <= 0.0)
+        if unusable:
             if scaled is None:                  # pragma: no cover - table is fixed
                 raise PipelineError(
-                    f"{path}: the default interval [{low:g}, {high:g}] is empty; "
-                    "give the parameter a prior or bounds in the configuration")
+                    f"{path}: the default interval [{low:g}, {high:g}] cannot be "
+                    "sampled; give the parameter a prior or bounds in the file")
             low = _number(scaled, namespace, path)
-            if not low < high:
+            if not low < high or low <= 0.0:
                 raise PipelineError(
-                    f"{path}: the default interval [{low:g}, {high:g}] is empty "
-                    "for this spectrum; give the parameter a prior or bounds in "
-                    "the configuration")
+                    f"{path}: the default interval [{low:g}, {high:g}] cannot be "
+                    "sampled for this spectrum; give the parameter a prior or "
+                    "bounds in the configuration")
             note = " (scaled to the spectrum)"
         prior_class = LogUniform if prior_kind == "loguniform" else Uniform
         try:

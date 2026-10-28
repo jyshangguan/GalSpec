@@ -192,6 +192,42 @@ def test_token_expressions_evaluate_per_source():
         TokenValue("1/(max_flux - max_flux)").evaluate(namespace)
 
 
+def test_the_flux_scale_ignores_noise_spikes():
+    """``max_flux`` sets every amplitude prior, so one bad pixel must not move it.
+
+    The extremes are measured on a despiked copy of the flux (a five-pixel running
+    median, then a sigma clip of what it could not outvote); the level tokens keep
+    the raw arrays, because a percentile is already robust and smoothing it would
+    change the number the user wrote into the file.
+    """
+    rng = np.random.default_rng(11)
+    wave = np.arange(600.0)
+    flux = 1.0 + 0.02 * rng.standard_normal(600)
+    flux += 0.5 * np.exp(-0.5 * ((wave - 300.0) / 20.0) ** 2)      # a real line
+    clean = source_namespace(flux)
+
+    spiked = flux.copy()
+    spiked[100] = 50.0                      # a hot pixel
+    spiked[500:502] = 30.0                  # a bad column, two pixels wide
+    noisy = source_namespace(spiked)
+    assert spiked.max() == 50.0
+    assert noisy["max_flux"] == pytest.approx(clean["max_flux"])
+    assert noisy["peak_flux"] == pytest.approx(clean["peak_flux"])
+    # the line itself is kept: the scale is the line's peak, not the continuum's
+    assert noisy["max_flux"] == pytest.approx(1.5, abs=0.05)
+    # the level tokens keep the raw array (a percentile is already robust against
+    # a couple of pixels: it moves by less than the spike is big)
+    assert noisy["continuum_level"] == pytest.approx(np.percentile(spiked, 50.0))
+    assert noisy["continuum_level"] == pytest.approx(clean["continuum_level"], rel=1e-2)
+
+    spiked[250] = -40.0                     # ... and a cold one
+    assert source_namespace(spiked)["min_flux"] == pytest.approx(clean["min_flux"])
+
+    gap = flux.copy()                       # ... and a gap: kept out of the way
+    gap[10:13] = np.nan
+    assert source_namespace(gap)["max_flux"] == pytest.approx(clean["max_flux"])
+
+
 # --------------------------------------------------------------------------------------
 # loader: finding the three arrays
 # --------------------------------------------------------------------------------------
@@ -224,13 +260,17 @@ def test_the_shipped_example_config():
         spectrum.flux, spectrum.wave, spectrum.redshift,
         config.data.continuum_percentile), spectrum)
     assert len(built.free_parameters) == 27
-    # the reference fit's per-component priors are the pipeline's defaults here,
-    # except the four the example script tunes itself
-    assert len(built.default_priors) == 23
-    assert {line.split(":")[0] for line in built.default_priors} >= {
-        "n_halpha.amplitude", "b_halpha.sigma_c", "b_halpha.dv_w0", "OIII.amp_c0"}
-    assert {line.split(":")[0] for line in built.default_priors}.isdisjoint({
-        "Continuum.amplitude", "FeII.amplitude", "b_halpha.dv_c", "OIII.dv_c"})
+    # the reference fit's per-component priors: the ones the defaults reproduce
+    # (a wind amplitude in [0, 1], a wind velocity within 6000 km/s, alpha +-5)
+    # are left to the pipeline, the rest are written out because the script's
+    # numbers differ from the defaults (an absolute 1e-3 amplitude floor, 300-8000
+    # km/s for the broad lines) or are tuned to the object
+    defaults = {line.split(":")[0] for line in built.default_priors}
+    assert defaults == {"Continuum.alpha", "b_halpha.amp_w0", "b_halpha.dv_w0",
+                        "b_hbeta.amp_w0", "b_hgamma.amp_w0"}
+    assert defaults.isdisjoint({"n_halpha.amplitude", "b_halpha.sigma_c",
+                                "b_halpha.sigma_w0", "Continuum.amplitude",
+                                "FeII.amplitude", "b_halpha.dv_c", "OIII.dv_c"})
 
 
 def test_reading_the_example_spectrum():
@@ -812,22 +852,55 @@ def test_a_configuration_can_omit_every_value_and_prior(tmp_path):
     assert list(built.free_parameters) == ["amplitude", "dv", "sigma"]
     assert [type(model.get_prior(name)).__name__ for name in built.free_parameters] \
         == ["LogUniform", "Uniform", "Uniform"]
-    # the amplitude interval is the spectrum's, the rest are the physical ones
+    # both ends of the amplitude interval are the spectrum's; the rest are physical
+    namespace = source_namespace(spectrum.flux,
+                                 continuum_percentile=config.data.continuum_percentile)
     amplitude = model.get_prior("amplitude")
-    assert amplitude.lower == pytest.approx(1e-3)
-    assert amplitude.upper == pytest.approx(3.0 * np.max(spectrum.flux))
+    assert amplitude.lower == pytest.approx(1e-3 * namespace["continuum_level"])
+    assert amplitude.upper == pytest.approx(3.0 * namespace["max_flux"])
     assert model.get_prior("dv").lower == pytest.approx(-3000.0)
+    assert model.get_prior("sigma").lower == pytest.approx(10.0)
     assert model.get_prior("sigma").upper == pytest.approx(8000.0)
     # the values the model starts from are its own defaults, not a guess by us
     assert param(model, "sigma").value == pytest.approx(200.0)
 
 
-def test_the_default_amplitude_prior_scales_to_a_faint_spectrum(tmp_path):
-    """``1e-3`` is a number the data has to justify: keep the interval non-empty."""
-    spectrum = make_spectrum(tmp_path, wave=(6500.0, 6630.0), n=60)
-    with fits.open(spectrum, mode="update") as hdul:
+def test_the_default_amplitude_prior_scales_with_the_spectrum(tmp_path):
+    """A sample whose flux spans decades gets one prior, scaled per source."""
+    bright = make_spectrum(tmp_path, name="bright.fits", wave=(6500.0, 6630.0), n=60)
+    faint = make_spectrum(tmp_path, name="faint.fits", wave=(6500.0, 6630.0), n=60)
+    with fits.open(faint, mode="update") as hdul:
         for column in ("FLUX", "ERROR"):
             hdul[1].data[column] = hdul[1].data[column] * 1e-15
+    model_text = """
+        [model]
+        [[model.component]]
+        type = "Line_Gaussian"
+        wavec = "@Halpha"
+    """
+    bounds = {}
+    for path in (bright, faint):
+        config = load_config(write(tmp_path, config_text(path, model=model_text),
+                                   Path(path).stem + ".toml"))
+        spectrum = read_spectrum(config, resolve_sources(config)[0])
+        built = build_model(config, source_namespace(spectrum.flux), spectrum)
+        prior = built.model.get_prior("amplitude")
+        bounds[Path(path).stem] = (prior.lower, prior.upper)
+    # neither interval inverts, and both scale by the same factor the flux does
+    assert bounds["faint"][0] < bounds["faint"][1]
+    for index in (0, 1):
+        ratio = bounds["faint"][index] / bounds["bright"][index]
+        assert ratio == pytest.approx(1e-15, rel=1e-6)
+
+
+def test_a_negative_continuum_falls_back_to_a_fraction_of_the_peak(tmp_path):
+    """A thousandth of a negative continuum cannot start a log-uniform prior."""
+    spectrum = make_spectrum(tmp_path, wave=(6500.0, 6630.0), n=60)
+    with fits.open(spectrum, mode="update") as hdul:
+        wave = np.asarray(hdul[1].data["WAVELENGTH"], dtype=float)
+        # an emission line on a negative background: the level is negative, the
+        # peak is not, which is the interval the fallback exists for
+        hdul[1].data["FLUX"] = -1.0 + 10.0 * np.exp(-0.5 * ((wave - 6563.0) / 4.0) ** 2)
     path = config_text(spectrum, model="""
         [model]
         [[model.component]]
@@ -836,10 +909,12 @@ def test_the_default_amplitude_prior_scales_to_a_faint_spectrum(tmp_path):
     """)
     config = load_config(write(tmp_path, path, "a.toml"))
     spectrum = read_spectrum(config, resolve_sources(config)[0])
-    built = build_model(config, source_namespace(spectrum.flux), spectrum)
+    namespace = source_namespace(spectrum.flux)
+    assert namespace["continuum_level"] < 0.0 < namespace["max_flux"]
+    built = build_model(config, namespace, spectrum)
     prior = built.model.get_prior("amplitude")
-    assert prior.lower < 1e-3                       # an interval, not an inversion
-    assert prior.upper == pytest.approx(3.0 * np.max(spectrum.flux))
+    assert prior.lower == pytest.approx(1e-3 * namespace["max_flux"])
+    assert prior.upper == pytest.approx(3.0 * namespace["max_flux"])
     assert "scaled to the spectrum" in built.default_priors[0]
 
 

@@ -132,6 +132,39 @@ def test_a_different_model_structure_compiles_again():
     assert shared_compilation_cache_size() == 4
 
 
+def test_a_model_that_differs_only_in_a_constant_compiles_again():
+    """A profile (or a fixed value) is a constant *inside* the program.
+
+    JAX prints a large array constant in abbreviated form, so the traced text of
+    two models that differ only in that array is byte for byte the same.  Hashing
+    the text alone would hand the second model the first one's kernel -- a line
+    fitted with someone else's profile, which no diagnostic downstream would show
+    -- so the key hashes the constants too.  The cache entries and the numbers
+    both say it: two programs, each one's likelihood equal to its own legacy fit.
+    """
+    clear_shared_compilation_cache()
+    narrow = jxm.Line_template(template_velc=VELC,
+                               template_flux=np.exp(-0.5 * (VELC / 100.0) ** 2),
+                               amplitude=1.0, dv=0.0, wavec=5000.0)
+    wide = jxm.Line_template(template_velc=VELC, template_flux=TEMPLATE,
+                             amplitude=1.0, dv=0.0, wavec=5000.0)
+    flux = synthetic_flux(1)
+    first = JNesty_Fit(narrow, WAVE, flux, ERROR, nlive=20, share_compilation=True)
+    first.warmup()
+    second = JNesty_Fit(wide, WAVE, flux, ERROR, nlive=20, share_compilation=True)
+    second.warmup()
+    # two likelihood programs (one per profile) and one shared prior transform
+    assert shared_compilation_cache_size() == 3
+
+    theta = np.asarray(first.model.get_free_params(), dtype=float)
+    for fit, model in ((first, narrow), (second, wide)):
+        legacy = JNesty_Fit(model, WAVE, flux, ERROR, nlive=20,
+                            share_compilation=False)
+        assert fit.log_likelihood(theta) == pytest.approx(
+            legacy.log_likelihood(theta), rel=1e-13)
+    assert first.log_likelihood(theta) != pytest.approx(second.log_likelihood(theta))
+
+
 def test_clear_reports_what_it_freed():
     clear_shared_compilation_cache()
     make_fit(synthetic_flux(1), shared=True).warmup()

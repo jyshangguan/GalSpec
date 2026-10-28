@@ -472,11 +472,11 @@ whose flux scale differs from spectrum to spectrum:
    * - token
      - value for the current source
    * - ``peak_flux``
-     - ``max(|flux|)``
+     - ``max(|flux|)``, after despiking (see below)
    * - ``max_flux``, ``min_flux``
-     - ``max(flux)``, ``min(flux)``
+     - ``max(flux)``, ``min(flux)``, after despiking
    * - ``median_flux``, ``continuum_level``
-     - the median, and the ``continuum_percentile`` percentile
+     - the median, and the ``continuum_percentile`` percentile, of the raw pixels
    * - ``rms``
      - standard deviation of the flux
    * - ``n_pixels``
@@ -490,6 +490,43 @@ file is read, before any spectrum is touched. ``"3*max_flux"`` sets a starting
 value; ``[model.component.bounds] amplitude = ["0.01*peak_flux",
 "10*peak_flux"]`` sets the box in the same units, which is what makes a
 magnitude-limited sample fit with one file.
+
+How the statistics are measured
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The tokens are computed once per source, from the pixels that are actually
+fitted -- after the rest-frame window, the masks and the de-reddening, but in the
+flux unit the file carries, so a token inherits that unit and no conversion is
+attempted.
+
+``continuum_level`` and ``median_flux`` come straight from the flux array:
+``np.percentile(flux, continuum_percentile)`` and ``np.median(flux)``.  A
+percentile is what a continuum level should be -- it is a statement about *where
+the spectrum sits*, not about its brightest feature -- and it is already immune to
+a few bad pixels, so nothing is smoothed.  ``continuum_percentile`` therefore has
+to be chosen for the spectrum: a spectrum with 60% of its window filled by
+emission lines wants something like 15 or 20, one that is mostly continuum wants
+the default 50.
+
+``max_flux``, ``min_flux`` and ``peak_flux`` set the *scale* of every amplitude
+default and are measured on a despiked copy of the flux, because a single hot
+pixel would otherwise decide them:
+
+#. a running **median** of five pixels, which outvotes any outlier up to two
+   pixels wide -- a cosmic ray, a bad column, a sky residual left in one channel;
+#. a **sigma clip** of the residual against that running median: a pixel that
+   stands more than three residual spreads away *and* agrees with neither
+   neighbour is replaced by the median.  The neighbour test is what keeps a real
+   line, whose flanks do not look like that;
+#. the extremes of the result.
+
+A real line is wide compared with five pixels at any sensible dispersion, so its
+peak survives: the despiked maximum of the clean IRAS spectrum differs from
+``max(flux)`` by 4e-4 in relative terms -- while a one-pixel spike of any height does
+not.  A *narrow* line loses the tip of its profile -- a one-pixel line keeps 80%
+of its peak, a two-pixel line 93%, five pixels or more 98% -- which is the right
+trade for a number whose job is to set a prior scale.  ``rms`` keeps the raw array, since it
+is a noise estimate and despiking it would remove exactly what it measures.
 
 The IRAS file uses ``max_flux`` rather than ``peak_flux`` on purpose: the script's
 ``set_priors()`` uses ``np.max(flux)``, which is not ``max(|flux|)`` when the
@@ -666,12 +703,14 @@ from its *name* and resolved against the source's own statistics:
      - default prior
      - why
    * - ``amplitude``, ``amp_c``, ``amp_c0``, ``amp_c1``, ...
-     - ``loguniform(1e-3, 3*max_flux)``
-     - a line is between a thousandth of the spectrum and three times its
+     - ``loguniform(1e-3*continuum_level, 3*max_flux)``
+     - a line is between a thousandth of the continuum and three times the
        brightest pixel, and "twice as faint" and "twice as bright" are equally
-       probable.  In a file whose flux is far from order unity, ``1e-3`` would sit
-       above ``3*max_flux``; the bounds are then ``1e-3*max_flux`` instead, and
-       ``--dry-run`` says so.
+       probable.  Both ends are *scaled* by the spectrum, so one file serves a
+       sample whose flux spans decades; an absolute ``1e-3`` would be a different
+       physical limit for every source.  If the resolved interval is empty, or its
+       lower end is not positive (a continuum level of zero or below), it falls
+       back to ``1e-3*max_flux`` and ``--dry-run`` says so.
    * - ``amp_w0``, ``amp_w1``, ...
      - ``uniform(0, 1)``
      - a wind amplitude is a fraction of the line.
@@ -682,12 +721,13 @@ from its *name* and resolved against the source's own statistics:
      - ``uniform(-6000, 6000)`` km/s
      - a wind is wider and can be more offset.
    * - ``sigma``, ``sigma_c``, ``stddev``
-     - ``uniform(300, 8000)`` km/s
-     - a resolved line's width.  A *single* Gaussian narrower than 300 km/s is
-       outside this default: give it ``[model.component.bounds]`` (narrow lines
-       modelled on a measured profile do not have a free width at all).
+     - ``uniform(10, 8000)`` km/s
+     - any width a spectrograph can resolve, from a stellar line in a
+       high-resolution spectrum to a broad-line-region profile.  A *broad* line
+       wants a floor near 300 km/s, which is a statement about the object rather
+       than about units, so write it out -- the IRAS file does.
    * - ``sigma_w0``, ``sigma_w1``, ...
-     - ``uniform(300, 8000)`` km/s
+     - ``uniform(10, 8000)`` km/s
      - the wing, i.e. an outflow.
    * - ``alpha``
      - ``uniform(-5, 5)``
@@ -734,18 +774,28 @@ sampler starts, so a mistake costs a second instead of a night:
   bounds, because they truncate it);
 * no free parameter means nothing to fit, which is also an error.
 
-The IRAS file follows ``set_priors()``, but mostly by *leaving the priors
-defaulted*: twenty-three of its twenty-seven free parameters take the default of
-their kind (log-uniform amplitudes from ``1e-3`` to ``3*max_flux``, uniform wind
-amplitudes in ``[0, 1]``, ``sigma`` in ``[300, 8000]``, ``dv_w0`` within 6000
-km/s), which is exactly what ``set_priors()`` asks for. Only four are written out,
-because only those four are tuned to this object: the continuum's
+The IRAS file follows ``set_priors()`` by *leaving a prior defaulted wherever the
+default is the number the script uses*: five of its twenty-seven free parameters
+cannot differ (``alpha`` in ``[-5, 5]``, three wind amplitudes in ``[0, 1]``,
+``dv_w0`` within 6000 km/s). The other twenty-two are written out for one of two
+reasons, and both are worth knowing when writing a new file:
+
+* the reference fit uses an **absolute** ``1e-3`` as the faintest line the data
+  could support, while the default scales as ``1e-3*continuum_level`` (5e-4 for
+  this object). Leaving them defaulted would widen the prior by a factor two and
+  move ``log Z`` by about 0.7 per amplitude -- a different evidence, not a
+  different code path;
+* it gives the **broad** lines a 300-8000 km/s width, while the default floor is
+  10 km/s, which a narrow line needs. A floor of 300 is a statement about the
+  object, not about units, so it cannot be a default.
+
+The remaining four are tuned to this object: the continuum's
 ``0.2-4*continuum_level``, the iron template's ``3*continuum_level`` ceiling, and
 the two velocity windows -- broad H-alpha at 2500 km/s, [O III] at 1000 km/s --
 that the systemic reference needs. The commented blocks next to each component
-show the default each one would otherwise take. The mapping is one line of the
-script per table of the file, which is the property to aim for when writing a new
-configuration:
+show the default each one would otherwise take, so overriding is deleting a
+``#``. The mapping is one line of the script per table of the file, which is the
+property to aim for when writing a new configuration:
 
 .. list-table::
    :header-rows: 1
@@ -763,8 +813,8 @@ configuration:
    * - ``build_broad_lines()`` + ``tie_broad_lines()``
      - five ``Line_MultiGauss`` components and their ties
    * - ``set_priors(model, flux)``
-     - the four ``[model.component.priors.*]`` tables, plus the pipeline's
-       default priors for the other twenty-three parameters
+     - the twenty-two ``[model.component.priors.*]`` tables, plus the pipeline's
+       default prior for the other five parameters
    * - ``JNesty_Fit(..., nlive=NLIVE, dlogz=DLOGZ, ...)``
      - ``[fit]``
 
@@ -834,11 +884,29 @@ absence -- is visible per source rather than argued about.
 
 The one thing that defeats the reuse is a model that carries per-source numbers
 of its own: a narrow-line profile read out of each spectrum
-(``[data] narrow_template_key``) lives in the traced program, so a sample whose
-templates differ compiles once per source. That is a fraction of a second against
-minutes of sampling, and the report shows it as such. Everything else -- the
-parameters, the priors, the component structure -- is what makes the program
-shareable.
+(``[data] narrow_template_key``) is a *constant* inside the traced program, not an
+argument, so two sources with different profiles trace two different programs.
+The cost is one recompile of the whole likelihood kernel -- there is no "template
+part" to compile separately, because the profile is arithmetic inside the same
+expression as the model sum and the residual. Measured on the 27-parameter IRAS
+model (56956 pixels, CPU): **0.5-0.7 s** for a new profile, **0.07 s** when the
+profile repeats (the trace plus a registry hit). The prior transform is a separate
+program with no model in it, so it is reused; JNesty's own sampling kernels never
+touch the model and are not recompiled at all.
+
+Avoiding even that would mean passing the profile as a runtime array argument,
+which needs the model to *accept* one -- a change to :mod:`galspec.jax_models`,
+and the pipeline deliberately changes no model. Half a second per source against
+minutes of sampling is the trade the file takes; the report records it per source
+as ``compile_seconds``.
+
+The registry hashes the program *including its constants*, which matters here: JAX
+prints a large array constant in abbreviated form, so two models that differ only
+in their profile trace to the same text, and a key made from the text alone would
+hand the second source the first source's kernel -- a fit with the wrong line
+shape, and nothing downstream would show it. ``tests/test_shared_compilation.py``
+checks that a model differing only in a constant compiles again and gives its own
+likelihood.
 
 This is a compilation saving, not a speed-up of the sampling: the compiled
 arithmetic is the same, and per-iteration cost is unchanged within run-to-run

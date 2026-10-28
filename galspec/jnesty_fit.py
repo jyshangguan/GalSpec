@@ -78,9 +78,27 @@ _SHARED_COMPILATION: Dict[str, Any] = {}
 
 
 def _trace_key(fn, *example_args) -> str:
-    """SHA-256 of the program ``fn`` traces to, for the given argument shapes."""
+    """SHA-256 of the program ``fn`` traces to, for the given argument shapes.
+
+    The traced *text* is not enough on its own: JAX prints a large array constant
+    in abbreviated form, so two programs that differ only in the values of a
+    closed-over array -- a line profile read from the spectrum, a parameter fixed
+    at a per-source value -- print the same text.  Hashing the text alone then
+    hands the second source the first source's kernel, which is the one thing a
+    compilation cache must never do.  The constants are therefore hashed byte by
+    byte as well.
+    """
     program = jax.make_jaxpr(fn)(*example_args)
-    return hashlib.sha256(str(program).encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(str(program).encode("utf-8"))
+    for constant in program.consts:
+        try:
+            array = np.asarray(constant)
+            digest.update(str(array.dtype).encode("utf-8"))
+            digest.update(str(array.shape).encode("utf-8"))
+            digest.update(np.ascontiguousarray(array).tobytes())
+        except Exception:                        # pragma: no cover - exotic const
+            digest.update(repr(constant).encode("utf-8"))
+    return digest.hexdigest()
 
 
 def _shared_compiled(kind: str, fn, *example_args):

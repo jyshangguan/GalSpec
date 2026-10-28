@@ -152,12 +152,13 @@ histogram = false
 # depend on that index.
 [model]
 # Every free parameter gets a default prior from its name (docs/source/config_fit.rst
-# has the table: a logarithmic amplitude out to three times the spectrum's peak,
-# dv within a few thousand km/s, sigma 300-8000 km/s, ...), so a component may be
-# written with nothing but its type and its line.  The blocks below spell the priors
-# out because these two lines are 150 km/s wide -- narrower than the default sigma
-# prior allows -- which is the usual reason to override one.  --dry-run lists which
-# prior each free parameter ended up with.
+# has the table: a logarithmic amplitude between a thousandth of the continuum and
+# three times the spectrum's peak, dv within a few thousand km/s, sigma 10-8000 km/s,
+# ...), so a component may be written with nothing but its type and its line -- the
+# minimal model of this file is four lines and is written out below.  The blocks
+# that follow spell the priors out instead, to show the syntax: a 150 km/s line
+# whose width you want bounded is the usual reason to write one.  --dry-run lists
+# which prior each free parameter ended up with.
 #
 # The values (amplitude, dv, sigma) are optional too: nested sampling draws from the
 # prior, so they only say where the model starts.  They are written out here because

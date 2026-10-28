@@ -88,6 +88,45 @@ def _astropy_parameter_labels(model, names):
     return qualified_parameter_labels(model, names)
 
 
+def base_parameter_name(param_name):
+    """``amp_c0_3`` -> ``amp_c0``: the name without the flat-index suffix."""
+    parts = str(param_name).rsplit("_", 1)
+    return parts[0] if len(parts) == 2 and parts[1].isdigit() else str(param_name)
+
+
+def parameter_kind(param_name):
+    """Which *kind* of quantity a parameter is, judged from its name.
+
+    The kind picks the default sampling range (:attr:`Dynesty_Fit.DEFAULT_BOUNDS`)
+    and, for an ``amplitude``, that the range is sampled in log10.  Both fitters
+    and the pipeline's configuration defaults read this one function, so a
+    parameter is never a different kind of thing depending on the code path that
+    built the model.
+    """
+    base = base_parameter_name(param_name).lower()
+    if base.startswith("c") and base[1:].isdigit():
+        return "continuum"
+    if "amplitude" in base or base.startswith("amp"):
+        return "amplitude"
+    if base.startswith("sigma"):
+        return "sigma"
+    if base == "stddev":
+        return "stddev"
+    if base.startswith("dv"):
+        return "dv"
+    if base.startswith("wavec") or base in {"mean", "x_0"}:
+        return "wavec"
+    if base.startswith("logtau"):
+        return "logtau"
+    if base == "cf":
+        return "cf"
+    if base in {"h3", "h4", "alpha", "velscale"}:
+        return base
+    if base in {"z", "redshift"}:
+        return "redshift"
+    return "continuum"
+
+
 class Dynesty_Fit:
     """Fit an Astropy compound model with :mod:`dynesty`.
 
@@ -212,32 +251,10 @@ class Dynesty_Fit:
 
     @staticmethod
     def _base_name(param_name):
-        parts = param_name.rsplit("_", 1)
-        return parts[0] if len(parts) == 2 and parts[1].isdigit() else param_name
+        return base_parameter_name(param_name)
 
     def _parameter_type(self, param_name):
-        base = self._base_name(param_name).lower()
-        if base.startswith("c") and base[1:].isdigit():
-            return "continuum"
-        if "amplitude" in base or base.startswith("amp"):
-            return "amplitude"
-        if base.startswith("sigma"):
-            return "sigma"
-        if base == "stddev":
-            return "stddev"
-        if base.startswith("dv"):
-            return "dv"
-        if base.startswith("wavec") or base in {"mean", "x_0"}:
-            return "wavec"
-        if base.startswith("logtau"):
-            return "logtau"
-        if base == "cf":
-            return "cf"
-        if base in {"h3", "h4", "alpha", "velscale"}:
-            return base
-        if base in {"z", "redshift"}:
-            return "redshift"
-        return "continuum"
+        return parameter_kind(param_name)
 
     def _custom_bound(self, param_name, index):
         candidates = [param_name, self._base_name(param_name)]

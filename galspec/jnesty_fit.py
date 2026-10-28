@@ -440,28 +440,10 @@ class JNesty_Fit:
         return Dynesty_Fit._base_name(param_name)
 
     def _parameter_type(self, param_name: str) -> str:
-        base = self._base_name(param_name).lower()
-        if base.startswith("c") and base[1:].isdigit():
-            return "continuum"
-        if "amplitude" in base or base.startswith("amp"):
-            return "amplitude"
-        if base.startswith("sigma"):
-            return "sigma"
-        if base == "stddev":
-            return "stddev"
-        if base.startswith("dv"):
-            return "dv"
-        if base.startswith("wavec") or base in {"mean", "x_0"}:
-            return "wavec"
-        if base.startswith("logtau"):
-            return "logtau"
-        if base == "cf":
-            return "cf"
-        if base in {"h3", "h4", "alpha", "velscale"}:
-            return base
-        if base in {"z", "redshift"}:
-            return "redshift"
-        return "continuum"
+        """The kind of quantity, from the shared table in :mod:`galspec.dynesty_fit`."""
+        from .dynesty_fit import parameter_kind
+
+        return parameter_kind(param_name)
 
     def _custom_bound(self, param_name: str):
         base = self._base_name(param_name)

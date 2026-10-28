@@ -90,6 +90,12 @@ wave_key = "WAVELENGTH"
 flux_key = "FLUX"
 error_key = "ERROR"
 
+# The narrow-line profile can travel inside the spectrum's own file: a table HDU
+# whose first column is a velocity in km/s and whose second is the normalised flux.
+# Components whose model takes a profile (Line_template, Line_template_doublet) then
+# use it, and a component's own template_file = "..." overrides it.
+# narrow_template_key = "NARROW"
+
 # A spectrum is fitted in the rest frame with the Galaxy's reddening removed.  Both
 # numbers are read from the header when it has them; when it does not, they are
 # assumed to be zero AND THE RUN WARNS.  Declaring them here is silent.
@@ -145,7 +151,26 @@ histogram = false
 # Line2.  Ties and priors use the qualified spelling (Line1.sigma), which does not
 # depend on that index.
 [model]
-require_priors = true       # a free parameter without a prior is an error
+# Every free parameter gets a default prior from its name (docs/source/config_fit.rst
+# has the table: a logarithmic amplitude out to three times the spectrum's peak,
+# dv within a few thousand km/s, sigma 300-8000 km/s, ...), so a component may be
+# written with nothing but its type and its line.  The blocks below spell the priors
+# out because these two lines are 150 km/s wide -- narrower than the default sigma
+# prior allows -- which is the usual reason to override one.  --dry-run lists which
+# prior each free parameter ended up with.
+#
+# The values (amplitude, dv, sigma) are optional too: nested sampling draws from the
+# prior, so they only say where the model starts.  They are written out here because
+# they document the model.
+require_priors = false      # true: every prior must be spelled out in this file
+
+# ---- the whole model could be this short --------------------------------------------
+# with the default priors and the per-kind defaults of the models themselves:
+#
+# [[model.component]]
+# type = "Line_MultiGauss"
+# n_components = 2
+# wavec = "@Halpha"
 
 # ---- a flat continuum ---------------------------------------------------------------
 # type is any kind galspec.jax_models knows; the remaining keys are that model's

@@ -139,7 +139,7 @@ def _dry_run(config, quiet: bool = False) -> int:
         try:
             spectrum = read_spectrum(config, source)
             namespace = flux_statistics(spectrum, config.data.continuum_percentile)
-            built = build_model(config, namespace)
+            built = build_model(config, namespace, spectrum)
         except (PipelineError, ConfigError) as exc:
             failures += 1
             print(f"[{index}/{len(sources)}] {source.source_id}: FAILED: {exc}",
@@ -157,6 +157,10 @@ def _dry_run(config, quiet: bool = False) -> int:
     if free_parameters is not None:
         print("model: " + ", ".join(free_parameters.components))
         print(f"free parameters: {len(free_parameters.free_parameters)}")
+        if free_parameters.default_priors:
+            print(f"{len(free_parameters.default_priors)} of them take the default prior:")
+            for line in free_parameters.default_priors:
+                print(f"  {line}")
     if failures:
         print(f"{failures} source(s) would fail", file=sys.stderr)
         return 1

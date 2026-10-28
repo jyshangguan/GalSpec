@@ -32,6 +32,10 @@ workers = 1
 # ---- the data ----------------------------------------------------------------------
 [data]
 file = "data/iras07546_pipeline.fits"
+# The measured narrow-line profile travels inside this file: HDU NARROW is a
+# two-column table (velocity in km/s, normalised flux), and every component whose
+# model takes a line profile uses it unless it names its own template_file.
+narrow_template_key = "NARROW"
 
 # the header carries both corrections; the keys are listed so the file says which
 # header keyword it trusts (these are the pipeline's defaults, written out:
@@ -77,7 +81,10 @@ hist_params = [
 # the corner plot refer to.
 # ------------------------------------------------------------------------------------
 [model]
-require_priors = true
+# Every free parameter has a prior, but most of them are the pipeline's defaults
+# (see the commented blocks below and the table in docs/source/config_fit.rst), so
+# ``require_priors = true`` -- "the file must spell out every prior" -- would be a
+# lie here.  Set it in a configuration whose priors you want checked.
 
 # ---- 1. the power-law continuum ----------------------------------------------------
 # PowerLaw1D(amplitude=0.55, x_0=5500, alpha=1, fixed={"x_0": True}, name="Continuum")
@@ -94,10 +101,11 @@ kind = "loguniform"
 lower = "0.2*continuum_level"
 upper = "4*continuum_level"
 
-[model.component.priors.alpha]
-kind = "uniform"
-lower = -5.0
-upper = 5.0
+# default prior of Continuum.alpha: uniform(-5, 5) -- uncomment to override
+# [model.component.priors.alpha]
+# kind = "uniform"
+# lower = -5.0
+# upper = 5.0
 
 # ---- 2. the iron pseudo-continuum --------------------------------------------------
 # IronTemplate_tied(n_components=2, amplitude=0.2, z=0, dv_c=0, sigma_c=1500,
@@ -135,7 +143,6 @@ upper = "3*continuum_level"
 [[model.component]]
 type = "Line_template"
 name = "n_halpha"
-template_file = "data/iras07546_narrow_template.txt"
 amplitude = 2.2
 dv = 0.0
 wavec = "@Halpha"
@@ -143,10 +150,11 @@ wavec = "@Halpha"
 [model.component.ties]
 dv = "OIII.dv_c"
 
-[model.component.priors.amplitude]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default prior of n_halpha.amplitude: loguniform(0.001, 12.9974) -- uncomment to override
+# [model.component.priors.amplitude]
+# kind = "loguniform"
+# lower = "1e-3"
+# upper = "3*max_flux"
 
 [[model.component]]
 type = "Line_MultiGauss"
@@ -160,40 +168,44 @@ amp_w0 = 0.10
 dv_w0 = 0.0
 sigma_w0 = 6000.0
 
-[model.component.priors.amp_c]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default prior of b_halpha.amp_c: loguniform(0.001, 12.9974) -- uncomment to override
+# [model.component.priors.amp_c]
+# kind = "loguniform"
+# lower = "1e-3"
+# upper = "3*max_flux"
 
-[model.component.priors.amp_w0]
-kind = "uniform"
-lower = 0.0
-upper = 1.0
+# default prior of b_halpha.amp_w0: uniform(0, 1) -- uncomment to override
+# [model.component.priors.amp_w0]
+# kind = "uniform"
+# lower = 0.0
+# upper = 1.0
 
 [model.component.priors.dv_c]
 kind = "uniform"
 lower = -2500.0
 upper = 2500.0
 
-[model.component.priors.sigma_c]
-kind = "uniform"
-lower = 300.0
-upper = 8000.0
+# default prior of b_halpha.sigma_c: uniform(300, 8000) -- uncomment to override
+# [model.component.priors.sigma_c]
+# kind = "uniform"
+# lower = 300.0
+# upper = 8000.0
 
-[model.component.priors.dv_w0]
-kind = "uniform"
-lower = -6000.0
-upper = 6000.0
+# default prior of b_halpha.dv_w0: uniform(-6000, 6000) -- uncomment to override
+# [model.component.priors.dv_w0]
+# kind = "uniform"
+# lower = -6000.0
+# upper = 6000.0
 
-[model.component.priors.sigma_w0]
-kind = "uniform"
-lower = 300.0
-upper = 8000.0
+# default prior of b_halpha.sigma_w0: uniform(300, 8000) -- uncomment to override
+# [model.component.priors.sigma_w0]
+# kind = "uniform"
+# lower = 300.0
+# upper = 8000.0
 
 [[model.component]]
 type = "Line_template"
 name = "n_hbeta"
-template_file = "data/iras07546_narrow_template.txt"
 amplitude = 0.8
 dv = 0.0
 wavec = "@Hbeta"
@@ -201,10 +213,11 @@ wavec = "@Hbeta"
 [model.component.ties]
 dv = "OIII.dv_c"
 
-[model.component.priors.amplitude]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default prior of n_hbeta.amplitude: loguniform(0.001, 12.9974) -- uncomment to override
+# [model.component.priors.amplitude]
+# kind = "loguniform"
+# lower = "1e-3"
+# upper = "3*max_flux"
 
 [[model.component]]
 type = "Line_MultiGauss"
@@ -224,20 +237,21 @@ sigma_c = "b_halpha.sigma_c"
 dv_w0 = "b_halpha.dv_w0"
 sigma_w0 = "b_halpha.sigma_w0"
 
-[model.component.priors.amp_c]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default prior of b_hbeta.amp_c: loguniform(0.001, 12.9974) -- uncomment to override
+# [model.component.priors.amp_c]
+# kind = "loguniform"
+# lower = "1e-3"
+# upper = "3*max_flux"
 
-[model.component.priors.amp_w0]
-kind = "uniform"
-lower = 0.0
-upper = 1.0
+# default prior of b_hbeta.amp_w0: uniform(0, 1) -- uncomment to override
+# [model.component.priors.amp_w0]
+# kind = "uniform"
+# lower = 0.0
+# upper = 1.0
 
 [[model.component]]
 type = "Line_template"
 name = "n_hgamma"
-template_file = "data/iras07546_narrow_template.txt"
 amplitude = 0.4
 dv = 0.0
 wavec = "@Hgamma"
@@ -245,10 +259,11 @@ wavec = "@Hgamma"
 [model.component.ties]
 dv = "OIII.dv_c"
 
-[model.component.priors.amplitude]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default prior of n_hgamma.amplitude: loguniform(0.001, 12.9974) -- uncomment to override
+# [model.component.priors.amplitude]
+# kind = "loguniform"
+# lower = "1e-3"
+# upper = "3*max_flux"
 
 [[model.component]]
 type = "Line_MultiGauss"
@@ -268,15 +283,17 @@ sigma_c = "b_halpha.sigma_c"
 dv_w0 = "b_halpha.dv_w0"
 sigma_w0 = "b_halpha.sigma_w0"
 
-[model.component.priors.amp_c]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default prior of b_hgamma.amp_c: loguniform(0.001, 12.9974) -- uncomment to override
+# [model.component.priors.amp_c]
+# kind = "loguniform"
+# lower = "1e-3"
+# upper = "3*max_flux"
 
-[model.component.priors.amp_w0]
-kind = "uniform"
-lower = 0.0
-upper = 1.0
+# default prior of b_hgamma.amp_w0: uniform(0, 1) -- uncomment to override
+# [model.component.priors.amp_w0]
+# kind = "uniform"
+# lower = 0.0
+# upper = 1.0
 
 # He I 5876 and He II 4686 are weak enough to stay one Gaussian each, with the
 # shape of broad H-alpha's core and only their own peak free
@@ -284,7 +301,6 @@ upper = 1.0
 [[model.component]]
 type = "Line_template_doublet"
 name = "OIII"
-template_file = "data/iras07546_narrow_template.txt"
 amp_c0 = 1.8
 amp_c1 = "1.8/2.98"        # the atomic ratio, written as arithmetic
 dv_c = 0.0
@@ -294,10 +310,11 @@ wavec1 = "@OIII_4959"
 [model.component.ties]
 amp_c1 = { kind = "doublet_ratio", ref = "OIII", ratio = 2.98 }
 
-[model.component.priors.amp_c0]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default prior of OIII.amp_c0: loguniform(0.001, 12.9974) -- uncomment to override
+# [model.component.priors.amp_c0]
+# kind = "loguniform"
+# lower = "1e-3"
+# upper = "3*max_flux"
 
 [model.component.priors.dv_c]
 kind = "uniform"
@@ -307,7 +324,6 @@ upper = 1000.0
 [[model.component]]
 type = "Line_template_doublet"
 name = "NII"
-template_file = "data/iras07546_narrow_template.txt"
 amp_c0 = 1.0
 amp_c1 = "1.0/2.96"
 dv_c = 0.0
@@ -318,10 +334,11 @@ wavec1 = "@NII_6548"
 amp_c1 = { kind = "doublet_ratio", ref = "NII", ratio = 2.96 }
 dv_c = "OIII.dv_c"
 
-[model.component.priors.amp_c0]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default prior of NII.amp_c0: loguniform(0.001, 12.9974) -- uncomment to override
+# [model.component.priors.amp_c0]
+# kind = "loguniform"
+# lower = "1e-3"
+# upper = "3*max_flux"
 
 # [S II]: both peaks keep their own amplitude, because 6716/6731 is a density
 # diagnostic and not an atomic constant
@@ -329,7 +346,6 @@ upper = "3*max_flux"
 [[model.component]]
 type = "Line_template_doublet"
 name = "SII"
-template_file = "data/iras07546_narrow_template.txt"
 amp_c0 = 0.10
 amp_c1 = 0.10
 dv_c = 0.0
@@ -339,20 +355,21 @@ wavec1 = "@SII_6731"
 [model.component.ties]
 dv_c = "OIII.dv_c"
 
-[model.component.priors.amp_c0]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default prior of SII.amp_c0: loguniform(0.001, 12.9974) -- uncomment to override
+# [model.component.priors.amp_c0]
+# kind = "loguniform"
+# lower = "1e-3"
+# upper = "3*max_flux"
 
-[model.component.priors.amp_c1]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default prior of SII.amp_c1: loguniform(0.001, 12.9974) -- uncomment to override
+# [model.component.priors.amp_c1]
+# kind = "loguniform"
+# lower = "1e-3"
+# upper = "3*max_flux"
 
 [[model.component]]
 type = "Line_template_doublet"
 name = "OI"
-template_file = "data/iras07546_narrow_template.txt"
 amp_c0 = 0.05
 amp_c1 = "0.05/3.0"
 dv_c = 0.0
@@ -363,10 +380,11 @@ wavec1 = "@OI_6364"
 amp_c1 = { kind = "doublet_ratio", ref = "OI", ratio = 3.00 }
 dv_c = "OIII.dv_c"
 
-[model.component.priors.amp_c0]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default prior of OI.amp_c0: loguniform(0.001, 12.9974) -- uncomment to override
+# [model.component.priors.amp_c0]
+# kind = "loguniform"
+# lower = "1e-3"
+# upper = "3*max_flux"
 
 # ---- 5. the broad lines: a core and one wind each ----------------------------------
 # Line_MultiGauss(n_components=2, amp_c=0.65, dv_c=0, sigma_c=1500, wavec=Halpha,
@@ -378,7 +396,6 @@ upper = "3*max_flux"
 [[model.component]]
 type = "Line_template"
 name = "HeII"
-template_file = "data/iras07546_narrow_template.txt"
 amplitude = 0.08
 dv = 0.0
 wavec = "@HeII_4686"
@@ -386,10 +403,11 @@ wavec = "@HeII_4686"
 [model.component.ties]
 dv = "OIII.dv_c"
 
-[model.component.priors.amplitude]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default prior of HeII.amplitude: loguniform(0.001, 12.9974) -- uncomment to override
+# [model.component.priors.amplitude]
+# kind = "loguniform"
+# lower = "1e-3"
+# upper = "3*max_flux"
 
 [[model.component]]
 type = "Line_MultiGauss"
@@ -404,15 +422,15 @@ wavec = "@HeII_4686"
 dv_c = "b_halpha.dv_c"
 sigma_c = "b_halpha.sigma_c"
 
-[model.component.priors.amp_c]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default prior of b_heii.amp_c: loguniform(0.001, 12.9974) -- uncomment to override
+# [model.component.priors.amp_c]
+# kind = "loguniform"
+# lower = "1e-3"
+# upper = "3*max_flux"
 
 [[model.component]]
 type = "Line_template"
 name = "OIII4363"
-template_file = "data/iras07546_narrow_template.txt"
 amplitude = 0.05
 dv = 0.0
 wavec = "@OIII_4363"
@@ -420,10 +438,11 @@ wavec = "@OIII_4363"
 [model.component.ties]
 dv = "OIII.dv_c"
 
-[model.component.priors.amplitude]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default prior of OIII4363.amplitude: loguniform(0.001, 12.9974) -- uncomment to override
+# [model.component.priors.amplitude]
+# kind = "loguniform"
+# lower = "1e-3"
+# upper = "3*max_flux"
 
 # ---- 4. the forbidden doublets -----------------------------------------------------
 # Line_template_doublet(amp_c0=1.8, amp_c1=1.8/2.98, dv_c=0, wavec0=OIII_5007,
@@ -433,7 +452,6 @@ upper = "3*max_flux"
 [[model.component]]
 type = "Line_template"
 name = "n_hei"
-template_file = "data/iras07546_narrow_template.txt"
 amplitude = 0.12
 dv = 0.0
 wavec = "@HeI_5876"
@@ -441,10 +459,11 @@ wavec = "@HeI_5876"
 [model.component.ties]
 dv = "OIII.dv_c"
 
-[model.component.priors.amplitude]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default prior of n_hei.amplitude: loguniform(0.001, 12.9974) -- uncomment to override
+# [model.component.priors.amplitude]
+# kind = "loguniform"
+# lower = "1e-3"
+# upper = "3*max_flux"
 
 [[model.component]]
 type = "Line_MultiGauss"
@@ -459,8 +478,9 @@ wavec = "@HeI_5876"
 dv_c = "b_halpha.dv_c"
 sigma_c = "b_halpha.sigma_c"
 
-[model.component.priors.amp_c]
-kind = "loguniform"
-lower = "1e-3"
-upper = "3*max_flux"
+# default prior of b_hei.amp_c: loguniform(0.001, 12.9974) -- uncomment to override
+# [model.component.priors.amp_c]
+# kind = "loguniform"
+# lower = "1e-3"
+# upper = "3*max_flux"
 

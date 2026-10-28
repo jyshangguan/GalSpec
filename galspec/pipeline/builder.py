@@ -10,16 +10,28 @@ Python script would have written by hand::
     m["Halpha.amp_c1"].tied = ParamRefTie("Halpha", "amp_c0", scale=1/2.98)
     m["Halpha.amp_c0"].prior = Uniform(0.1*peak_flux, 5*peak_flux)
 
-Nothing here changes the models; it only calls their public constructors and
-the ``tied``/``prior`` setters, which is why a pipeline fit and a hand-written
-fit of the same source produce the same answer.
+Nothing here changes the models; it only calls their public constructors and the
+``tied``/``prior`` setters, which is why a pipeline fit and a hand-written fit of
+the same source produce the same answer.
+
+Nested sampling draws its live points from the prior, so a configuration does not
+have to say where to start: an omitted parameter value falls back to the model
+class's own default.  What it does have to say, for a free parameter, is how far
+the sampler may stray -- and that too is optional: :data:`DEFAULT_PRIORS` gives
+every free parameter the physically motivated prior of its kind (a logarithmic
+amplitude, a few thousand km/s of velocity, hundreds to thousands of km/s of
+width), scaled to the source where the unit would otherwise be a guess.  A prior
+written in the configuration always wins, and the run report lists what was
+defaulted, so nothing about the fit is silent.
 """
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -27,7 +39,7 @@ from .errors import PipelineError
 from .schema import (ComponentConfig, ModelConfig, PriorSpec, TieSpec, TokenValue,
                      resolve_value)
 
-__all__ = ["build_model", "describe_model"]
+__all__ = ["build_model", "describe_model", "DEFAULT_PRIORS"]
 
 
 #: How each tie kind reads a reference parameter, as ``reference*scale+offset``.
@@ -60,6 +72,9 @@ class BuiltModel:
     parameter_map: Mapping[str, str]  # 'Submodel.parameter' -> flat name
     kind_names: Mapping[str, str]     # submodel name -> model kind
     free_parameters: Tuple[str, ...] = ()   # flat names the sampler varies
+    #: ``'Halpha.sigma_c: uniform(300, 8000)'`` for every free parameter that
+    #: took :data:`DEFAULT_PRIORS` instead of a prior written in the file.
+    default_priors: Tuple[str, ...] = ()
 
 
 def describe_model(model: Any) -> List[str]:
@@ -70,6 +85,49 @@ def describe_model(model: Any) -> List[str]:
         lines.append(f"{name}: {type(leaf).__name__}"
                      + (f" ({leaf.model_kind})" if leaf.model_kind != type(leaf).__name__ else ""))
     return lines
+
+
+# --------------------------------------------------------------------------------------
+# The prior a free parameter gets when the file does not say
+# --------------------------------------------------------------------------------------
+#: ``(base-name prefixes, prior kind, lower, upper, scaled lower)``, tried in
+#: order, for a free parameter that the configuration gives neither a prior nor
+#: a bound.  The numbers describe the quantity rather than one source: a line
+#: amplitude can be a thousandth of the spectrum or three times its peak (so the
+#: prior is logarithmic), a velocity is a few thousand km/s, a width is hundreds
+#: to thousands, a power-law index is a decade either way.
+#:
+#: The fifth entry is a second chance at the lower bound.  ``1e-3`` is a number
+#: the *data* has to justify: in a file whose flux is not of order unity it can
+#: sit above ``3*max_flux``, which leaves an empty interval.  When that happens
+#: the default becomes ``1e-3*max_flux`` instead, and the run report says so.
+DEFAULT_PRIORS: Tuple[Tuple[Tuple[str, ...], str, str, str, Optional[str]], ...] = (
+    (("amp_w",), "uniform", "0.0", "1.0", None),
+    (("amplitude", "amp"), "loguniform", "1e-3", "3*max_flux", "1e-3*max_flux"),
+    (("dv_w",), "uniform", "-6000.0", "6000.0", None),
+    (("dv",), "uniform", "-3000.0", "3000.0", None),
+    (("sigma", "stddev"), "uniform", "300.0", "8000.0", None),
+    (("alpha",), "uniform", "-5.0", "5.0", None),
+    (("h3", "h4"), "uniform", "-0.5", "0.5", None),
+    (("logtau",), "uniform", "-3.0", "3.0", None),
+    (("cf",), "uniform", "0.0", "1.0", None),
+    (("z", "redshift"), "uniform", "-0.1", "0.1", None),
+    (("velscale",), "uniform", "10.0", "1000.0", None),
+)
+
+#: Parameters that say *which* feature a component describes, or where its
+#: wavelength scale sits.  Their model default is not the line the user means
+#: (``wavec = 5000``, ``x_0 = 1``), so a component that has one has to give it.
+CENTRE_PARAMETERS: Tuple[str, ...] = ("wavec", "wavec0", "wavec1", "x_0")
+
+
+def _default_prior_rule(base: str):
+    """The rule that applies to the parameter ``base``, or ``None``."""
+    lowered = base.lower()
+    for prefixes, prior_kind, lower, upper, scaled in DEFAULT_PRIORS:
+        if lowered.startswith(prefixes):
+            return prior_kind, lower, upper, scaled
+    return None
 
 
 # --------------------------------------------------------------------------------------
@@ -96,7 +154,8 @@ def _bounds(pair, namespace, path) -> Tuple[Optional[float], Optional[float]]:
 # --------------------------------------------------------------------------------------
 # Building
 # --------------------------------------------------------------------------------------
-def build_model(config, namespace: Mapping[str, float]) -> BuiltModel:
+def build_model(config, namespace: Mapping[str, float],
+                spectrum: Any = None) -> BuiltModel:
     """Build the configured model for one source.
 
     Parameters
@@ -107,6 +166,11 @@ def build_model(config, namespace: Mapping[str, float]) -> BuiltModel:
         The per-source statistics from
         :func:`galspec.pipeline.schema.source_namespace`, used to resolve the
         expressions in the configuration.
+    spectrum : Spectrum, optional
+        The source being fitted.  ``spectrum.narrow_template`` -- the
+        ``(velocity, flux)`` table named by ``[data] narrow_template_key`` -- is
+        the line profile of every component that takes one and does not name its
+        own ``template_file``.
 
     Returns
     -------
@@ -116,7 +180,8 @@ def build_model(config, namespace: Mapping[str, float]) -> BuiltModel:
     ------
     PipelineError
         If a component cannot be built, a tie or prior names something that does
-        not exist, or a free parameter has no usable prior/bounds.
+        not exist, a component that needs a line profile has none, or a free
+        parameter has no usable sampling range.
     """
     from ..jax_models import resolve_model_kind
 
@@ -141,7 +206,8 @@ def build_model(config, namespace: Mapping[str, float]) -> BuiltModel:
         plans.append((component, cls, name))
 
     base = Path(config.path).parent      # template_file is relative to the config
-    leaves = [_build_component(component, cls, name, namespace, index, base)
+    template = None if spectrum is None else getattr(spectrum, "narrow_template", None)
+    leaves = [_build_component(component, cls, name, namespace, index, base, template)
               for index, (component, cls, name) in enumerate(plans)]
 
     model = leaves[0]
@@ -163,9 +229,16 @@ def build_model(config, namespace: Mapping[str, float]) -> BuiltModel:
             _apply_prior(model, name, parameter, prior, namespace,
                          f"{label}.priors.{parameter}")
 
-    _check_free_parameters(model, model_config.require_priors)
+    # a prior written in the file is what ``require_priors`` means by "a prior";
+    # the defaults below fill in the rest of the parameters, not the flag's
+    explicit = {f"{name}.{parameter}" for component, _cls, name in plans
+                for parameter in component.priors}
+    _check_required_priors(model, model_config.require_priors, explicit)
+    defaults = _apply_default_priors(model, plans, namespace)
+    _check_sampling_boxes(model)
     return replace(built, parameter_map=_parameter_map(model, plans),
-                   free_parameters=tuple(model.free_param_names))
+                   free_parameters=tuple(model.free_param_names),
+                   default_priors=defaults)
 
 
 def _parameter_map(model, plans) -> Dict[str, str]:
@@ -185,7 +258,8 @@ def _parameter_map(model, plans) -> Dict[str, str]:
 # --------------------------------------------------------------------------------------
 def _build_component(component: ComponentConfig, cls, name: str,
                      namespace: Mapping[str, float], index: int,
-                     base: Optional[Path] = None):
+                     base: Optional[Path] = None,
+                     template: Optional[Tuple[np.ndarray, np.ndarray]] = None):
     label = f"[model].component[{index}] ({name})"
 
     kwargs: Dict[str, Any] = {}
@@ -211,6 +285,15 @@ def _build_component(component: ComponentConfig, cls, name: str,
             if key in kwargs or key in deferred:
                 raise PipelineError(f"{label}: give template_file or {key}, not both")
             kwargs[key] = values
+    elif _template_arguments(cls):
+        # no file of its own: the spectrum's own profile, if it carries one
+        if template is None:
+            raise PipelineError(
+                f"{label}: {cls.model_kind} fits a measured line profile, so it "
+                "needs one: give template_file = \"<velocity, flux table>\" here, "
+                "or set [data] narrow_template_key = \"<HDU name>\" to read the "
+                "profile out of each spectrum")
+        kwargs["template_velc"], kwargs["template_flux"] = template
 
     # Instantiate once without the deferred values to learn the parameter names;
     # those are the only keys that may hold an expression.
@@ -222,6 +305,7 @@ def _build_component(component: ComponentConfig, cls, name: str,
     except (TypeError, ValueError, KeyError) as exc:
         raise PipelineError(f"{label}: cannot build {cls.model_kind}: {exc}") from None
     parameter_names = set(probe.param_names)
+    _require_centre(component, probe, label)
 
     for key, value in deferred.items():
         if key in parameter_names:
@@ -243,6 +327,37 @@ def _build_component(component: ComponentConfig, cls, name: str,
     except (TypeError, ValueError, KeyError) as exc:
         raise PipelineError(f"{label}: cannot build {cls.model_kind}: {exc}") from None
     return model
+
+
+@lru_cache(maxsize=None)
+def _template_arguments(cls) -> Tuple[str, ...]:
+    """The template-array arguments a model kind takes, if it takes any."""
+    try:
+        parameters = inspect.signature(cls.__init__).parameters
+    except (TypeError, ValueError):              # pragma: no cover - defensive
+        return ()
+    return tuple(key for key in ("template_velc", "template_flux") if key in parameters)
+
+
+def _require_centre(component: ComponentConfig, probe, label: str) -> None:
+    """A component whose model sits at a wavelength has to say where.
+
+    Nested sampling does not care about an initial value, but two things do: a
+    ``wavec``/``x_0`` names *which* line or pivot the component is, and its model
+    default (5000 A, 1 A) is almost never that.  A bound counts as saying so,
+    because it pins the window the sampler draws from.
+    """
+    names = set(probe.param_names)
+    for key in CENTRE_PARAMETERS:
+        if key not in names:
+            continue
+        if key in component.values or key in component.bounds or key in component.ties:
+            continue
+        raise PipelineError(
+            f"{label}: {key} has no value, so the component does not say which "
+            f"feature it describes (the model default is "
+            f"{probe.spec(key).default!r}).  Write {key} = 6562.8, or one of the "
+            "line names such as \"@Halpha\" or \"@OIII_5007\")")
 
 
 def _relative(path: str, base: Optional[Path]) -> str:
@@ -374,14 +489,88 @@ def _apply_prior(model, component: str, parameter: str, spec: PriorSpec,
 # --------------------------------------------------------------------------------------
 # Sanity checks that a batch run should fail in the first second
 # --------------------------------------------------------------------------------------
-def _check_free_parameters(model, require_priors: bool) -> None:
-    """Every free parameter needs a finite sampling range, and a prior if asked.
+def _apply_default_priors(model, plans, namespace: Mapping[str, float]
+                          ) -> Tuple[str, ...]:
+    """Give every free parameter the :data:`DEFAULT_PRIORS` prior of its kind.
 
-    A parameter with an open bound and no prior would be sampled from
-    ``lower + (upper - lower) * u`` with an infinite span, i.e. it would come
-    back as ``inf`` after the first likelihood evaluation.  The configuration is
-    the natural place to catch that: it is a second of validation instead of an
-    hour of sampling.
+    A prior or a bound written in the configuration always wins, so this only
+    fills in what the file left unsaid -- which is what makes a minimal
+    configuration possible.  Returns the resolved descriptions, for the report:
+    they name the numbers the sampler actually drew from, not the rule.
+    """
+    from ..priors import LogUniform, Uniform
+
+    configured = {f"{name}.{parameter}"
+                  for component, _cls, name in plans
+                  for parameter in list(component.priors) + list(component.bounds)}
+    applied: List[str] = []
+    for flat in model.free_param_names:
+        full = _full_name(model, flat)
+        if full in configured:
+            continue
+        if model.get_prior(flat) is not None:   # the model class set one itself
+            continue
+        rule = _default_prior_rule(full.rpartition(".")[2])
+        if rule is None:
+            continue
+        prior_kind, lower, upper, scaled = rule
+        path = f"[model] default prior of {full}"
+        low = _number(lower, namespace, path)
+        high = _number(upper, namespace, path)
+        note = ""
+        if not low < high:
+            if scaled is None:                  # pragma: no cover - table is fixed
+                raise PipelineError(
+                    f"{path}: the default interval [{low:g}, {high:g}] is empty; "
+                    "give the parameter a prior or bounds in the configuration")
+            low = _number(scaled, namespace, path)
+            if not low < high:
+                raise PipelineError(
+                    f"{path}: the default interval [{low:g}, {high:g}] is empty "
+                    "for this spectrum; give the parameter a prior or bounds in "
+                    "the configuration")
+            note = " (scaled to the spectrum)"
+        prior_class = LogUniform if prior_kind == "loguniform" else Uniform
+        try:
+            prior = prior_class(lower=low, upper=high)
+            handle = _parameter_handle(model, full, "[model]")
+            handle.prior = prior
+        except (AttributeError, ValueError, KeyError) as exc:
+            raise PipelineError(f"{path}: cannot build {prior_class.__name__}: "
+                                f"{exc}") from None
+        applied.append(f"{full}: {prior_class.__name__.lower()}({low:.6g}, "
+                       f"{high:.6g}){note}")
+    return tuple(applied)
+
+
+def _check_required_priors(model, require_priors: bool, explicit) -> None:
+    """``[model] require_priors = true`` asks for a prior written in the file.
+
+    A default prior is not what the flag is about -- it exists to make a
+    configuration that leaves the priors to the pipeline visible, so it counts
+    only the priors the file states.
+    """
+    if not require_priors:
+        return
+    missing = [_full_name(model, name) for name in model.free_param_names
+               if _full_name(model, name) not in explicit]
+    if missing:
+        raise PipelineError(
+            "[model] require_priors = true, but these free parameters have no "
+            f"prior written in the file: {', '.join(missing)}; give each one a "
+            "[model.component.priors.<parameter>] table, or drop the flag")
+
+
+def _check_sampling_boxes(model) -> None:
+    """Every free parameter needs a finite interval for the sampler to draw in.
+
+    The interval comes from a prior written in the file, or from
+    :data:`DEFAULT_PRIORS` when the parameter is a named physical quantity.  What
+    is *not* given a default is a parameter whose range depends on the data in a
+    way the name cannot express -- a linear continuum's ``slope`` and
+    ``intercept``, or a *free* ``wavec`` -- because a wrong box silently changes
+    the evidence instead of failing.  Those still have to be written down, which
+    is a second of validation instead of an hour of sampling.
     """
     from ..priors import CenteredPrior
 
@@ -389,12 +578,10 @@ def _check_free_parameters(model, require_priors: bool) -> None:
     if not free:
         raise PipelineError("the configured model has no free parameter: every "
                             "parameter is fixed or tied, so there is nothing to fit")
-    missing_bounds, missing_prior = [], []
+    missing = []
     for name in free:
         spec = model.spec(name)
         prior = model.get_prior(name)
-        if require_priors and prior is None:
-            missing_prior.append(_full_name(model, name))
         low, high = spec.bounds
         if low is not None and high is not None:
             continue
@@ -404,18 +591,13 @@ def _check_free_parameters(model, require_priors: bool) -> None:
             if prior_low is not None and prior_high is not None:
                 continue
             if not isinstance(prior, CenteredPrior):
-                missing_bounds.append(_full_name(model, name) + " (prior has no limits)")
+                missing.append(_full_name(model, name) + " (prior has no limits)")
                 continue
-        missing_bounds.append(_full_name(model, name))
-    if missing_prior:
-        raise PipelineError(
-            "[model] require_priors = true, but these free parameters have no "
-            f"prior: {', '.join(missing_prior)}; give each one a "
-            "[model.component.priors.<parameter>] table (or drop the flag)")
-    if missing_bounds:
+        missing.append(_full_name(model, name))
+    if missing:
         raise PipelineError(
             "these free parameters have no finite sampling range: "
-            f"{', '.join(missing_bounds)}; give each one [model.component.bounds.<parameter>] "
+            f"{', '.join(missing)}; give each one [model.component.bounds.<parameter>] "
             "= [low, high], or a prior with finite limits "
             "(a centred prior such as Normal needs the bounds as well, because "
             "they truncate it)")

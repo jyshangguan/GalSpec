@@ -144,7 +144,7 @@ def run_one_source(config: PipelineConfig, ref: SourceRef, *,
         spectrum = read_spectrum(config, ref)
     reading_warnings = [str(item.message) for item in caught]
     namespace = flux_statistics(spectrum, config.data.continuum_percentile)
-    built = build_model(config, namespace)
+    built = build_model(config, namespace, spectrum)
     model = built.model
 
     fit = _make_fit(config, spectrum, model)
@@ -220,6 +220,7 @@ def run_one_source(config: PipelineConfig, ref: SourceRef, *,
             "components": list(built.components),
             "free_parameters": len(fit.param_names),
             "parameters": list(fit.param_names),
+            "default_priors": list(built.default_priors),
         },
         "parameters": _parameter_summary(fit),
         "prior_dominated": fit.prior_dominated(),

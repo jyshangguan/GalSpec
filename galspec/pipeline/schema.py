@@ -261,6 +261,10 @@ class DataConfig:
     wave_hdu: Optional[str] = None
     flux_hdu: Optional[str] = None
     error_hdu: Optional[str] = None
+    #: HDU holding the narrow-line profile as a two-column (velocity, flux)
+    #: table, so a sample can carry one template per spectrum.  A component's
+    #: ``template_file`` overrides it.
+    narrow_template_key: Optional[str] = None
     wave_unit: Optional[str] = None
     flux_unit: Optional[str] = None
     z_keys: Tuple[str, ...] = ("Z", "REDSHIFT", "ZBEST")
@@ -453,6 +457,7 @@ def _read_data(table: Mapping[str, Any], base: Path) -> DataConfig:
         "catalog_z_column": None,
         "wave_key": "WAVELENGTH", "flux_key": "FLUX", "error_key": "ERROR",
         "wave_hdu": None, "flux_hdu": None, "error_hdu": None,
+        "narrow_template_key": None,
         "wave_unit": None, "flux_unit": None,
         "z_keys": ("Z", "REDSHIFT", "ZBEST"), "z_default": 0.0,
         "extinction": True,
@@ -491,6 +496,12 @@ def _read_data(table: Mapping[str, Any], base: Path) -> DataConfig:
         _fail("[data].continuum_percentile", "must be between 0 and 100")
     if values["extinction_rv"] <= 0.0:
         _fail("[data].extinction_rv", f"must be positive, got {values['extinction_rv']}")
+    template_key = values["narrow_template_key"]
+    if template_key is not None:
+        if not isinstance(template_key, str) or not template_key.strip():
+            _fail("[data].narrow_template_key",
+                  f"expected an HDU name such as \"NARROW\", got {template_key!r}")
+        template_key = template_key.strip()
 
     return DataConfig(
         source=source,
@@ -505,6 +516,7 @@ def _read_data(table: Mapping[str, Any], base: Path) -> DataConfig:
         error_key=values["error_key"],
         wave_hdu=values["wave_hdu"], flux_hdu=values["flux_hdu"],
         error_hdu=values["error_hdu"],
+        narrow_template_key=template_key,
         wave_unit=values["wave_unit"], flux_unit=values["flux_unit"],
         z_keys=_string_list(values["z_keys"], "[data].z_keys"),
         z_default=float(values["z_default"]),

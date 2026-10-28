@@ -29,7 +29,7 @@ Library
 See ``docs/source/config_fit.rst`` for the file format.
 """
 
-from .builder import BuiltModel, build_model
+from .builder import DEFAULT_PRIORS, BuiltModel, build_model
 from .errors import PipelineError
 from .loader import SourceRef, Spectrum, read_spectrum, resolve_sources
 from .runner import (describe_run, expected_outputs, run_one_source, run_pipeline)
@@ -40,7 +40,7 @@ from .schema import (ComponentConfig, ConfigError, DataConfig, FitConfig,
                      source_namespace)
 
 __all__ = [
-    "BuiltModel", "build_model",
+    "BuiltModel", "DEFAULT_PRIORS", "build_model",
     "ComponentConfig", "ConfigError", "DataConfig", "FitConfig", "ModelConfig",
     "OutputConfig", "PipelineConfig", "PipelineError", "PriorSpec", "RunConfig",
     "SourceRef", "Spectrum", "TieSpec", "TokenValue",

@@ -19,8 +19,27 @@ it; nothing changes for code that does not use it.
 The running example in this chapter is
 ``example/fit_iras07546_config.toml``: the seventeen-component, 27-parameter
 model of ``example/fit_iras07546_jax.py``, written as a file and checked against
-the script parameter by parameter
+the script parameter by script parameter
 (``develop/dev_config/test_iras07546_config.py``). Read it next to this page.
+
+A file can be much shorter than that one. Nested sampling draws from the prior, so
+neither the starting values nor the priors have to be written down -- and the
+narrow-line profile can travel inside the spectrum's own FITS file. A complete
+configuration for one emission line is::
+
+    [data]
+    file = "spectrum.fits"
+    narrow_template_key = "NARROW"      # optional; a Gaussian if omitted
+
+    [model]
+    [[model.component]]
+    type = "Line_template"
+    wavec = "@Halpha"
+
+That file has two free parameters, the profile's amplitude and its velocity, and
+a continuum component would be the natural next line. ``--dry-run`` prints the
+prior every omitted parameter ended up with, and the same list goes into
+``run_report.json``.
 
 Starting from a template
 ------------------------
@@ -127,7 +146,9 @@ Preparing a file
 ----------------
 
 Two files in ``example/data/`` show why the three arrays are a requirement rather
-than a convenience, and what "prepare it" means in practice.
+than a convenience, and what "prepare it" means in practice.  A template is the
+one extra thing a file may carry, and it is deliberately optional: a spectrum
+without one is fitted with Gaussian lines.
 
 ``spec-0651-52141-0434.fits`` is a BOSS coadd: it has ``flux``, ``loglam`` and
 ``ivar``, so there is a wavelength grid and a noise estimate, but no error array
@@ -147,7 +168,10 @@ header can carry them; the error cannot, because it is not a number in the file.
     python develop/dev_config/convert_iras07546.py     # -> example/data/iras07546_pipeline.fits
 
 It stores the observed-frame ``WAVELENGTH``, ``FLUX`` and ``ERROR`` columns, puts
-``REDSHIFT`` and ``EBV`` (and ``EBVRV``) in the header, and then *checks itself*:
+``REDSHIFT`` and ``EBV`` (and ``EBVRV``) in the header, adds the measured
+narrow-line profile as a fourth extension (``NARROW``: velocity in km/s,
+normalised flux -- what ``[data] narrow_template_key`` reads, so the profile
+travels with the spectrum instead of beside it), and then *checks itself*:
 it applies the pipeline's own de-reddening and de-shifting to what it wrote and
 asserts that the result is ``iras07546_model.load_spectrum()`` to ``1e-12``
 relative. Wavelengths round trip exactly (0.0), flux and error at ``1e-16``. That
@@ -198,6 +222,7 @@ The data section
 
     [data]
     file = "data/iras07546_pipeline.fits"
+    narrow_template_key = "NARROW"     # the measured line profile, inside the file
 
     z_keys = ["REDSHIFT", "Z", "ZBEST"]
     e_bv_keys = ["E(B-V)", "EBV", "A_V", "AV"]
@@ -241,6 +266,16 @@ The data section
    * - ``wave_unit``, ``flux_unit``
      - from the header
      - override the header's unit.
+   * - ``narrow_template_key``
+     - --
+     - name (or index) of an HDU holding the narrow-line profile as a two-column
+       table: velocity in km/s, then normalised flux.  Each spectrum then carries
+       its own profile, which is what a sample usually needs -- the lines of
+       different galaxies are not the same shape.  A component's
+       ``template_file`` overrides it; components whose model takes no profile
+       ignore it, and every other array lookup is unaffected.  The columns are
+       read by position, so their names do not matter; a velocity column with a
+       unit is converted to km/s, and one without is taken to be km/s already.
    * - ``z_keys``
      - ``["Z", "REDSHIFT", "ZBEST"]``
      - header keys tried in order.
@@ -381,25 +416,20 @@ The model section
 .. code-block:: toml
 
     [model]
-    require_priors = true
+    # require_priors = true        # every prior must be written out to fit
 
     [[model.component]]
     type = "PowerLaw1D"            # any kind galspec.jax_models knows
     name = "Continuum"             # used by ties, priors and plots
-    amplitude = 0.55
-    x_0 = 5500.0
+    amplitude = 0.55               # optional: the model has a default too
+    x_0 = 5500.0                   # not optional: it is where the power law sits
     alpha = 1.0
     fixed = { x_0 = true }
 
     [model.component.priors.amplitude]
-    kind = "loguniform"
-    lower = "0.2*continuum_level"
+    kind = "loguniform"            # optional: the default is loguniform over
+    lower = "0.2*continuum_level"  # 1e-3 .. 3*max_flux, which is wider
     upper = "4*continuum_level"
-
-    [model.component.priors.alpha]
-    kind = "uniform"
-    lower = -5.0
-    upper = 5.0
 
 The order matters twice: it is the order of the sum, and the flat parameter names
 carry the index (``amp_c_3`` is the fourth component's ``amp_c``). Reordering the
@@ -411,7 +441,12 @@ Keys of a component are one of:
 * ``type`` and ``name``;
 * a **parameter value** -- anything the model names as a parameter
   (``amplitude``, ``dv``, ``sigma``, ``amp_c0``, ...), which may be a number or
-  an expression;
+  an expression.  Optional: an omitted value keeps the model class's default,
+  which nested sampling ignores anyway.  Three values are *not* optional in
+  practice -- ``wavec``/``wavec0``/``wavec1`` and ``x_0`` -- because their model
+  default (5000 A, 1 A) does not describe the line or the pivot you mean: a line
+  component has to name its centre, with a number or with ``"@Halpha"``, or pin it
+  with ``[model.component.bounds.wavec]``;
 * a **constructor argument** (``n_components``, ``par_w``, ``degree``,
   ``template_name``, ``Star_types``, ``R``, ``template_file``) -- these are
   passed to the model's constructor and must not collide with a parameter name.
@@ -537,7 +572,8 @@ The named kinds are the GalSpec conventions, written as
 The IRAS model is held together by 29 such ties, and they are the whole physical
 content of the model beyond the starting values: one narrow-line velocity, one
 broad-line kinematics, and three atomic ratios. Written as they appear in the
-file, for the four kinds of reader:
+file, for the four kinds of reader -- the profile comes from the data file
+(``[data] narrow_template_key``), so no component repeats a path:
 
 .. code-block:: toml
 
@@ -545,7 +581,6 @@ file, for the four kinds of reader:
     [[model.component]]
     type = "Line_template_doublet"
     name = "NII"
-    template_file = "data/iras07546_narrow_template.txt"
     amp_c0 = 1.0
     amp_c1 = "1.0/2.96"
     dv_c = 0.0
@@ -555,6 +590,10 @@ file, for the four kinds of reader:
     [model.component.ties]
     amp_c1 = { kind = "doublet_ratio", ref = "NII", ratio = 2.96 }
     dv_c = "OIII.dv_c"                       # ... and [O III] owns the velocity
+
+A component that needs a *different* profile from the rest of the spectrum writes
+``template_file = "profiles/nii.txt"`` (two columns, velocity then flux, resolved
+relative to the configuration) and overrides ``narrow_template_key`` for itself.
 
     # broad H-beta keeps its own peak and its own wind amplitude, and copies the
     # shape of broad H-alpha, which is the only line whose kinematics are free
@@ -608,21 +647,105 @@ is expected::
     relative = true
     nsigma = 3
 
-``require_priors = true`` demands a prior on every free parameter; it is the
-recommended setting for a sample, because a prior that is right for one source
-(bright) is wrong for another (faint). Two checks run before the sampler starts,
-so a mistake costs a second instead of a night:
+Default priors
+~~~~~~~~~~~~~~
+
+Nested sampling draws from the prior, so a configuration does not have to say
+where to start: an omitted parameter value falls back to the model class's own
+default (``amplitude = 1``, ``sigma = 200`` km/s, ...), which never biases the
+answer -- it only changes the point the sampler prints while it warms up.
+
+A parameter the file says nothing about also gets a **default prior**, chosen
+from its *name* and resolved against the source's own statistics:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 30 44
+
+   * - parameter
+     - default prior
+     - why
+   * - ``amplitude``, ``amp_c``, ``amp_c0``, ``amp_c1``, ...
+     - ``loguniform(1e-3, 3*max_flux)``
+     - a line is between a thousandth of the spectrum and three times its
+       brightest pixel, and "twice as faint" and "twice as bright" are equally
+       probable.  In a file whose flux is far from order unity, ``1e-3`` would sit
+       above ``3*max_flux``; the bounds are then ``1e-3*max_flux`` instead, and
+       ``--dry-run`` says so.
+   * - ``amp_w0``, ``amp_w1``, ...
+     - ``uniform(0, 1)``
+     - a wind amplitude is a fraction of the line.
+   * - ``dv``, ``dv_c``
+     - ``uniform(-3000, 3000)`` km/s
+     - systematics and a few hundred km/s of gravitational slop.
+   * - ``dv_w0``, ``dv_w1``, ...
+     - ``uniform(-6000, 6000)`` km/s
+     - a wind is wider and can be more offset.
+   * - ``sigma``, ``sigma_c``, ``stddev``
+     - ``uniform(300, 8000)`` km/s
+     - a resolved line's width.  A *single* Gaussian narrower than 300 km/s is
+       outside this default: give it ``[model.component.bounds]`` (narrow lines
+       modelled on a measured profile do not have a free width at all).
+   * - ``sigma_w0``, ``sigma_w1``, ...
+     - ``uniform(300, 8000)`` km/s
+     - the wing, i.e. an outflow.
+   * - ``alpha``
+     - ``uniform(-5, 5)``
+     - a power-law index, both signs.
+   * - ``h3``, ``h4``
+     - ``uniform(-0.5, 0.5)``
+     - Hermite moments.
+   * - ``logtau``
+     - ``uniform(-3, 3)``
+     - optical depth of an absorption model.
+   * - ``cf``
+     - ``uniform(0, 1)``
+     - covering fraction.
+   * - ``z``, ``redshift``
+     - ``uniform(-0.1, 0.1)``
+     - a redshift correction.
+   * - ``velscale``
+     - ``uniform(10, 1000)`` km/s
+     - a broadening kernel.
+
+A prior or a bound written in the file always wins, so the defaults are what is in
+force *only* where the file is silent. ``--dry-run`` lists every parameter that
+took one, with the numbers it resolved to, and the same list is in
+``run_report.json`` under ``model.default_priors``: nothing about the prior is
+invisible.
+
+Two kinds of parameter are deliberately *not* defaulted, because the right range
+depends on the data in a way a name cannot express -- a linear continuum's
+``slope`` and ``intercept``, and a *free* ``wavec``: a wrong box there changes the
+evidence silently instead of failing. Those still need
+
+.. code-block:: toml
+
+    [model.component.bounds.slope]
+    ...  # = [low, high]
+
+``require_priors = true`` demands a prior *written in the file* on every free
+parameter -- defaults do not count -- so it is the way to make a configuration
+state its priors even though it no longer has to. Two checks run before the
+sampler starts, so a mistake costs a second instead of a night:
 
 * every free parameter needs a finite sampling range -- both bounds, or a prior
   with finite limits (a centred prior such as ``normal`` additionally needs the
   bounds, because they truncate it);
 * no free parameter means nothing to fit, which is also an error.
 
-The IRAS file follows ``set_priors()`` line by line: log-uniform amplitudes
-between ``1e-3`` and ``3*max_flux`` (one decade band per line), uniform
-velocities and widths in the ranges the data constrain, and uniform wind
-amplitudes between 0 and 1. The mapping is one line of the script per table of
-the file, which is the property to aim for when writing a new configuration:
+The IRAS file follows ``set_priors()``, but mostly by *leaving the priors
+defaulted*: twenty-three of its twenty-seven free parameters take the default of
+their kind (log-uniform amplitudes from ``1e-3`` to ``3*max_flux``, uniform wind
+amplitudes in ``[0, 1]``, ``sigma`` in ``[300, 8000]``, ``dv_w0`` within 6000
+km/s), which is exactly what ``set_priors()`` asks for. Only four are written out,
+because only those four are tuned to this object: the continuum's
+``0.2-4*continuum_level``, the iron template's ``3*continuum_level`` ceiling, and
+the two velocity windows -- broad H-alpha at 2500 km/s, [O III] at 1000 km/s --
+that the systemic reference needs. The commented blocks next to each component
+show the default each one would otherwise take. The mapping is one line of the
+script per table of the file, which is the property to aim for when writing a new
+configuration:
 
 .. list-table::
    :header-rows: 1
@@ -640,7 +763,8 @@ the file, which is the property to aim for when writing a new configuration:
    * - ``build_broad_lines()`` + ``tie_broad_lines()``
      - five ``Line_MultiGauss`` components and their ties
    * - ``set_priors(model, flux)``
-     - every ``[model.component.priors.*]`` table
+     - the four ``[model.component.priors.*]`` tables, plus the pipeline's
+       default priors for the other twenty-three parameters
    * - ``JNesty_Fit(..., nlive=NLIVE, dlogz=DLOGZ, ...)``
      - ``[fit]``
 
@@ -675,9 +799,10 @@ number of pixels, the config file name and the first 16 characters of its SHA-25
 status, evidence, iterations, timing (compile and sampling separately), a
 ``parameters`` table with the median, the 16th and 84th percentile and the
 maximum-likelihood value of every free parameter, which parameters are pressed
-against a prior limit (``prior_dominated``), the flux tokens that were used, the
-redshift and extinction provenance, any warning raised while reading, and the
-outputs. A source that fails is recorded with its error and the run continues; the
+against a prior limit (``prior_dominated``), which parameters took a default prior
+(``model.default_priors``, with the numbers it resolved to for this source), the
+flux tokens that were used, the redshift and extinction provenance, any warning
+raised while reading, and the outputs. A source that fails is recorded with its error and the run continues; the
 report is written even when every source fails.
 
 Resuming and parallelism
@@ -706,6 +831,14 @@ JNesty's own loops accept the same context, so its kernels are reused as well,
 provided the model structure (not the data) stays the same. The report records
 ``compile_seconds`` and ``sample_seconds`` separately, so the saving -- or its
 absence -- is visible per source rather than argued about.
+
+The one thing that defeats the reuse is a model that carries per-source numbers
+of its own: a narrow-line profile read out of each spectrum
+(``[data] narrow_template_key``) lives in the traced program, so a sample whose
+templates differ compiles once per source. That is a fraction of a second against
+minutes of sampling, and the report shows it as such. Everything else -- the
+parameters, the priors, the component structure -- is what makes the program
+shareable.
 
 This is a compilation saving, not a speed-up of the sampling: the compiled
 arithmetic is the same, and per-iteration cost is unchanged within run-to-run

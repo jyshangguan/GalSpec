@@ -61,6 +61,10 @@ class Spectrum:
     e_bv: float = 0.0                 # colour excess removed from flux and error
     e_bv_source: str = "assumed"      # 'header:E(B-V)' | 'header:A_V' | 'assumed' | 'none'
     extinction_rv: float = 3.1
+    #: ``(velocity_km_s, flux)`` from ``[data] narrow_template_key``, or ``None``
+    #: when the file does not carry a template.  Read here rather than in the
+    #: builder so the template travels with the spectrum it belongs to.
+    narrow_template: Optional[Tuple[np.ndarray, np.ndarray]] = None
     provenance: Mapping[str, Any] = field(default_factory=dict)
 
     @property
@@ -81,6 +85,11 @@ class Spectrum:
             "e_bv": self.e_bv,
             "e_bv_source": self.e_bv_source,
             "extinction_rv": self.extinction_rv,
+            "narrow_template": (None if self.narrow_template is None else {
+                "points": int(self.narrow_template[0].size),
+                "velocity_range": [float(self.narrow_template[0].min()),
+                                   float(self.narrow_template[0].max())],
+            }),
             "extensions": dict(self.provenance),
         }
 
@@ -298,6 +307,96 @@ def _describe_hdus(hdul) -> str:
 #: Names a header may use for "this axis is in Angstroms".
 _ANGSTROM = {"a", "aa", "ang", "angs", "angstrom", "angstroms", "å", "ångström"}
 
+#: Names a header may use for "this axis is a velocity in km/s".
+_KM_PER_S = {"km/s", "km s-1", "km s^-1", "kms-1", "km/s (rest)"}
+
+
+def _to_km_per_s(values: np.ndarray, unit: Optional[str], role: str) -> np.ndarray:
+    """Convert a template's velocity column to km/s.
+
+    A column with no unit is taken to be km/s already: the template is described
+    in ``config_fit.rst`` as a velocity in km/s, and a table written by hand
+    usually omits the unit.
+    """
+    if unit is None or not str(unit).strip():
+        return values
+    label = str(unit).strip()
+    if label.lower().replace(" ", "") in {name.replace(" ", "") for name in _KM_PER_S}:
+        return values
+    try:
+        import astropy.units as u
+    except ImportError:                          # pragma: no cover - astropy required
+        raise PipelineError("converting velocity units needs astropy") from None
+    try:
+        quantity = u.Unit(label)
+    except Exception:
+        raise PipelineError(f"{role}: {label!r} is not a unit astropy understands") from None
+    if not quantity.is_equivalent(u.km / u.s):
+        raise PipelineError(
+            f"{role}: unit {label!r} is not a velocity; the template's first column "
+            "must be a velocity convertible to km/s")
+    return values * float((1.0 * quantity).to_value(u.km / u.s))
+
+
+def _read_narrow_template(hdul, key: str, path) -> Tuple[np.ndarray, np.ndarray]:
+    """The ``(velocity_km_s, flux)`` table named by ``[data] narrow_template_key``.
+
+    The table is read by position -- first column velocity, second flux -- because
+    that is the contract in the documentation, and it lets a file written by any
+    tool (including one that names its columns ``V``/``F``) be used as it stands.
+    """
+    wanted = str(key).strip()
+    index: Optional[int] = None
+    if wanted.lstrip("-").isdigit():
+        position = int(wanted)
+        if -len(hdul) <= position < len(hdul):
+            index = position % len(hdul)
+    else:
+        for candidate, hdu in enumerate(hdul):
+            if (hdu.header.get("EXTNAME") or "").strip().upper() == wanted.upper():
+                index = candidate
+                break
+    if index is None:
+        raise PipelineError(
+            f"{path}: [data] narrow_template_key = {key!r} names no HDU; "
+            f"the file has {_describe_hdus(hdul)}")
+    hdu = hdul[index]
+    if not _is_table(hdu):
+        raise PipelineError(
+            f"{path}: [data] narrow_template_key = {key!r} is an "
+            f"{type(hdu).__name__}, not a table; the template must be a two-column "
+            "table, velocity (km/s) then normalised flux")
+    names = _table_columns(hdu)
+    if len(names) < 2:
+        raise PipelineError(
+            f"{path}: template HDU {key!r} has {len(names)} column(s) "
+            f"({', '.join(names) or 'none'}); need velocity and flux")
+    velocity = np.asarray(hdu.data[names[0]], dtype=float).ravel()
+    flux = np.asarray(hdu.data[names[1]], dtype=float).ravel()
+    try:
+        unit = hdu.columns[names[0]].unit
+    except Exception:                            # pragma: no cover - defensive
+        unit = None
+    velocity = _to_km_per_s(velocity, unit, f"{path}: template column {names[0]!r}")
+    if velocity.size != flux.size:
+        raise PipelineError(
+            f"{path}: template HDU {key!r} has {velocity.size} velocities but "
+            f"{flux.size} fluxes")
+    if velocity.size < 3:
+        raise PipelineError(
+            f"{path}: template HDU {key!r} has {velocity.size} row(s); a profile "
+            "needs at least 3")
+    if not np.all(np.isfinite(velocity)) or not np.all(np.isfinite(flux)):
+        raise PipelineError(f"{path}: template HDU {key!r} has non-finite values")
+    order = np.argsort(velocity, kind="stable")
+    if not np.array_equal(order, np.arange(velocity.size)):
+        velocity, flux = velocity[order], flux[order]
+    if np.any(np.diff(velocity) <= 0.0):
+        raise PipelineError(
+            f"{path}: template HDU {key!r} repeats a velocity ({names[0]!r} column); "
+            "the profile must be single-valued in velocity")
+    return velocity, flux
+
 
 def _to_angstrom(values: np.ndarray, unit: Optional[str], role: str
                  ) -> Tuple[np.ndarray, str]:
@@ -410,6 +509,10 @@ def read_spectrum(config: PipelineConfig, ref: SourceRef) -> Spectrum:
             z_header, z_header_label = _header_redshift(headers, data.z_keys)
             e_bv_header, e_bv_label = _header_extinction(
                 headers, data.e_bv_keys, data.extinction_rv)
+            # read while the file is still open: the template belongs to this
+            # spectrum, so it is carried on the Spectrum rather than re-opened
+            template = (None if data.narrow_template_key is None
+                        else _read_narrow_template(hdul, data.narrow_template_key, path))
     except PipelineError:
         raise
     except OSError as exc:
@@ -502,12 +605,16 @@ def read_spectrum(config: PipelineConfig, ref: SourceRef) -> Spectrum:
     }
     if data.extinction:
         provenance["extinction"] = e_bv_source
+    if data.narrow_template_key is not None:
+        provenance["narrow_template"] = (f"HDU {data.narrow_template_key} "
+                                        f"({template[0].size} rows)")
     return Spectrum(source_id=ref.source_id, path=str(path), wave=wave_rest,
                     flux=flux, error=error, redshift=float(redshift),
                     z_source=z_source, flux_unit=flux_unit_label,
                     wave_unit=wave_unit_label, e_bv=float(e_bv),
                     e_bv_source=e_bv_source,
                     extinction_rv=float(data.extinction_rv),
+                    narrow_template=template,
                     provenance=provenance)
 
 

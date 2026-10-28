@@ -205,20 +205,32 @@ def test_the_shipped_example_config():
     assert config.fit.nlive == 400 and config.fit.dlogz == 0.01
     assert config.fit.max_iterations == 200_000
     assert Path(config.run.output_dir) == SHIPPED_CONFIG.parent / "out" / "iras07546"
-    # every template file resolves relative to the configuration, and exists
+    # the narrow-line profile travels inside the data file, and every templated
+    # component reads it: no second file has to travel with the sample
+    assert config.data.narrow_template_key == "NARROW"
     for component in config.model.components:
-        template = component.values.get("template_file")
-        if template is not None:
-            assert (SHIPPED_CONFIG.parent / template).is_file(), template
+        assert "template_file" not in component.values, component.name
     source = resolve_sources(config)[0]
     spectrum = read_spectrum(config, source)
     assert spectrum.n_pixels == 56956
     assert spectrum.z_source == "header:REDSHIFT"
     assert spectrum.e_bv_source == "header:EBV"
+    velocity, profile = spectrum.narrow_template
+    reference = np.loadtxt(SHIPPED_CONFIG.parent / "data"
+                           / "iras07546_narrow_template.txt", comments="#")
+    assert np.array_equal(velocity, reference[:, 0])
+    assert np.array_equal(profile, reference[:, 1])
     built = build_model(config, source_namespace(
         spectrum.flux, spectrum.wave, spectrum.redshift,
-        config.data.continuum_percentile))
+        config.data.continuum_percentile), spectrum)
     assert len(built.free_parameters) == 27
+    # the reference fit's per-component priors are the pipeline's defaults here,
+    # except the four the example script tunes itself
+    assert len(built.default_priors) == 23
+    assert {line.split(":")[0] for line in built.default_priors} >= {
+        "n_halpha.amplitude", "b_halpha.sigma_c", "b_halpha.dv_w0", "OIII.amp_c0"}
+    assert {line.split(":")[0] for line in built.default_priors}.isdisjoint({
+        "Continuum.amplitude", "FeII.amplitude", "b_halpha.dv_c", "OIII.dv_c"})
 
 
 def test_reading_the_example_spectrum():
@@ -569,6 +581,7 @@ def test_ties_are_evaluated_when_the_model_is_called():
 
 
 def test_free_parameter_checks_are_early_and_specific(tmp_path):
+    """A range the pipeline cannot guess has to be written down."""
     no_bounds = write(tmp_path, f"""
         [data]
         file = "{MOCK}"
@@ -577,7 +590,8 @@ def test_free_parameter_checks_are_early_and_specific(tmp_path):
         type = "Linear1D"
     """, "a.toml")
     config = load_config(no_bounds)
-    with pytest.raises(PipelineError, match="no finite sampling range"):
+    with pytest.raises(PipelineError, match=r"no finite sampling range: "
+                                            r"Linear1D\.slope, Linear1D\.intercept"):
         build_model(config, source_namespace(np.array([1.0])))
 
     needs_prior = write(tmp_path, f"""
@@ -593,8 +607,38 @@ def test_free_parameter_checks_are_early_and_specific(tmp_path):
         intercept = [-1.0, 1.0]
     """, "b.toml")
     config = load_config(needs_prior)
-    with pytest.raises(PipelineError, match="have no prior: Continuum.slope"):
+    with pytest.raises(PipelineError, match="have no prior written in the file: "
+                                            "Continuum.slope"):
         build_model(config, source_namespace(np.array([1.0])))
+
+
+def test_a_line_component_must_say_which_line_it_is(tmp_path):
+    """``wavec`` defaults to 5000 A, which is never the line the user means."""
+    path = write(tmp_path, f"""
+        [data]
+        file = "{MOCK}"
+        [model]
+        [[model.component]]
+        type = "Line_Gaussian"
+        amplitude = 1.0
+    """, "a.toml")
+    config = load_config(path)
+    with pytest.raises(PipelineError, match="wavec has no value"):
+        build_model(config, source_namespace(np.array([1.0])))
+
+    # a bound pins the window the sampler draws from, so it counts as saying so
+    bounded = write(tmp_path, f"""
+        [data]
+        file = "{MOCK}"
+        [model]
+        [[model.component]]
+        type = "Line_Gaussian"
+        amplitude = 1.0
+        [model.component.bounds]
+        wavec = [6550.0, 6570.0]
+    """, "b.toml")
+    built = build_model(load_config(bounded), source_namespace(np.array([1.0])))
+    assert param(built.model, "wavec").bounds == (6550.0, 6570.0)
 
 
 def test_prior_on_a_fixed_parameter_is_rejected(tmp_path):
@@ -604,6 +648,7 @@ def test_prior_on_a_fixed_parameter_is_rejected(tmp_path):
         [model]
         [[model.component]]
         type = "Line_Gaussian"
+        wavec = 6563.0
         amplitude = 1.0
         [model.component.bounds]
         amplitude = [0.1, 2.0]
@@ -637,6 +682,7 @@ def test_tie_to_a_missing_parameter_is_rejected(tmp_path):
         [[model.component]]
         type = "Line_Gaussian"
         name = "B"
+        wavec = 6563.0
         amplitude = 1.0
         [model.component.bounds]
         amplitude = [0.1, 2.0]
@@ -657,6 +703,8 @@ def test_tie_ratio_conventions(tmp_path):
         [[model.component]]
         type = "Line_MultiGauss_doublet"
         name = "OIII"
+        wavec0 = "@OIII_5007"
+        wavec1 = "@OIII_4959"
         amp_c0 = 2.0
 
         [model.component.bounds]
@@ -742,6 +790,146 @@ def test_template_file_feeds_a_template_model(tmp_path):
                                  np.asarray(model.get_free_params())))
     assert line.max() == pytest.approx(1.0, abs=0.01)     # unit-peak template
     assert line.min() < 0.01                              # wings fall to zero
+
+
+def test_a_configuration_can_omit_every_value_and_prior(tmp_path):
+    """Only the file and the model are required: a fit runs on the defaults."""
+    spectrum = make_spectrum(tmp_path, wave=(6500.0, 6630.0))
+    path = write(tmp_path, f"""
+        [data]
+        file = "{spectrum}"
+        z_default = 0.0
+        extinction = false
+        [model]
+        [[model.component]]
+        type = "Line_Gaussian"
+        wavec = "@Halpha"
+    """, "a.toml")
+    config = load_config(path)
+    spectrum = read_spectrum(config, resolve_sources(config)[0])
+    built = build_model(config, source_namespace(spectrum.flux), spectrum)
+    model = built.model
+    assert list(built.free_parameters) == ["amplitude", "dv", "sigma"]
+    assert [type(model.get_prior(name)).__name__ for name in built.free_parameters] \
+        == ["LogUniform", "Uniform", "Uniform"]
+    # the amplitude interval is the spectrum's, the rest are the physical ones
+    amplitude = model.get_prior("amplitude")
+    assert amplitude.lower == pytest.approx(1e-3)
+    assert amplitude.upper == pytest.approx(3.0 * np.max(spectrum.flux))
+    assert model.get_prior("dv").lower == pytest.approx(-3000.0)
+    assert model.get_prior("sigma").upper == pytest.approx(8000.0)
+    # the values the model starts from are its own defaults, not a guess by us
+    assert param(model, "sigma").value == pytest.approx(200.0)
+
+
+def test_the_default_amplitude_prior_scales_to_a_faint_spectrum(tmp_path):
+    """``1e-3`` is a number the data has to justify: keep the interval non-empty."""
+    spectrum = make_spectrum(tmp_path, wave=(6500.0, 6630.0), n=60)
+    with fits.open(spectrum, mode="update") as hdul:
+        for column in ("FLUX", "ERROR"):
+            hdul[1].data[column] = hdul[1].data[column] * 1e-15
+    path = config_text(spectrum, model="""
+        [model]
+        [[model.component]]
+        type = "Line_Gaussian"
+        wavec = "@Halpha"
+    """)
+    config = load_config(write(tmp_path, path, "a.toml"))
+    spectrum = read_spectrum(config, resolve_sources(config)[0])
+    built = build_model(config, source_namespace(spectrum.flux), spectrum)
+    prior = built.model.get_prior("amplitude")
+    assert prior.lower < 1e-3                       # an interval, not an inversion
+    assert prior.upper == pytest.approx(3.0 * np.max(spectrum.flux))
+    assert "scaled to the spectrum" in built.default_priors[0]
+
+
+def _spectrum_with_template(tmp_path, name="spec.fits", velocity=None, unit="km/s",
+                            columns=("VELOCITY", "TFLUX"), extname="NARROW"):
+    """A spectrum whose FITS file also carries the narrow-line profile."""
+    path = make_spectrum(tmp_path, name=name, wave=(6500.0, 6630.0))
+    if velocity is None:
+        velocity = np.linspace(-500.0, 500.0, 201)
+    profile = np.exp(-0.5 * (velocity / 100.0) ** 2)
+    table = fits.BinTableHDU.from_columns(
+        [fits.Column(name=columns[0], format="D", array=velocity, unit=unit),
+         fits.Column(name=columns[1], format="D", array=profile)],
+        name=extname)
+    with fits.open(path, mode="append") as hdul:
+        hdul.append(table)
+    return path, np.asarray(velocity, dtype=float), profile
+
+
+TEMPLATE_MODEL = """
+[model]
+[[model.component]]
+type = "Line_template"
+wavec = "@Halpha"
+"""
+
+
+def test_narrow_template_key_reads_the_profile_from_the_spectrum(tmp_path):
+    path, velocity, profile = _spectrum_with_template(tmp_path)
+    config = load_config(write(tmp_path, config_text(
+        path, data='narrow_template_key = "NARROW"', model=TEMPLATE_MODEL), "a.toml"))
+    spectrum = read_spectrum(config, resolve_sources(config)[0])
+    assert spectrum.summary()["narrow_template"] == {
+        "points": velocity.size,
+        "velocity_range": [pytest.approx(velocity.min()), pytest.approx(velocity.max())]}
+    built = build_model(config, source_namespace(spectrum.flux), spectrum)
+    model = built.model
+    assert np.allclose(np.asarray(model._template_velc), velocity)
+    assert np.allclose(np.asarray(model._template_flux), profile)
+    # template models need no prior of their own: the default amplitude carries them
+    assert [line.split(":")[0] for line in built.default_priors] == [
+        "Line_template.amplitude", "Line_template.dv"]
+
+
+def test_the_template_is_sorted_and_its_velocity_unit_is_converted(tmp_path):
+    velocity = np.linspace(-500.0, 500.0, 101)[::-1]          # descending on purpose
+    path, _, profile = _spectrum_with_template(
+        tmp_path, velocity=velocity, unit="m/s", columns=("V", "F"))
+    config = load_config(write(tmp_path, config_text(
+        path, data='narrow_template_key = "NARROW"', model=TEMPLATE_MODEL), "a.toml"))
+    spectrum = read_spectrum(config, resolve_sources(config)[0])
+    assert np.all(np.diff(spectrum.narrow_template[0]) > 0)
+    assert spectrum.narrow_template[0].min() == pytest.approx(-0.5)   # m/s -> km/s
+    built = build_model(config, source_namespace(spectrum.flux), spectrum)
+    # the columns are read by position, so their names do not matter
+    assert np.allclose(np.asarray(built.model._template_flux), profile[::-1])
+
+
+def test_template_file_wins_over_the_spectrum_profile(tmp_path):
+    path, _, _ = _spectrum_with_template(tmp_path)
+    template = tmp_path / "own.txt"
+    velc = np.linspace(-300.0, 300.0, 61)
+    np.savetxt(template, np.column_stack([velc, np.exp(-0.5 * (velc / 60.0) ** 2)]))
+    config = load_config(write(tmp_path, config_text(path, data='narrow_template_key '
+                                                     '= "NARROW"', model=f"""
+        [model]
+        [[model.component]]
+        type = "Line_template"
+        template_file = "{template}"
+        wavec = "@Halpha"
+    """), "a.toml"))
+    spectrum = read_spectrum(config, resolve_sources(config)[0])
+    built = build_model(config, source_namespace(spectrum.flux), spectrum)
+    assert np.allclose(np.asarray(built.model._template_velc), velc)
+
+
+def test_a_missing_template_extension_is_reported(tmp_path):
+    path = make_spectrum(tmp_path, wave=(6500.0, 6630.0))
+    config = load_config(write(tmp_path, config_text(
+        path, data='narrow_template_key = "NARROW"', model=TEMPLATE_MODEL), "a.toml"))
+    with pytest.raises(PipelineError, match="names no HDU"):
+        read_spectrum(config, resolve_sources(config)[0])
+
+
+def test_a_template_component_without_a_profile_is_reported(tmp_path):
+    path = make_spectrum(tmp_path, wave=(6500.0, 6630.0))
+    config = load_config(write(tmp_path, config_text(path, model=TEMPLATE_MODEL), "a.toml"))
+    spectrum = read_spectrum(config, resolve_sources(config)[0])
+    with pytest.raises(PipelineError, match="narrow_template_key"):
+        build_model(config, source_namespace(spectrum.flux), spectrum)
 
 
 def test_unknown_component_kind_lists_the_known_ones(tmp_path):

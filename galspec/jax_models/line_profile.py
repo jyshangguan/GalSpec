@@ -605,6 +605,54 @@ class Line_template_doublet(JaxModel):
                 + p["amp_c1"] * _template_interp(v1, self._template_velc,
                                                  self._template_flux, *common))
 
+    def single(self, x, comp: int = 0):
+        """The profile of one line of the doublet, at the model's current values.
+
+        Evaluating the doublet gives both peaks, which is not what is wanted when
+        the *flux of one line* is the measurement -- the [N II] 6583, [S II]
+        6716/6731 or [O III] 5007 line fluxes of a BPT diagram.  This returns
+        just the requested line, on the same grid and in the same units as the
+        model itself.
+
+        Host-side numpy in and out, reading the *current* parameter values like
+        :meth:`__call__`, so it is not a ``jit`` path: call it after
+        ``set_free_params`` has put a posterior sample on the model.  Tied values
+        are re-read from the owning compound model first, so a tied ``amp_c1``
+        is not read at its construction default.
+
+        Parameters
+        ----------
+        x : array_like
+            Wavelength, units: arbitrary.
+        comp : int
+            ``0`` for the line at ``wavec0``/``amp_c0``, ``1`` for the line at
+            ``wavec1``/``amp_c1``.
+
+        Returns
+        -------
+        numpy.ndarray
+            The profile of that one line.
+
+        Examples
+        --------
+        ::
+
+            flux_6583 = np.trapezoid(model["NII"].single(wave, 0), wave)
+        """
+        self.refresh_from_owner()
+        if comp == 0:
+            wavec, amp = self._values["wavec0"], self._values["amp_c0"]
+        elif comp == 1:
+            wavec, amp = self._values["wavec1"], self._values["amp_c1"]
+        else:
+            raise ValueError(f"comp must be 0 or 1, got {comp!r}")
+
+        xv = jnp.asarray(np.asarray(x, dtype=float))
+        v = velocity(xv, wavec) - self._values["dv_c"]
+        return np.asarray(amp * _template_interp(
+            v, self._template_velc, self._template_flux,
+            self._vmin, self._vmax, self._uniform, self._dv))
+
 
 class Line_Exponential(JaxModel):
     """Exponential profile smoothed by its Gaussian kernel -- ``galspec.Line_Exponential``.

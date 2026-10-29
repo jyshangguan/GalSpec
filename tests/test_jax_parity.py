@@ -420,6 +420,58 @@ def test_line_template_doublet_is_two_single_templates():
         assert _rel_diff(doublet(wave), combined) < 1e-14
 
 
+def test_single_gives_one_line_of_the_doublet():
+    """``single`` returns one peak -- the flux of a line, not of the doublet.
+
+    Both backends: it has to equal the ``Line_template`` that line would have
+    been, so that a line flux measured with it is the flux the model assigns to
+    that line and nothing else.
+    """
+    wave = np.linspace(4900.0, 5060.0, 3000)
+    common = dict(template_velc=PROFILE_VEL, template_flux=PROFILE_FLUX)
+    for make_single, make_doublet in (
+            (lambda **kw: galspec.Line_template(**kw),
+             lambda **kw: galspec.Line_template_doublet(**kw)),
+            (lambda **kw: jxm.Line_template(**kw),
+             lambda **kw: jxm.Line_template_doublet(**kw))):
+        doublet = make_doublet(amp_c0=2.0, amp_c1=0.7, dv_c=45.0,
+                               wavec0=5007.0, wavec1=4959.0, **common)
+        first = make_single(amplitude=2.0, dv=45.0, wavec=5007.0, **common)
+        second = make_single(amplitude=0.7, dv=45.0, wavec=4959.0, **common)
+        assert _rel_diff(doublet.single(wave, 0), first(wave)) < 1e-14
+        assert _rel_diff(doublet.single(wave, 1), second(wave)) < 1e-14
+        assert _rel_diff(doublet.single(wave, 0) + doublet.single(wave, 1),
+                         doublet(wave)) < 1e-14
+        # one line, not the doublet: the other peak is not in the profile
+        first_peak = float(np.interp(5007.0, wave, doublet.single(wave, 0)))
+        at_second = float(np.interp(4959.0, wave, doublet.single(wave, 0)))
+        assert at_second < 0.05 * first_peak, (at_second, first_peak)
+        try:
+            doublet.single(wave, 2)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("comp=2 must be refused")
+
+    # inside a compound model, with amp_c1 and dv_c tied: the tied values are read
+    # after the sync, not at the construction defaults
+    line = jxm.Line_template_doublet(template_velc=PROFILE_VEL, template_flux=PROFILE_FLUX,
+                                     amp_c0=3.0, amp_c1=1.0, dv_c=0.0,
+                                     wavec0=5007.0, wavec1=4959.0, name="OIII")
+    line.amp_c1.tied = jxm.tie.tie_MultiGauss_doublet_ratio("OIII", 2.98)
+    line.dv_c.tied = jxm.tie.tie_template_dv("nHbeta")
+    narrow = jxm.Line_template(template_velc=PROFILE_VEL, template_flux=PROFILE_FLUX,
+                               amplitude=5.0, dv=60.0, wavec=4861.0, name="nHbeta")
+    model = line + narrow
+    model["OIII"].amp_c0.value = 4.0
+    model["nHbeta"].dv.value = 80.0
+
+    one = model["OIII"].single(wave, 1)
+    expected = jxm.Line_template(template_velc=PROFILE_VEL, template_flux=PROFILE_FLUX,
+                                 amplitude=4.0 / 2.98, dv=80.0, wavec=4959.0)
+    assert _rel_diff(one, expected(wave)) < 1e-13
+
+
 def test_gen_template_matches_cpu():
     """``gen_template`` gives the same kernel on both backends.
 

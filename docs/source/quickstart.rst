@@ -397,22 +397,29 @@ Now let's calculate line fluxes and physical parameters:
    from astropy.cosmology import Planck18 as cosmo
 
    # Calculate line fluxes by integrating one component over its own window
-   def integrate_line_flux(component, wave, scale=1e-17):
+   def integrate_line_flux(component, wave, scale=1e-17, comp=None):
        """Integral of one component, in erg/s/cm^2.
 
        A template line is normalised to unit *peak*, so its integral is the peak
        times the profile's own area -- not the sigma sqrt(2 pi) of a Gaussian.
        Integrating the component numerically gets that right for either.
+
+       ``comp`` picks one line of a doublet (``component.single(wave, comp)``):
+       [N II] and [O III] are doublets, and the BPT axes want 6583 and 5007
+       alone, not 6583+6548 and 5007+4959.
        """
-       return np.trapezoid(component(np.asarray(wave)) * scale, wave)
+       flux = component(np.asarray(wave)) if comp is None else component.single(wave, comp)
+       return np.trapezoid(np.asarray(flux) * scale, wave)
 
    # Get fluxes (in erg/s/cm^2): H-alpha lines in the H-alpha window, the rest in
    # the H-beta + [O III] window they were fitted on
    flux_hb = integrate_line_flux(m_fit_hb['bHbeta'], wave_hb)
    flux_ha = integrate_line_flux(m_fit_hb['bHalpha'], wave_ha)
-   flux_o3 = integrate_line_flux(m_fit_hb['OIII'], wave_hb)
-   flux_n2 = integrate_line_flux(m_fit_hb['NII'], wave_hb)
-   flux_s2 = integrate_line_flux(m_fit_hb['SII'], wave_hb)
+   flux_o3 = integrate_line_flux(m_fit_hb['OIII'], wave_hb, comp=0)   # 5007 alone
+   flux_n2 = integrate_line_flux(m_fit_hb['NII'], wave_hb, comp=0)    # 6583 alone
+   flux_s2 = integrate_line_flux(m_fit_hb['SII'], wave_hb)            # both lines: the
+                                                                     # BPT [S II] axis
+                                                                     # sums the pair
 
    print(f"Hβ flux: {flux_hb:.2e} erg/s/cm^2")
    print(f"Hα flux: {flux_ha:.2e} erg/s/cm^2")
@@ -442,6 +449,13 @@ Now let's calculate line fluxes and physical parameters:
    [S II] flux: 9.87e-16 erg/s/cm^2
    L_5100: 1.23e+43 erg/s
    Black hole mass: 10^7.23 M_sun
+
+.. note::
+
+   ``[O III]`` and ``[N II]`` are doublets, so their fluxes are taken one line at a
+   time with ``single()``: the numbers above are the 5007 and 6583 lines, which is
+   what the BPT axes use.  Integrating the whole component would fold in 4959 and
+   6548 (1/2.98 and 1/2.96 of the main line) and move the object in the diagram.
 
 ## Step 6: Analyze Physical Properties
 

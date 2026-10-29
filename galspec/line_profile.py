@@ -243,6 +243,54 @@ class Line_template_doublet(Fittable1DModel):
 
         return flux
 
+    def single(self, x, comp=0):
+        '''
+        The profile of one line of the doublet, at the current parameter values.
+
+        Evaluating the doublet gives both peaks, which is not what is wanted when
+        the *flux of one line* is the measurement -- the [N II] 6583, [S II]
+        6716/6731 ratio or [O III] 5007 line fluxes of a BPT diagram.  This
+        returns just the requested line, on the same grid and in the same units as
+        :meth:`evaluate`.
+
+        Parameters
+        ----------
+        x : array like
+            Wavelength, units: arbitrary.
+        comp : int
+            ``0`` for the line at ``wavec0``/``amp_c0``, ``1`` for the line at
+            ``wavec1``/``amp_c1``.
+
+        Returns
+        -------
+        flux : ndarray
+            The profile of that one line.
+
+        Examples
+        --------
+        ::
+
+            nii = Line_template_doublet(template_velc=velc, template_flux=flux,
+                                        amp_c0=16.5, amp_c1=16.5 / 2.96,
+                                        wavec0=line_wave_dict['NII_6583'],
+                                        wavec1=line_wave_dict['NII_6548'], name='NII')
+            flux_6583 = np.trapezoid(nii.single(wave, 0), wave)
+        '''
+        x = np.asarray(x, dtype=float)
+        if comp == 0:
+            wavec, amp = self.wavec0.value, self.amp_c0.value
+        elif comp == 1:
+            wavec, amp = self.wavec1.value, self.amp_c1.value
+        else:
+            raise ValueError(f'comp must be 0 or 1, got {comp!r}')
+
+        v = (x - wavec) / wavec * ls_km - self.dv_c.value
+        flux = np.zeros_like(x)
+        fltr = (v >= self._vmin) & (v <= self._vmax)
+        flux[fltr] = amp * self._model(v[fltr])
+
+        return flux
+
 
 class test(Fittable1DModel):
     def __init__(self, amplitude, **kwargs):

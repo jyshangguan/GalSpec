@@ -399,11 +399,12 @@ galaxy.) Adding the two components together would produce one meaningless averag
 
 Two ratios of forbidden to recombination lines, both measured off the model: [N II] 6583 over
 H-alpha and [O III] 5007 over H-beta. The forbidden lines come from the narrow-line region
-only, so the Balmer denominator is the *narrow* component too; putting the broad lines in the
-denominator dilutes both ratios and moves a Seyfert 1 towards the star-forming corner. (This is
-where this notebook departs from the reference it follows: the reference divides by the broad
-Balmer flux, and its version of this figure puts the object between the demarcation lines, in
-the "composite" region.)
+only, so the Balmer denominator is the *narrow* component too, in this notebook and in the
+reference it follows. That is worth spelling out because the other choice is tempting and
+plausible: the broad Balmer flux is the brighter number, and H-beta is what the black-hole mass
+uses, so it reads like the natural one to put underneath. It is not -- the broad lines are gas
+at a different radius -- and dividing by them dilutes both ratios until the star lands between
+the demarcation lines, in the "composite" region, which is the wrong answer for a Seyfert 1.
 
 .. nbcode:: ../../example/fit_sdss0006_jax.ipynb
    :cell: bpt

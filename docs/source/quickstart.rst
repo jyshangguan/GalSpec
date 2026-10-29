@@ -325,7 +325,7 @@ The [S II] doublet fit provides the narrow line template. The profile shows both
    :width: 100%
 
 The Hα complex shows:
-- **Broad Hα** (blue): FWHM ≈ 1100 km/s from the broad-line region
+- **Broad Hα** (blue): σ ≈ 900 km/s from the broad-line region, i.e. a FWHM of about 2 100 km/s
 - **Narrow components** (red, orange, green): Forbidden lines [N II] and [S II] with same velocity
 - The residual panel shows excellent fit quality
 
@@ -415,17 +415,28 @@ Now let's calculate line fluxes and physical parameters:
    # the H-beta + [O III] window they were fitted on
    flux_hb = integrate_line_flux(m_fit_hb['bHbeta'], wave_hb)
    flux_ha = integrate_line_flux(m_fit_hb['bHalpha'], wave_ha)
+   # The narrow Balmer lines as well.  The BPT axes below divide by them, because
+   # [N II], [S II] and [O III] are forbidden lines and come from the narrow-line
+   # region -- the broad lines are a different gas at a different radius.
+   flux_nhb = integrate_line_flux(m_fit_hb['nHbeta'], wave_hb)
+   flux_nha = integrate_line_flux(m_fit_hb['nHalpha'], wave_ha)
    flux_o3 = integrate_line_flux(m_fit_hb['OIII'], wave_hb, comp=0)   # 5007 alone
    flux_n2 = integrate_line_flux(m_fit_hb['NII'], wave_hb, comp=0)    # 6583 alone
    flux_s2 = integrate_line_flux(m_fit_hb['SII'], wave_hb)            # both lines: the
                                                                      # BPT [S II] axis
                                                                      # sums the pair
 
-   print(f"Hβ flux: {flux_hb:.2e} erg/s/cm^2")
-   print(f"Hα flux: {flux_ha:.2e} erg/s/cm^2")
+   print(f"broad Hβ flux: {flux_hb:.2e} erg/s/cm^2")
+   print(f"broad Hα flux: {flux_ha:.2e} erg/s/cm^2")
+   print(f"narrow Hβ flux: {flux_nhb:.2e} erg/s/cm^2")
+   print(f"narrow Hα flux: {flux_nha:.2e} erg/s/cm^2")
    print(f"[O III] λ5007 flux: {flux_o3:.2e} erg/s/cm^2")
    print(f"[N II] λ6583 flux: {flux_n2:.2e} erg/s/cm^2")
    print(f"[S II] flux: {flux_s2:.2e} erg/s/cm^2")
+
+   # The two BPT axes: narrow forbidden line over narrow Balmer line
+   print(f"log [N II]6583/Hα: {np.log10(flux_n2 / flux_nha):+.2f}")
+   print(f"log [O III]5007/Hβ: {np.log10(flux_o3 / flux_nhb):+.2f}")
 
    # Calculate continuum luminosity at 5100 Å
    lum_dist = cosmo.luminosity_distance(zred).to('cm').value
@@ -433,8 +444,8 @@ Now let's calculate line fluxes and physical parameters:
    nu_lnu = lam_flam * 4 * np.pi * lum_dist**2
    print(f"L_5100: {nu_lnu:.2e} erg/s")
 
-   # Estimate black hole mass
-   fwhm_hb = 1272.7  # From the fit
+   # Estimate black hole mass: the FWHM of broad H-beta, from its fitted sigma
+   fwhm_hb = m_fit_hb['bHbeta'].sigma_c.value * 2.3548
    log_mbh = np.log10((fwhm_hb/1000)**2 * (nu_lnu/1e44)**0.533) + 6.91
    print(f"Black hole mass: 10^{log_mbh:.2f} M_sun")
 
@@ -442,20 +453,34 @@ Now let's calculate line fluxes and physical parameters:
 
 .. code-block:: text
 
-   Hβ flux: 2.34e-15 erg/s/cm^2
-   Hα flux: 1.87e-14 erg/s/cm^2
-   [O III] λ5007 flux: 6.78e-15 erg/s/cm^2
-   [N II] λ6583 flux: 1.23e-15 erg/s/cm^2
-   [S II] flux: 9.87e-16 erg/s/cm^2
-   L_5100: 1.23e+43 erg/s
-   Black hole mass: 10^7.23 M_sun
+   broad Hβ flux: 9.20e-16 erg/s/cm^2
+   broad Hα flux: 2.37e-15 erg/s/cm^2
+   narrow Hβ flux: 2.49e-16 erg/s/cm^2
+   narrow Hα flux: 1.00e-15 erg/s/cm^2
+   [O III] λ5007 flux: 1.25e-15 erg/s/cm^2
+   [N II] λ6583 flux: 7.83e-16 erg/s/cm^2
+   [S II] flux: 5.33e-16 erg/s/cm^2
+   log [N II]6583/Hα: -0.11
+   log [O III]5007/Hβ: +0.70
+   L_5100: 2.28e+42 erg/s
+   Black hole mass: 10^6.87 M_sun
 
 .. note::
 
+   **Two choices are being made in that block, and both change the answer.**
+
    ``[O III]`` and ``[N II]`` are doublets, so their fluxes are taken one line at a
    time with ``single()``: the numbers above are the 5007 and 6583 lines, which is
-   what the BPT axes use.  Integrating the whole component would fold in 4959 and
+   what the BPT axes use. Integrating the whole component would fold in 4959 and
    6548 (1/2.98 and 1/2.96 of the main line) and move the object in the diagram.
+
+   The Balmer denominator of those axes is the **narrow** line, not the total and
+   not the broad one. [N II], [S II] and [O III] are forbidden lines and come from
+   the narrow-line region; the broad Balmer lines come from the region around the
+   black hole, and dividing by them dilutes both ratios until a Seyfert 1 lands
+   below the Kauffmann+2003 line, in the star-forming corner. With ``flux_nha`` and
+   ``flux_nhb`` the object sits at (-0.11, +0.70), which is where the figure below
+   puts it.
 
 ## Step 6: Analyze Physical Properties
 
@@ -467,7 +492,16 @@ Let's compare our object with AGN samples on the BPT (Baldwin-Phillips-Terlevich
    :align: center
    :width: 100%
 
-The yellow star shows our object. It falls in the AGN region of both BPT diagrams, above the Kewley+2001 and Kauffmann+2003 demarcation lines, confirming its AGN nature.
+The yellow star shows our object, at log [N II] 6583/Hα = -0.11 and log [O III] 5007/Hβ = +0.70
+(narrow lines over narrow Balmer lines, as above). It falls in the AGN region of both diagrams:
+above the Kewley+2001 line -- and so above the Kauffmann+2003 line, which lies below it -- in the
+left panel, and on the Seyfert side of the Kewley+2006 line in the right one -- which is what a
+broad Hα line and [O III]/Hβ = 5 say it should be.
+
+The same two ratios built from the *broad* Balmer fluxes -- ``flux_n2/flux_ha`` and
+``flux_o3/flux_hb`` -- put the star at (-0.48, +0.13), a hair below the Kauffmann+2003 line: the
+object would be called star-forming. That is what this page's recipe did before the narrow
+components were integrated, and it is the wrong answer for a Seyfert 1.
 
 ### Black Hole Mass - Stellar Velocity Dispersion Relation
 
@@ -490,9 +524,9 @@ In this quick start, we've:
 
 **Key Results:**
 
-* **Black hole mass**: ~10^7.23 M_☉
-* **Stellar velocity dispersion**: ~80 km/s
-* **L_5100**: 1.23×10^43 erg/s
+* **Black hole mass**: 10^6.87 M_☉
+* **Stellar velocity dispersion**: 85.1 km/s
+* **L_5100**: 2.28×10^42 erg/s
 * **Classification**: AGN (based on BPT diagram)
 
 This is just a basic example. GalSpec can handle much more complex cases:

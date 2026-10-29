@@ -506,10 +506,14 @@ This is just a basic example. GalSpec can handle much more complex cases:
 Next Steps
 ----------
 
-* Learn about **continuum fitting** in the :doc:`examples/continuum_fitting` tutorial
-* Explore **emission line fitting** in the :doc:`examples/emission_line_fitting` tutorial
-* Read about **absorption line fitting** in the :doc:`examples/absorption_line_fitting` tutorial
-* Check out the **API Reference** for detailed documentation of all models and functions
+* :doc:`example_strong_agn` -- one AGN spectrum fitted end to end: a power-law continuum, the
+  Fe II template, broad and narrow lines, and a narrow-line profile measured on [O III] before
+  anything else is fitted
+* :doc:`example_black_hole_host` -- an SDSS spectrum taken apart into host galaxy and AGN, then
+  the black-hole mass from H$\beta$'s width and the 5100 A luminosity
+* :doc:`priors` -- how to put a prior on each parameter, and what shape to choose
+* :doc:`jax_gpu` -- the JAX backend, the batching, and the CPU-versus-GPU comparison
+* :doc:`config_fit` -- the same model driven from a TOML file, for a whole sample
 * Look at the example notebooks in the ``example/`` directory of the repository
 
 Advanced Topics

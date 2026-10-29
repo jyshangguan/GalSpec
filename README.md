@@ -360,6 +360,17 @@ first and no script depends on another script's output files:
 | `iras07546_model.py` | the model all three fit, as an importable module |
 | `fit_iras07546_jax.ipynb` | the same model written out literally, cell by cell; `tests/test_example_notebook.py` keeps the two in step |
 
+`example/fit_sdss0006_jax.ipynb` walks through a different object and a different
+question: SDSS J0006-0920 fitted the way `example/wrk_sagan_sdss0006.ipynb` fits
+it -- continuum, then the [S II] doublet as a narrow-line template, then H-alpha,
+then H-beta + [O III] -- but with `galspec.jax_models` and `JNesty_Fit` at every
+stage instead of astropy models and `LevMarLSQFitter`. Each stage reports a
+posterior instead of a point estimate, which is what makes the continuum
+decomposition degeneracy visible in `sigma_*` and in
+`lambda L_lambda(5100)`. About ten minutes on one GPU; repeating it moves its
+numbers by well under the quoted error bars, and its H-alpha stage is checked
+against `dynesty` on the astropy twin of the same model.
+
 ## Requirements
 
 - Python ≥ 3.9

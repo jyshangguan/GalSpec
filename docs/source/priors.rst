@@ -11,7 +11,7 @@ describes instead of in a dictionary passed to the sampler at call time::
 This page covers the shapes that exist, what the fitter does with them, and three
 worked examples taken from ``example/``: the published recipe, a prior centred on
 another parameter, and a prior that can switch a component off entirely. For the fit
-those priors belong to, see :doc:`fitting_walkthrough`.
+those priors belong to, see :doc:`example_strong_agn`.
 
 .. contents:: On this page
    :local:
@@ -287,7 +287,7 @@ pulls suggest and it is the kind of result that gets over-read:
 * **Nothing here sits against a hard limit.** In the earlier version of this page the
   two wind widths piled up on the 8 000 km/s ceiling of the width prior, which is a
   prior artefact and not a measurement; with the narrow lines described by the
-  measured [O III] template (see :doc:`fitting_walkthrough`) the released widths come
+  measured [O III] template (see :doc:`example_strong_agn`) the released widths come
   out at 3 978 +- 94 and 6 733 +- 330 km/s, both inside the box, with none of their
   posterior against either wall. The released parameters are therefore measurements,
   which they were not before.

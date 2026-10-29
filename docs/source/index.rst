@@ -72,7 +72,6 @@ Contents
 
    installation
    quickstart
-   fitting_walkthrough
    priors
    jax_gpu
    config_fit
@@ -81,10 +80,8 @@ Contents
    :maxdepth: 2
    :caption: Examples:
 
-   examples/continuum_fitting
-   examples/emission_line_fitting
-   examples/absorption_line_fitting
-   examples/advanced_fitting
+   example_strong_agn
+   example_black_hole_host
 
 .. toctree::
    :maxdepth: 2

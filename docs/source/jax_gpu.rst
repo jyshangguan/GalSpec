@@ -20,7 +20,7 @@ enabled, fluxes agree to ~1e-16 relative, i.e. to floating-point rounding
 example compound models).
 
 This page is the backend reference. For a fit read end to end see
-:doc:`fitting_walkthrough`; for what a prior can say -- including one parameter's
+:doc:`example_strong_agn`; for what a prior can say -- including one parameter's
 prior given another's -- see :doc:`priors`.
 
 What is available

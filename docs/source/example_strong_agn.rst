@@ -1,5 +1,5 @@
-A realistic fit, start to finish
-================================
+Example: fitting a strong AGN
+==============================
 
 One AGN spectrum, one model, one sampler, and the step before it: measuring the narrow
 lines' profile. Every code block on this page is a cell of
@@ -20,7 +20,8 @@ copied into a notebook and run:
 IRAS 07546+3928 at z = 0.0953: 4200-6800 A in the rest frame, 57 000 pixels at 0.046 A
 sampling, H-gamma through H-alpha with the strong forbidden lines. The fit has 27 free
 parameters, runs with 400 live points and ``dlogz = 0.01``, and takes about eight minutes
-on one GPU.
+on one GPU. It is the first of two examples: the other, :doc:`example_black_hole_host`,
+fits a low-luminosity AGN whose continuum is starlight instead of a power law.
 
 Twelve of those 27 are narrow-line parameters -- eleven peak amplitudes and one shared
 velocity shift; the narrow *profile* is not fitted at all. It is one measured object,
@@ -608,4 +609,7 @@ Where to go next
 * ``example/fit_iras07546_jax_toggle.py``: how many broad components the profile needs,
   decided by the sampler rather than assumed -- four on this object, with every sample
   agreeing (:doc:`priors` has the numbers).
+* :doc:`example_black_hole_host`: the other worked example -- a low-luminosity AGN whose
+  continuum is starlight rather than a power law, taken apart into host galaxy and nucleus and
+  ending at a black-hole mass.
 * :doc:`jax_gpu`: the JAX backend, the batching, and the CPU-versus-GPU comparison.
